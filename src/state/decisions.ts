@@ -22,17 +22,9 @@ export function shouldReview(state: PRState, config: ReviewConfig): ReviewDecisi
     return { shouldReview: false, reason: "PR title starts with WIP" };
   }
 
-  // 4. Skipped state — check if skip reason still applies
+  // 4. Skipped state — evaluateTransitions() clears skip conditions before
+  // shouldReview() runs. If we're still skipped here, the reason still applies.
   if (state.status === "skipped") {
-    if (state.skipReason === "draft" && !state.isDraft) {
-      // Draft cleared — allow review
-      return { shouldReview: true, reason: "PR is no longer a draft" };
-    }
-    if (state.skipReason === "wip_title" && !state.title.toLowerCase().startsWith("wip")) {
-      return { shouldReview: true, reason: "WIP removed from title" };
-    }
-    // diff_too_large stays skipped until new push changes headSha
-    // (which would transition to changes_pushed before this check)
     return { shouldReview: false, reason: `Skipped: ${state.skipReason}` };
   }
 

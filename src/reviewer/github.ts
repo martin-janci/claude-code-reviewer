@@ -90,6 +90,7 @@ export async function findExistingComment(
 ): Promise<string | null> {
   const json = await gh([
     "api",
+    "--paginate",
     `repos/${owner}/${repo}/issues/${prNumber}/comments`,
   ]);
 
@@ -100,6 +101,11 @@ export async function findExistingComment(
   return match ? String(match.id) : null;
 }
 
+/**
+ * Check if a comment still exists.
+ * Returns true if it exists, false if it was deleted (404).
+ * Throws on transient errors (500, 403, network) so callers can retry.
+ */
 export async function commentExists(
   owner: string,
   repo: string,
@@ -111,8 +117,14 @@ export async function commentExists(
       `repos/${owner}/${repo}/issues/comments/${commentId}`,
     ]);
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    // gh api exits with status 1 and includes "404" in the message for not found
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("404") || message.includes("Not Found")) {
+      return false;
+    }
+    // Re-throw transient errors so callers don't mistake them for deletion
+    throw err;
   }
 }
 

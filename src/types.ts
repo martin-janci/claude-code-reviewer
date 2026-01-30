@@ -27,6 +27,7 @@ export interface ReviewConfig {
   staleClosedDays: number;
   staleErrorDays: number;
   commentVerifyIntervalMinutes: number;
+  maxReviewHistory: number;
 }
 
 export interface AppConfig {
@@ -94,6 +95,7 @@ export interface PRState {
   // Skip tracking
   skipReason: SkipReason | null;
   skipDiffLines: number | null;
+  skippedAtSha: string | null;
 
   // Error tracking
   lastError: ErrorRecord | null;

@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import type { PRState, PRStatus, StateFileV1, StateFileV2 } from "../types.js";
 
@@ -20,7 +21,14 @@ export class StateStore {
       return;
     }
 
-    const parsed = JSON.parse(raw);
+    let parsed: any;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      console.error(`State file corrupt (${this.filePath}), starting fresh:`, err);
+      this.state = { version: 2, prs: {} };
+      return;
+    }
 
     if (parsed.version === 2) {
       this.state = parsed as StateFileV2;
@@ -48,7 +56,10 @@ export class StateStore {
       if (key === "version") continue;
 
       const match = key.match(/^(.+?)\/(.+?)#(\d+)$/);
-      if (!match) continue;
+      if (!match) {
+        console.warn(`V1 migration: skipping malformed key "${key}"`);
+        continue;
+      }
 
       const [, owner, repo, numStr] = match;
       const number = parseInt(numStr, 10);
@@ -75,6 +86,7 @@ export class StateStore {
         lastReviewedAt: now,
         skipReason: null,
         skipDiffLines: null,
+        skippedAtSha: null,
         lastError: null,
         consecutiveErrors: 0,
         commentId: null,
@@ -94,7 +106,7 @@ export class StateStore {
     mkdirSync(dir, { recursive: true });
 
     // Atomic write: write to temp file then rename
-    const tmpPath = join(dir, `.state-${Date.now()}.tmp`);
+    const tmpPath = join(dir, `.state-${randomUUID()}.tmp`);
     writeFileSync(tmpPath, JSON.stringify(this.state, null, 2));
     renameSync(tmpPath, this.filePath);
   }
@@ -129,6 +141,7 @@ export class StateStore {
         lastReviewedAt: null,
         skipReason: null,
         skipDiffLines: null,
+        skippedAtSha: null,
         lastError: null,
         consecutiveErrors: 0,
         commentId: null,
@@ -162,5 +175,18 @@ export class StateStore {
     const key = StateStore.prKey(owner, repo, number);
     delete this.state.prs[key];
     this.save();
+  }
+
+  deleteMany(entries: Array<{ owner: string; repo: string; number: number }>): number {
+    let removed = 0;
+    for (const { owner, repo, number } of entries) {
+      const key = StateStore.prKey(owner, repo, number);
+      if (this.state.prs[key]) {
+        delete this.state.prs[key];
+        removed++;
+      }
+    }
+    if (removed > 0) this.save();
+    return removed;
   }
 }

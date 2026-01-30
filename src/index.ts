@@ -60,6 +60,19 @@ function main(): void {
     if (healthServer) {
       await new Promise<void>((resolve) => healthServer!.close(() => resolve()));
     }
+
+    // Wait for in-flight reviews to complete (up to 60s)
+    if (reviewer.inflight > 0) {
+      console.log(`Waiting for ${reviewer.inflight} in-flight review(s) to complete...`);
+      const deadline = Date.now() + 60_000;
+      while (reviewer.inflight > 0 && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      if (reviewer.inflight > 0) {
+        console.warn(`Exiting with ${reviewer.inflight} in-flight review(s) still running`);
+      }
+    }
+
     process.exit(0);
   };
 

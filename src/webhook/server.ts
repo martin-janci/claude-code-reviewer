@@ -4,17 +4,20 @@ import type { AppConfig, PullRequest } from "../types.js";
 import type { Reviewer } from "../reviewer/reviewer.js";
 import type { StateStore } from "../state/store.js";
 
-function verifySignature(secret: string, payload: string, signature: string): boolean {
+function verifySignature(secret: string, payload: Buffer, signature: string): boolean {
   const expected = "sha256=" + createHmac("sha256", secret).update(payload).digest("hex");
   if (expected.length !== signature.length) return false;
   return timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
 }
 
 // Actions that trigger a full review cycle via processPR
-const REVIEW_ACTIONS = ["opened", "synchronize", "reopened", "ready_for_review", "edited"];
+const REVIEW_ACTIONS = ["opened", "synchronize", "reopened", "ready_for_review"];
 
 // Actions that update state directly without review
 const LIFECYCLE_ACTIONS = ["closed", "converted_to_draft"];
+
+// "edited" only triggers review if the title changed (WIP detection)
+const CONDITIONAL_ACTIONS = ["edited"];
 
 export class WebhookServer {
   private server: Server | null = null;
@@ -39,29 +42,36 @@ export class WebhookServer {
       // Webhook endpoint
       if (req.method === "POST" && req.url === path) {
         const MAX_BODY = 1024 * 1024; // 1MB
-        let body = "";
+        const chunks: Buffer[] = [];
+        let bodyLen = 0;
         let aborted = false;
 
-        req.on("data", (chunk: string) => {
-          body += chunk;
-          if (body.length > MAX_BODY) {
+        req.on("data", (chunk: Buffer) => {
+          bodyLen += chunk.length;
+          if (bodyLen > MAX_BODY) {
             aborted = true;
             res.writeHead(413);
             res.end("Payload too large");
             req.destroy();
+            return;
           }
+          chunks.push(chunk);
         });
         req.on("end", () => {
           if (aborted) return;
+          const rawBody = Buffer.concat(chunks);
+
           // Verify signature if secret is set
           if (secret) {
             const sig = req.headers["x-hub-signature-256"] as string | undefined;
-            if (!sig || !verifySignature(secret, body, sig)) {
+            if (!sig || !verifySignature(secret, rawBody, sig)) {
               res.writeHead(401);
               res.end("Invalid signature");
               return;
             }
           }
+
+          const body = rawBody.toString("utf-8");
 
           const event = req.headers["x-github-event"] as string;
           if (event !== "pull_request") {
@@ -82,8 +92,9 @@ export class WebhookServer {
           const action = payload.action;
           const isReviewAction = REVIEW_ACTIONS.includes(action);
           const isLifecycleAction = LIFECYCLE_ACTIONS.includes(action);
+          const isConditionalAction = CONDITIONAL_ACTIONS.includes(action);
 
-          if (!isReviewAction && !isLifecycleAction) {
+          if (!isReviewAction && !isLifecycleAction && !isConditionalAction) {
             res.writeHead(200);
             res.end("Ignored action");
             return;
@@ -111,6 +122,14 @@ export class WebhookServer {
           if (isLifecycleAction) {
             this.handleLifecycleEvent(action, owner, repo, prData);
             return;
+          }
+
+          // "edited" — only trigger review if the title changed
+          if (isConditionalAction) {
+            const titleChanged = payload.changes?.title !== undefined;
+            if (!titleChanged) {
+              return;
+            }
           }
 
           // Handle review actions via processPR

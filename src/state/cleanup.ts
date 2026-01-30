@@ -5,7 +5,7 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 export function cleanupStaleEntries(store: StateStore, config: ReviewConfig): number {
   const now = Date.now();
-  let removed = 0;
+  const toDelete: Array<{ owner: string; repo: string; number: number; reason: string }> = [];
 
   for (const entry of store.getAll()) {
     // Cleanup closed/merged entries older than staleClosedDays
@@ -13,9 +13,7 @@ export function cleanupStaleEntries(store: StateStore, config: ReviewConfig): nu
       const closedAt = entry.closedAt ? new Date(entry.closedAt).getTime() : new Date(entry.updatedAt).getTime();
       const ageDays = (now - closedAt) / MS_PER_DAY;
       if (ageDays > config.staleClosedDays) {
-        store.delete(entry.owner, entry.repo, entry.number);
-        console.log(`Cleaned up stale ${entry.status} PR: ${entry.owner}/${entry.repo}#${entry.number} (${Math.round(ageDays)}d old)`);
-        removed++;
+        toDelete.push({ owner: entry.owner, repo: entry.repo, number: entry.number, reason: `stale ${entry.status} (${Math.round(ageDays)}d old)` });
         continue;
       }
     }
@@ -27,12 +25,16 @@ export function cleanupStaleEntries(store: StateStore, config: ReviewConfig): nu
         : new Date(entry.updatedAt).getTime();
       const ageDays = (now - errorAt) / MS_PER_DAY;
       if (ageDays > config.staleErrorDays) {
-        store.delete(entry.owner, entry.repo, entry.number);
-        console.log(`Cleaned up stale error PR: ${entry.owner}/${entry.repo}#${entry.number} (${Math.round(ageDays)}d old)`);
-        removed++;
+        toDelete.push({ owner: entry.owner, repo: entry.repo, number: entry.number, reason: `stale error (${Math.round(ageDays)}d old)` });
       }
     }
   }
 
-  return removed;
+  if (toDelete.length === 0) return 0;
+
+  for (const { owner, repo, number, reason } of toDelete) {
+    console.log(`Cleaned up ${reason} PR: ${owner}/${repo}#${number}`);
+  }
+
+  return store.deleteMany(toDelete);
 }

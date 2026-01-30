@@ -18,6 +18,7 @@ const DEFAULTS: AppConfig = {
     staleClosedDays: 7,
     staleErrorDays: 30,
     commentVerifyIntervalMinutes: 60,
+    maxReviewHistory: 20,
   },
 };
 
@@ -51,17 +52,33 @@ export function loadConfig(path: string = "config.yaml"): AppConfig {
     config.webhook.secret = process.env.WEBHOOK_SECRET;
   }
   if (process.env.WEBHOOK_PORT) {
-    config.webhook.port = parseInt(process.env.WEBHOOK_PORT, 10);
+    const port = parseInt(process.env.WEBHOOK_PORT, 10);
+    if (Number.isNaN(port)) {
+      throw new Error(`Invalid WEBHOOK_PORT: "${process.env.WEBHOOK_PORT}"`);
+    }
+    config.webhook.port = port;
   }
   if (process.env.POLLING_INTERVAL) {
-    config.polling.intervalSeconds = parseInt(process.env.POLLING_INTERVAL, 10);
+    const interval = parseInt(process.env.POLLING_INTERVAL, 10);
+    if (Number.isNaN(interval)) {
+      throw new Error(`Invalid POLLING_INTERVAL: "${process.env.POLLING_INTERVAL}"`);
+    }
+    config.polling.intervalSeconds = interval;
   }
   if (process.env.MODE) {
+    const validModes = ["polling", "webhook", "both"];
+    if (!validModes.includes(process.env.MODE)) {
+      throw new Error(`Invalid MODE: "${process.env.MODE}". Must be one of: ${validModes.join(", ")}`);
+    }
     config.mode = process.env.MODE as AppConfig["mode"];
   }
 
   if (config.repos.length === 0) {
     throw new Error("No repos configured. Add repos to config.yaml or check your configuration.");
+  }
+
+  if (!config.github.token) {
+    console.warn("WARNING: No GITHUB_TOKEN configured. GitHub API calls will fail. Set github.token in config.yaml or GITHUB_TOKEN env var.");
   }
 
   return config;

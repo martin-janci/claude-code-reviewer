@@ -5,20 +5,55 @@ import { getPRDiff, findExistingComment, postComment, updateComment } from "./gi
 import { reviewDiff } from "./claude.js";
 
 function parseVerdict(body: string): ReviewVerdict {
-  const firstLine = body.split("\n")[0]?.trim().toUpperCase() ?? "";
-  if (firstLine.includes("APPROVE")) return "APPROVE";
-  if (firstLine.includes("REQUEST_CHANGES") || firstLine.includes("REQUEST CHANGES")) return "REQUEST_CHANGES";
-  if (firstLine.includes("COMMENT")) return "COMMENT";
+  // Scan first 5 non-empty lines for a verdict keyword
+  const lines = body.split("\n").filter((l) => l.trim()).slice(0, 5);
+  for (const line of lines) {
+    const upper = line.trim().toUpperCase();
+    // Match standalone verdict keywords (with optional markdown formatting)
+    if (/\bREQUEST[_\s]CHANGES\b/.test(upper)) return "REQUEST_CHANGES";
+    if (/\bAPPROVE[D]?\b/.test(upper)) return "APPROVE";
+    if (/\bCOMMENT\b/.test(upper)) return "COMMENT";
+  }
   return "unknown";
 }
 
 export class Reviewer {
+  private locks = new Map<string, Promise<void>>();
+  private inflightCount = 0;
+
   constructor(
     private config: AppConfig,
     private store: StateStore,
   ) {}
 
+  get inflight(): number {
+    return this.inflightCount;
+  }
+
   async processPR(pr: PullRequest): Promise<void> {
+    const key = `${pr.owner}/${pr.repo}#${pr.number}`;
+
+    // Per-PR mutex: if a review is already in progress for this PR, wait for it
+    const existing = this.locks.get(key);
+    if (existing) {
+      await existing;
+    }
+
+    let unlock: () => void;
+    const lock = new Promise<void>((resolve) => { unlock = resolve; });
+    this.locks.set(key, lock);
+    this.inflightCount++;
+
+    try {
+      await this.doProcessPR(pr);
+    } finally {
+      this.inflightCount--;
+      this.locks.delete(key);
+      unlock!();
+    }
+  }
+
+  private async doProcessPR(pr: PullRequest): Promise<void> {
     const { owner, repo, number: prNumber, title, headSha, isDraft, baseBranch } = pr;
     const label = `${owner}/${repo}#${prNumber}`;
 
@@ -64,6 +99,7 @@ export class Reviewer {
         status: "skipped",
         skipReason: "diff_too_large",
         skipDiffLines: lineCount,
+        skippedAtSha: headSha,
       });
       return;
     }
@@ -108,13 +144,14 @@ export class Reviewer {
 
     // 13. Record review and transition to reviewed
     const now = new Date().toISOString();
+    const maxHistory = this.config.review.maxReviewHistory;
     const reviews = [...state.reviews, {
       sha: headSha,
       reviewedAt: now,
       commentId,
       verdict,
       posted: true,
-    }];
+    }].slice(-maxHistory);
 
     this.store.update(owner, repo, prNumber, {
       status: "reviewed",
@@ -127,6 +164,7 @@ export class Reviewer {
       consecutiveErrors: 0,
       skipReason: null,
       skipDiffLines: null,
+      skippedAtSha: null,
     });
 
     console.log(`Review complete for ${label} — verdict: ${verdict}`);
@@ -172,7 +210,7 @@ export class Reviewer {
       let cleared = false;
       if (state.skipReason === "draft" && !state.isDraft) cleared = true;
       if (state.skipReason === "wip_title" && !state.title.toLowerCase().startsWith("wip")) cleared = true;
-      if (state.skipReason === "diff_too_large" && state.headSha !== state.lastReviewedSha) {
+      if (state.skipReason === "diff_too_large" && state.skippedAtSha && state.headSha !== state.skippedAtSha) {
         cleared = true;
       }
 
@@ -181,10 +219,12 @@ export class Reviewer {
           status: "pending_review",
           skipReason: null,
           skipDiffLines: null,
+          skippedAtSha: null,
         });
         state.status = "pending_review";
         state.skipReason = null;
         state.skipDiffLines = null;
+        state.skippedAtSha = null;
       }
     }
   }

@@ -27,3 +27,4 @@ review:
   staleClosedDays: 7                 # purge closed/merged PR state after N days
   staleErrorDays: 30                 # purge max-retries error state after N days
   commentVerifyIntervalMinutes: 60   # how often to check if review comment still exists
+  maxReviewHistory: 20               # max review records to keep per PR

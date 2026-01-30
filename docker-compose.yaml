@@ -6,6 +6,7 @@ services:
       - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
     volumes:
       - claude-auth:/home/node/.claude
+      - ./.claude/skills:/home/node/.claude/skills:ro
       - ./config.yaml:/app/config.yaml:ro
       - reviewer-data:/app/data
     ports:

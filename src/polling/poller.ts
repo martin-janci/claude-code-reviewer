@@ -7,7 +7,9 @@ import { cleanupStaleEntries } from "../state/cleanup.js";
 import { StateStore as StoreClass } from "../state/store.js";
 
 export class Poller {
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private running = false;
+  private stopRequested = false;
+  private wakeResolve: (() => void) | null = null;
 
   constructor(
     private config: AppConfig,
@@ -16,21 +18,41 @@ export class Poller {
   ) {}
 
   start(): void {
-    const intervalMs = this.config.polling.intervalSeconds * 1000;
     console.log(`Polling started (every ${this.config.polling.intervalSeconds}s)`);
-
-    // Run immediately on start
-    this.poll();
-
-    this.timer = setInterval(() => this.poll(), intervalMs);
+    this.running = true;
+    this.stopRequested = false;
+    this.loop();
   }
 
   stop(): void {
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = null;
+    if (this.running) {
+      this.stopRequested = true;
+      this.running = false;
+      // Wake the sleep so it exits immediately
+      if (this.wakeResolve) {
+        this.wakeResolve();
+        this.wakeResolve = null;
+      }
       console.log("Polling stopped");
     }
+  }
+
+  private async loop(): Promise<void> {
+    while (!this.stopRequested) {
+      await this.poll();
+      if (this.stopRequested) break;
+      await this.sleep(this.config.polling.intervalSeconds * 1000);
+    }
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      this.wakeResolve = resolve;
+      setTimeout(() => {
+        this.wakeResolve = null;
+        resolve();
+      }, ms);
+    });
   }
 
   private async poll(): Promise<void> {
@@ -78,7 +100,12 @@ export class Poller {
   }
 
   private async reconcileClosedPRs(openPRKeys: Set<string>): Promise<void> {
+    const MAX_RECONCILE_PER_CYCLE = 5;
+    let reconciled = 0;
+
     for (const entry of this.store.getAll()) {
+      if (reconciled >= MAX_RECONCILE_PER_CYCLE) break;
+
       const key = StoreClass.prKey(entry.owner, entry.repo, entry.number);
 
       // Skip if PR is in the open list
@@ -95,6 +122,7 @@ export class Poller {
 
       // Query GitHub for actual state
       try {
+        reconciled++;
         const prState = await getPRState(entry.owner, entry.repo, entry.number);
         if (prState.state === "MERGED") {
           console.log(`Reconciled: ${key} is merged`);
