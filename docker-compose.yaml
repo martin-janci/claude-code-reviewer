@@ -1,0 +1,17 @@
+services:
+  reviewer:
+    build: .
+    environment:
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
+    volumes:
+      - claude-auth:/home/node/.claude
+      - ./config.yaml:/app/config.yaml:ro
+      - reviewer-data:/app/data
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+volumes:
+  claude-auth:
+  reviewer-data:
