@@ -81,5 +81,9 @@ export function loadConfig(path: string = "config.yaml"): AppConfig {
     console.warn("WARNING: No GITHUB_TOKEN configured. GitHub API calls will fail. Set github.token in config.yaml or GITHUB_TOKEN env var.");
   }
 
+  if ((config.mode === "webhook" || config.mode === "both") && !config.webhook.secret) {
+    console.warn("WARNING: No webhook secret configured. Webhook signature verification is disabled — any request will be accepted. Set webhook.secret in config.yaml or WEBHOOK_SECRET env var.");
+  }
+
   return config;
 }

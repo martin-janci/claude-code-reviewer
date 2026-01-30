@@ -52,6 +52,10 @@ export function reviewDiff(diff: string, prTitle: string, context?: ReviewContex
     });
 
     if (child.stdin) {
+      child.stdin.on("error", () => {
+        // Ignore stdin errors — the child may have exited before consuming all input.
+        // The execFile callback will report the actual failure.
+      });
       child.stdin.write(userPrompt);
       child.stdin.end();
     }

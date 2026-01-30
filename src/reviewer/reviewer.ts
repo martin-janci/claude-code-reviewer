@@ -33,10 +33,11 @@ export class Reviewer {
   async processPR(pr: PullRequest): Promise<void> {
     const key = `${pr.owner}/${pr.repo}#${pr.number}`;
 
-    // Per-PR mutex: if a review is already in progress for this PR, wait for it
-    const existing = this.locks.get(key);
-    if (existing) {
-      await existing;
+    // Per-PR mutex: wait in a loop until no lock exists for this key.
+    // Loop handles 3+ concurrent callers correctly — after waking,
+    // re-check in case another waiter acquired the lock first.
+    while (this.locks.has(key)) {
+      await this.locks.get(key);
     }
 
     let unlock: () => void;
@@ -71,7 +72,19 @@ export class Reviewer {
     // 3. Evaluate transitions
     this.evaluateTransitions(state);
 
-    // 4. Check if we should review
+    // 4. Persist skip status for draft/WIP so we don't re-evaluate every cycle
+    if (state.status !== "skipped") {
+      if (this.config.review.skipDrafts && state.isDraft) {
+        this.store.update(owner, repo, prNumber, { status: "skipped", skipReason: "draft", skippedAtSha: null });
+        return;
+      }
+      if (this.config.review.skipWip && state.title.toLowerCase().startsWith("wip")) {
+        this.store.update(owner, repo, prNumber, { status: "skipped", skipReason: "wip_title", skippedAtSha: null });
+        return;
+      }
+    }
+
+    // 5. Check if we should review
     const decision = shouldReview(state, this.config.review);
     if (!decision.shouldReview) {
       return;

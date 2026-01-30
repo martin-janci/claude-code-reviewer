@@ -55,7 +55,7 @@ function main(): void {
   // Graceful shutdown
   const shutdown = async () => {
     console.log("\nShutting down...");
-    poller?.stop();
+    await poller?.stop();
     await webhook?.stop();
     if (healthServer) {
       await new Promise<void>((resolve) => healthServer!.close(() => resolve()));

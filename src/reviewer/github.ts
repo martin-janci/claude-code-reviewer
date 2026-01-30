@@ -37,7 +37,7 @@ export async function listOpenPRs(owner: string, repo: string): Promise<PullRequ
     "--repo", `${owner}/${repo}`,
     "--state", "open",
     "--json", "number,title,headRefOid,isDraft,baseRefName",
-    "--limit", "100",
+    "--limit", "1000",
   ]);
 
   if (!json) return [];
@@ -71,6 +71,10 @@ export async function getPRState(
     "--repo", `${owner}/${repo}`,
     "--json", "state,mergedAt",
   ]);
+
+  if (!json) {
+    throw new Error(`Empty response from gh pr view for ${owner}/${repo}#${prNumber}`);
+  }
 
   return JSON.parse(json) as { state: string; mergedAt: string | null };
 }
@@ -134,12 +138,13 @@ export async function postComment(
   prNumber: number,
   body: string,
 ): Promise<string> {
+  // Use stdin for the body to avoid ARG_MAX limits with large review comments
   const json = await gh([
     "api",
     "--method", "POST",
     `repos/${owner}/${repo}/issues/${prNumber}/comments`,
-    "-f", `body=${body}`,
-  ]);
+    "--input", "-",
+  ], JSON.stringify({ body }));
 
   const result = JSON.parse(json) as { id: number };
   return String(result.id);
@@ -151,10 +156,11 @@ export async function updateComment(
   commentId: string,
   body: string,
 ): Promise<void> {
+  // Use stdin for the body to avoid ARG_MAX limits with large review comments
   await gh([
     "api",
     "--method", "PATCH",
     `repos/${owner}/${repo}/issues/comments/${commentId}`,
-    "-f", `body=${body}`,
-  ]);
+    "--input", "-",
+  ], JSON.stringify({ body }));
 }

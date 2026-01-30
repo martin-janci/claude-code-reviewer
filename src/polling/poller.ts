@@ -10,6 +10,7 @@ export class Poller {
   private running = false;
   private stopRequested = false;
   private wakeResolve: (() => void) | null = null;
+  private loopPromise: Promise<void> | null = null;
 
   constructor(
     private config: AppConfig,
@@ -21,10 +22,10 @@ export class Poller {
     console.log(`Polling started (every ${this.config.polling.intervalSeconds}s)`);
     this.running = true;
     this.stopRequested = false;
-    this.loop();
+    this.loopPromise = this.loop();
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     if (this.running) {
       this.stopRequested = true;
       this.running = false;
@@ -32,6 +33,11 @@ export class Poller {
       if (this.wakeResolve) {
         this.wakeResolve();
         this.wakeResolve = null;
+      }
+      // Wait for the current poll cycle to finish
+      if (this.loopPromise) {
+        await this.loopPromise;
+        this.loopPromise = null;
       }
       console.log("Polling stopped");
     }
@@ -122,8 +128,8 @@ export class Poller {
 
       // Query GitHub for actual state
       try {
-        reconciled++;
         const prState = await getPRState(entry.owner, entry.repo, entry.number);
+        reconciled++;
         if (prState.state === "MERGED") {
           console.log(`Reconciled: ${key} is merged`);
           this.store.update(entry.owner, entry.repo, entry.number, {
@@ -138,6 +144,7 @@ export class Poller {
           });
         }
       } catch (err) {
+        reconciled++; // Count failed attempts to avoid infinite retries on persistent errors
         console.error(`Failed to reconcile ${key}:`, err);
       }
     }

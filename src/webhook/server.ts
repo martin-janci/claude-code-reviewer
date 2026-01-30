@@ -102,6 +102,11 @@ export class WebhookServer {
 
           const prData = payload.pull_request;
           const repoData = payload.repository;
+          if (!prData || !repoData?.full_name) {
+            res.writeHead(400);
+            res.end("Missing pull_request or repository in payload");
+            return;
+          }
           const [owner, repo] = repoData.full_name.split("/");
 
           // Check if this repo is in our config
@@ -190,6 +195,7 @@ export class WebhookServer {
         status: "skipped",
         isDraft: true,
         skipReason: "draft",
+        skippedAtSha: null,
       });
     }
   }

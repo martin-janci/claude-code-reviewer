@@ -40,11 +40,17 @@ export class StateStore {
     }
 
     // Reset any "reviewing" entries to "pending_review" (crash recovery)
+    let recovered = false;
     for (const entry of Object.values(this.state.prs)) {
       if (entry.status === "reviewing") {
         entry.status = "pending_review";
         entry.updatedAt = new Date().toISOString();
+        recovered = true;
       }
+    }
+    if (recovered) {
+      this.save();
+      console.log("Crash recovery: reset stale 'reviewing' entries to 'pending_review'");
     }
   }
 
