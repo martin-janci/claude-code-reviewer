@@ -27,7 +27,7 @@ src/
 └── webhook/
     └── server.ts                # HTTP server for GitHub webhook events
 
-.claude/skills/code-review.md   # Review prompt template for Claude
+.claude/skills/code-review/skill.md  # Review prompt template for Claude
 config.yaml                     # Runtime configuration
 ```
 
@@ -67,7 +67,7 @@ GITHUB_TOKEN=ghp_xxx node dist/index.js  # Production
 | Adding webhook events | `webhook/server.ts`, `types.ts` |
 | State persistence | `state/store.ts`, `types.ts` (PRState, StateFileV2) |
 | Configuration | `config.ts`, `types.ts` (AppConfig, ReviewConfig) |
-| Claude integration | `reviewer/claude.ts`, `.claude/skills/code-review.md` |
+| Claude integration | `reviewer/claude.ts`, `.claude/skills/code-review/skill.md` |
 | GitHub API calls | `reviewer/github.ts` |
 
 ## Patterns and Conventions

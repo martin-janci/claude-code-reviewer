@@ -277,7 +277,7 @@ On startup, any entries with `"reviewing"` status are reset to `"pending_review"
 
 ## Review Prompt
 
-The review skill prompt lives at `.claude/skills/code-review.md`. It instructs Claude to:
+The review skill prompt lives at `.claude/skills/code-review/skill.md`. It instructs Claude to:
 
 - Start with a verdict line: `APPROVE`, `REQUEST_CHANGES`, or `COMMENT`
 - Group findings by severity: Critical, Warning, Suggestion
@@ -334,7 +334,8 @@ claude-code-reviewer/
 │       └── server.ts                # GitHub webhook HTTP server
 ├── .claude/
 │   └── skills/
-│       └── code-review.md           # Review prompt template
+│       └── code-review/
+│           └── skill.md             # Review prompt template
 ├── config.yaml                      # Configuration file
 ├── Dockerfile                       # Multi-stage Docker build
 ├── docker-compose.yaml              # Docker Compose setup

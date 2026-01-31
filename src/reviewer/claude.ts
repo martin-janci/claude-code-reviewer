@@ -6,8 +6,8 @@ import type { ReviewResult } from "../types.js";
 // Resolve skill path: check Docker location first, then project-relative
 function resolveSkillPath(): string | null {
   const candidates = [
-    "/home/node/.claude/skills/code-review.md",
-    resolve(process.cwd(), ".claude/skills/code-review.md"),
+    "/home/node/.claude/skills/code-review/skill.md",
+    resolve(process.cwd(), ".claude/skills/code-review/skill.md"),
   ];
   for (const p of candidates) {
     if (existsSync(p)) return p;
