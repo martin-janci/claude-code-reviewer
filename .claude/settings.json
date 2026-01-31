@@ -2,7 +2,32 @@
   "model": "sonnet",
   "permissions": {
     "allow": [
-      "Bash(git *)"
+      "Bash(git *)",
+      "Bash(gh *)",
+      "Bash(npm run *)",
+      "Bash(npm install *)",
+      "Bash(npm ci *)",
+      "Bash(npx tsc *)",
+      "Bash(docker build *)",
+      "Bash(docker compose *)"
+    ],
+    "deny": [
+      "Bash(rm -rf *)",
+      "Bash(git push --force *)",
+      "Bash(docker run *)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd /Users/martinjanci/projects/github.com/martin-janci/claude-code-reviewer && npx tsc --noEmit 2>&1 | tail -20"
+          }
+        ]
+      }
     ]
   }
 }
