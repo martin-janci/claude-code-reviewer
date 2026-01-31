@@ -25,6 +25,10 @@ function gh(args: string[], input?: string): Promise<string> {
     });
 
     if (input && child.stdin) {
+      child.stdin.on("error", () => {
+        // Ignore stdin errors — the child may have exited before consuming all input.
+        // The execFile callback will report the actual failure.
+      });
       child.stdin.write(input);
       child.stdin.end();
     }
@@ -92,17 +96,30 @@ export async function findExistingComment(
   prNumber: number,
   tag: string,
 ): Promise<string | null> {
-  const json = await gh([
+  // --paginate emits one JSON array per page (concatenated, not valid JSON).
+  // Use --jq to flatten all pages into newline-delimited JSON objects.
+  const ndjson = await gh([
     "api",
     "--paginate",
     `repos/${owner}/${repo}/issues/${prNumber}/comments`,
+    "--jq", ".[] | {id, body}",
   ]);
 
-  if (!json) return null;
+  if (!ndjson) return null;
 
-  const comments = JSON.parse(json) as Array<{ id: number; body: string }>;
-  const match = comments.find((c) => c.body.includes(tag));
-  return match ? String(match.id) : null;
+  for (const line of ndjson.split("\n")) {
+    if (!line.trim()) continue;
+    let comment: { id: number; body: string };
+    try {
+      comment = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (comment.body.includes(tag)) {
+      return String(comment.id);
+    }
+  }
+  return null;
 }
 
 /**
@@ -146,7 +163,12 @@ export async function postComment(
     "--input", "-",
   ], JSON.stringify({ body }));
 
-  const result = JSON.parse(json) as { id: number };
+  let result: { id: number };
+  try {
+    result = JSON.parse(json);
+  } catch {
+    throw new Error(`Failed to parse postComment response: ${json.slice(0, 200)}`);
+  }
   return String(result.id);
 }
 

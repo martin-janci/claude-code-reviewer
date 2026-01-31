@@ -126,7 +126,9 @@ export class StateStore {
   }
 
   getAll(): PRState[] {
-    return Object.values(this.state.prs);
+    // Return shallow copies to prevent callers from mutating live state entries.
+    // This is important in "both" mode where webhooks and polling run concurrently.
+    return Object.values(this.state.prs).map((e) => ({ ...e }));
   }
 
   getOrCreate(owner: string, repo: string, number: number, defaults: Partial<PRState> = {}): PRState {

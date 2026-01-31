@@ -10,6 +10,7 @@ export class Poller {
   private running = false;
   private stopRequested = false;
   private wakeResolve: (() => void) | null = null;
+  private sleepTimer: ReturnType<typeof setTimeout> | null = null;
   private loopPromise: Promise<void> | null = null;
 
   constructor(
@@ -30,6 +31,10 @@ export class Poller {
       this.stopRequested = true;
       this.running = false;
       // Wake the sleep so it exits immediately
+      if (this.sleepTimer) {
+        clearTimeout(this.sleepTimer);
+        this.sleepTimer = null;
+      }
       if (this.wakeResolve) {
         this.wakeResolve();
         this.wakeResolve = null;
@@ -54,8 +59,9 @@ export class Poller {
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => {
       this.wakeResolve = resolve;
-      setTimeout(() => {
+      this.sleepTimer = setTimeout(() => {
         this.wakeResolve = null;
+        this.sleepTimer = null;
         resolve();
       }, ms);
     });

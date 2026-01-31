@@ -47,6 +47,7 @@ export class WebhookServer {
         let aborted = false;
 
         req.on("data", (chunk: Buffer) => {
+          if (aborted) return;
           bodyLen += chunk.length;
           if (bodyLen > MAX_BODY) {
             aborted = true;
@@ -159,6 +160,10 @@ export class WebhookServer {
       res.end("Not found");
     });
 
+    this.server.maxConnections = 100;
+    this.server.setTimeout(30_000);
+    this.server.keepAliveTimeout = 5_000;
+
     this.server.listen(port, () => {
       console.log(`Webhook server listening on port ${port} at ${path}`);
     });
@@ -207,6 +212,8 @@ export class WebhookServer {
           console.log("Webhook server stopped");
           resolve();
         });
+        // Drain idle keep-alive connections so close() resolves promptly
+        this.server.closeAllConnections();
       } else {
         resolve();
       }

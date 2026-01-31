@@ -5,6 +5,9 @@ services:
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
     volumes:
+      # NOTE: claude-auth is a named volume for persisting auth state across restarts.
+      # It shadows the COPY'd .claude/ from the image. If you update .claude/ files other
+      # than skills, run: docker volume rm claude-code-reviewer_claude-auth
       - claude-auth:/home/node/.claude
       - ./.claude/skills:/home/node/.claude/skills:ro
       - ./config.yaml:/app/config.yaml:ro

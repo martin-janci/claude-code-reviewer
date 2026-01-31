@@ -72,16 +72,21 @@ export class Reviewer {
     // 3. Evaluate transitions
     this.evaluateTransitions(state);
 
-    // 4. Persist skip status for draft/WIP so we don't re-evaluate every cycle
-    if (state.status !== "skipped") {
-      if (this.config.review.skipDrafts && state.isDraft) {
+    // 4. Persist skip status for draft/WIP so we don't re-evaluate every cycle.
+    //    Also update skip reason if already skipped for a different reason (e.g. diff_too_large → draft).
+    if (this.config.review.skipDrafts && state.isDraft) {
+      if (state.status !== "skipped" || state.skipReason !== "draft") {
         this.store.update(owner, repo, prNumber, { status: "skipped", skipReason: "draft", skippedAtSha: null });
-        return;
+        Object.assign(state, { status: "skipped", skipReason: "draft", skippedAtSha: null });
       }
-      if (this.config.review.skipWip && state.title.toLowerCase().startsWith("wip")) {
+      return;
+    }
+    if (this.config.review.skipWip && state.title.toLowerCase().startsWith("wip")) {
+      if (state.status !== "skipped" || state.skipReason !== "wip_title") {
         this.store.update(owner, repo, prNumber, { status: "skipped", skipReason: "wip_title", skippedAtSha: null });
-        return;
+        Object.assign(state, { status: "skipped", skipReason: "wip_title", skippedAtSha: null });
       }
+      return;
     }
 
     // 5. Check if we should review
