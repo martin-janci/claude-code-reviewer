@@ -250,6 +250,8 @@ export class Reviewer {
       return;
     }
 
+    this.metrics?.recordReview(verdict);
+
     const now = new Date().toISOString();
     const maxHistory = this.config.review.maxReviewHistory;
     const reviews = [...state.reviews, {
@@ -277,7 +279,6 @@ export class Reviewer {
       skippedAtSha: null,
     });
 
-    this.metrics?.recordReview(verdict);
     console.log(`Review complete for ${label} — verdict: ${verdict}`);
   }
 

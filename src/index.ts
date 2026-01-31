@@ -10,7 +10,12 @@ import { CloneManager } from "./clone/manager.js";
 import { MetricsCollector } from "./metrics.js";
 import { setGhToken } from "./reviewer/github.js";
 
-const VERSION = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8")).version as string;
+let VERSION = "unknown";
+try {
+  VERSION = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8")).version;
+} catch {
+  // package.json missing or malformed — version will show as "unknown"
+}
 const START_TIME = Date.now();
 
 function startHealthServer(port: number, metrics: MetricsCollector, store: StateStore): Server {
@@ -26,7 +31,8 @@ function startHealthServer(port: number, metrics: MetricsCollector, store: State
     }
     if (req.method === "GET" && req.url === "/metrics") {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(metrics.snapshot(store.getStatusCounts())));
+      const uptime = Math.floor((Date.now() - START_TIME) / 1000);
+      res.end(JSON.stringify(metrics.snapshot(uptime, store.getStatusCounts())));
       return;
     }
     res.writeHead(404);

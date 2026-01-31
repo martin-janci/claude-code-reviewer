@@ -55,9 +55,15 @@ export class WebhookServer {
       }
 
       // Metrics endpoint
-      if (req.method === "GET" && req.url === "/metrics" && this.metrics) {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(this.metrics.snapshot(this.store.getStatusCounts())));
+      if (req.method === "GET" && req.url === "/metrics") {
+        if (this.metrics && this.healthInfo) {
+          const uptime = Math.floor((Date.now() - this.healthInfo.startTime) / 1000);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(this.metrics.snapshot(uptime, this.store.getStatusCounts())));
+        } else {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Metrics not configured" }));
+        }
         return;
       }
 

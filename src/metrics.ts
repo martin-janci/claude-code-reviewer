@@ -1,4 +1,4 @@
-import type { PRStatus, ReviewVerdict, ErrorPhase } from "./types.js";
+import type { PRStatus, ReviewVerdict, ErrorPhase, SkipReason } from "./types.js";
 
 export interface MetricsSnapshot {
   uptime: number;
@@ -12,7 +12,7 @@ export interface MetricsSnapshot {
   };
   skips: {
     total: number;
-    byReason: Record<string, number>;
+    byReason: Partial<Record<SkipReason, number>>;
   };
   prs: {
     total: number;
@@ -21,7 +21,6 @@ export interface MetricsSnapshot {
 }
 
 export class MetricsCollector {
-  private startedAt = Date.now();
   private reviewCount = 0;
   private verdictCounts: Record<ReviewVerdict, number> = {
     APPROVE: 0,
@@ -37,7 +36,7 @@ export class MetricsCollector {
     comment_post: 0,
   };
   private skipCount = 0;
-  private skipReasonCounts: Record<string, number> = {};
+  private skipReasonCounts: Partial<Record<SkipReason, number>> = {};
 
   recordReview(verdict: ReviewVerdict): void {
     this.reviewCount++;
@@ -49,15 +48,15 @@ export class MetricsCollector {
     this.errorPhaseCounts[phase]++;
   }
 
-  recordSkip(reason: string): void {
+  recordSkip(reason: SkipReason): void {
     this.skipCount++;
     this.skipReasonCounts[reason] = (this.skipReasonCounts[reason] ?? 0) + 1;
   }
 
-  snapshot(prStatusCounts: Partial<Record<PRStatus, number>>): MetricsSnapshot {
+  snapshot(uptimeSeconds: number, prStatusCounts: Partial<Record<PRStatus, number>>): MetricsSnapshot {
     const prTotal = Object.values(prStatusCounts).reduce((sum, n) => sum + (n ?? 0), 0);
     return {
-      uptime: Math.floor((Date.now() - this.startedAt) / 1000),
+      uptime: uptimeSeconds,
       reviews: {
         total: this.reviewCount,
         byVerdict: { ...this.verdictCounts },
