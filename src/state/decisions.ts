@@ -1,6 +1,6 @@
 import type { PRState, ReviewConfig, ReviewDecision } from "../types.js";
 
-export function shouldReview(state: PRState, config: ReviewConfig): ReviewDecision {
+export function shouldReview(state: PRState, config: ReviewConfig, forceReview?: boolean): ReviewDecision {
   // 1. Terminal states
   if (state.status === "merged") {
     return { shouldReview: false, reason: "PR is merged" };
@@ -30,6 +30,9 @@ export function shouldReview(state: PRState, config: ReviewConfig): ReviewDecisi
 
   // 5. Already reviewed this SHA
   if (state.status === "reviewed" && state.lastReviewedSha === state.headSha) {
+    if (forceReview) {
+      return { shouldReview: true, reason: "Forced re-review (comment trigger)" };
+    }
     return { shouldReview: false, reason: "Already reviewed this SHA" };
   }
 
@@ -38,7 +41,7 @@ export function shouldReview(state: PRState, config: ReviewConfig): ReviewDecisi
   const lastReview = state.reviews.length > 0 ? state.reviews[state.reviews.length - 1] : null;
   const isFixingComments = lastReview?.verdict === "REQUEST_CHANGES" && state.headSha !== lastReview.sha;
 
-  if (state.lastPushAt && !isFixingComments) {
+  if (state.lastPushAt && !isFixingComments && !forceReview) {
     const pushAge = Date.now() - new Date(state.lastPushAt).getTime();
     const debouncePeriodMs = config.debouncePeriodSeconds * 1000;
     if (pushAge < debouncePeriodMs) {
@@ -47,7 +50,7 @@ export function shouldReview(state: PRState, config: ReviewConfig): ReviewDecisi
   }
 
   // 7. Error backoff — exponential backoff
-  if (state.status === "error" && state.lastError) {
+  if (state.status === "error" && state.lastError && !forceReview) {
     if (state.consecutiveErrors >= config.maxRetries) {
       return { shouldReview: false, reason: `Max retries (${config.maxRetries}) exceeded` };
     }

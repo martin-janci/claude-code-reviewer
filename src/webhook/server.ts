@@ -3,6 +3,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { AppConfig, PullRequest } from "../types.js";
 import type { Reviewer } from "../reviewer/reviewer.js";
 import type { StateStore } from "../state/store.js";
+import { getPRDetails } from "../reviewer/github.js";
 
 function verifySignature(secret: string, payload: Buffer, signature: string): boolean {
   const expected = "sha256=" + createHmac("sha256", secret).update(payload).digest("hex");
@@ -76,7 +77,7 @@ export class WebhookServer {
           const body = rawBody.toString("utf-8");
 
           const event = req.headers["x-github-event"] as string;
-          if (event !== "pull_request") {
+          if (event !== "pull_request" && event !== "issue_comment") {
             res.writeHead(200);
             res.end("Ignored event");
             return;
@@ -88,6 +89,12 @@ export class WebhookServer {
           } catch {
             res.writeHead(400);
             res.end("Invalid JSON");
+            return;
+          }
+
+          // Handle issue_comment events (PR comment triggers)
+          if (event === "issue_comment") {
+            this.handleIssueComment(payload, res);
             return;
           }
 
@@ -219,6 +226,73 @@ export class WebhookServer {
         this.store.update(owner, repo, prNumber, { isDraft: true });
       }
     }
+  }
+
+  private handleIssueComment(payload: any, res: any): void {
+    // Only handle newly created comments
+    if (payload.action !== "created") {
+      res.writeHead(200);
+      res.end("Ignored comment action");
+      return;
+    }
+
+    // Only handle comments on PRs (not plain issues)
+    if (!payload.issue?.pull_request) {
+      res.writeHead(200);
+      res.end("Not a PR comment");
+      return;
+    }
+
+    // Prevent feedback loops from bot comments
+    if (payload.comment?.user?.type === "Bot") {
+      res.writeHead(200);
+      res.end("Ignored bot comment");
+      return;
+    }
+
+    const repoData = payload.repository;
+    if (!repoData?.full_name) {
+      res.writeHead(400);
+      res.end("Missing repository in payload");
+      return;
+    }
+    const [owner, repo] = repoData.full_name.split("/");
+
+    // Check if this repo is tracked
+    const isTracked = this.config.repos.some(
+      (r) => r.owner === owner && r.repo === repo,
+    );
+    if (!isTracked) {
+      res.writeHead(200);
+      res.end("Repo not tracked");
+      return;
+    }
+
+    // Match comment body against the configured trigger pattern
+    const triggerPattern = new RegExp(this.config.review.commentTrigger, "m");
+    const commentBody = payload.comment?.body ?? "";
+    if (!triggerPattern.test(commentBody)) {
+      res.writeHead(200);
+      res.end("No trigger match");
+      return;
+    }
+
+    const prNumber = payload.issue.number;
+    const commenter = payload.comment?.user?.login ?? "unknown";
+    console.log(`Webhook: /review trigger by ${commenter} on ${owner}/${repo}#${prNumber}`);
+
+    res.writeHead(202);
+    res.end("Accepted");
+
+    this.triggerCommentReview(owner, repo, prNumber).catch((err) => {
+      console.error(`Webhook comment-trigger error for ${owner}/${repo}#${prNumber}:`, err);
+    });
+  }
+
+  private async triggerCommentReview(owner: string, repo: string, prNumber: number): Promise<void> {
+    const pr = await getPRDetails(owner, repo, prNumber);
+    pr.forceReview = true;
+    await this.reviewer.processPR(pr);
   }
 
   stop(): Promise<void> {

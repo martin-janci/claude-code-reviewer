@@ -19,6 +19,7 @@ const DEFAULTS: AppConfig = {
     staleErrorDays: 30,
     commentVerifyIntervalMinutes: 60,
     maxReviewHistory: 20,
+    commentTrigger: "^\\s*/review\\s*$",
   },
 };
 

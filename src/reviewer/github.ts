@@ -65,6 +65,40 @@ export async function listOpenPRs(owner: string, repo: string): Promise<PullRequ
   }));
 }
 
+export async function getPRDetails(
+  owner: string,
+  repo: string,
+  prNumber: number,
+): Promise<PullRequest> {
+  const json = await gh([
+    "pr", "view", String(prNumber),
+    "--repo", `${owner}/${repo}`,
+    "--json", "number,title,headRefOid,isDraft,baseRefName",
+  ]);
+
+  if (!json) {
+    throw new Error(`Empty response from gh pr view for ${owner}/${repo}#${prNumber}`);
+  }
+
+  const raw = JSON.parse(json) as {
+    number: number;
+    title: string;
+    headRefOid: string;
+    isDraft: boolean;
+    baseRefName: string;
+  };
+
+  return {
+    number: raw.number,
+    title: raw.title,
+    headSha: raw.headRefOid,
+    isDraft: raw.isDraft,
+    baseBranch: raw.baseRefName,
+    owner,
+    repo,
+  };
+}
+
 export async function getPRState(
   owner: string,
   repo: string,

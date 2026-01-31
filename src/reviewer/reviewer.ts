@@ -90,7 +90,7 @@ export class Reviewer {
     }
 
     // 5. Check if we should review
-    const decision = shouldReview(state, this.config.review);
+    const decision = shouldReview(state, this.config.review, pr.forceReview);
     if (!decision.shouldReview) {
       return;
     }

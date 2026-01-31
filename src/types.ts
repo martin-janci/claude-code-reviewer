@@ -28,6 +28,7 @@ export interface ReviewConfig {
   staleErrorDays: number;
   commentVerifyIntervalMinutes: number;
   maxReviewHistory: number;
+  commentTrigger: string;
 }
 
 export interface AppConfig {
@@ -137,6 +138,7 @@ export interface PullRequest {
   baseBranch: string;
   owner: string;
   repo: string;
+  forceReview?: boolean;
 }
 
 export interface ReviewResult {
