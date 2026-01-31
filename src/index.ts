@@ -35,6 +35,15 @@ function main(): void {
       config.review.cloneTimeoutMs,
     );
     console.log(`Codebase access enabled (clones at ${config.review.cloneDir})`);
+
+    // Pre-warm clones so the first review doesn't block on a full clone
+    for (const { owner, repo } of config.repos) {
+      cloneManager.ensureClone(owner, repo).then(() => {
+        console.log(`Pre-warmed clone for ${owner}/${repo}`);
+      }).catch((err) => {
+        console.warn(`Pre-warm clone failed for ${owner}/${repo}:`, err);
+      });
+    }
   }
 
   const reviewer = new Reviewer(config, store, cloneManager);
