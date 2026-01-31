@@ -75,6 +75,9 @@ export class Reviewer {
     // 4. Persist skip status for draft/WIP so we don't re-evaluate every cycle.
     //    Also update skip reason if already skipped for a different reason (e.g. diff_too_large → draft).
     if (this.config.review.skipDrafts && state.isDraft) {
+      if (pr.forceReview) {
+        console.log(`Ignoring /review trigger on ${label}: PR is a draft (skipDrafts is enabled)`);
+      }
       if (state.status !== "skipped" || state.skipReason !== "draft") {
         this.store.update(owner, repo, prNumber, { status: "skipped", skipReason: "draft", skippedAtSha: null });
         Object.assign(state, { status: "skipped", skipReason: "draft", skippedAtSha: null });
@@ -82,6 +85,9 @@ export class Reviewer {
       return;
     }
     if (this.config.review.skipWip && state.title.toLowerCase().startsWith("wip")) {
+      if (pr.forceReview) {
+        console.log(`Ignoring /review trigger on ${label}: PR title starts with WIP (skipWip is enabled)`);
+      }
       if (state.status !== "skipped" || state.skipReason !== "wip_title") {
         this.store.update(owner, repo, prNumber, { status: "skipped", skipReason: "wip_title", skippedAtSha: null });
         Object.assign(state, { status: "skipped", skipReason: "wip_title", skippedAtSha: null });

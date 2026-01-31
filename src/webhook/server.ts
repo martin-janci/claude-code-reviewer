@@ -22,12 +22,19 @@ const CONDITIONAL_ACTIONS = ["edited"];
 
 export class WebhookServer {
   private server: Server | null = null;
+  private commentTriggerRegex: RegExp;
 
   constructor(
     private config: AppConfig,
     private reviewer: Reviewer,
     private store: StateStore,
-  ) {}
+  ) {
+    try {
+      this.commentTriggerRegex = new RegExp(config.review.commentTrigger, "m");
+    } catch (err) {
+      throw new Error(`Invalid commentTrigger regex "${config.review.commentTrigger}": ${err instanceof Error ? err.message : err}`);
+    }
+  }
 
   start(): void {
     const { port, path, secret } = this.config.webhook;
@@ -269,9 +276,8 @@ export class WebhookServer {
     }
 
     // Match comment body against the configured trigger pattern
-    const triggerPattern = new RegExp(this.config.review.commentTrigger, "m");
     const commentBody = payload.comment?.body ?? "";
-    if (!triggerPattern.test(commentBody)) {
+    if (!this.commentTriggerRegex.test(commentBody)) {
       res.writeHead(200);
       res.end("No trigger match");
       return;
