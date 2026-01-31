@@ -15,6 +15,7 @@ Focus on:
 - **Code Quality** — naming, readability, duplication, dead code
 - **Design** — separation of concerns, proper abstractions, API contracts
 - **Cross-file Impact** — breaking callers, violating interfaces, inconsistent patterns
+- **Completeness** — new exports/APIs that are never called, config fields without wiring, features added without integration
 
 ## Output Format
 
@@ -24,6 +25,11 @@ CRITICAL: Your response MUST begin with exactly one of these three words on the 
 - COMMENT
 
 Do NOT start with headings, summaries, or any other text. The very first line of your output must be the verdict word alone.
+
+Verdict rules:
+- **APPROVE** — no issues, or only minor suggestions that won't cause problems
+- **REQUEST_CHANGES** — any critical or warning-level finding, including: bugs, security issues, dead code, unwired features, incomplete integrations
+- **COMMENT** — observations worth noting but not blocking merge
 
 Then list findings grouped by severity:
 - **Critical** — must fix before merge
