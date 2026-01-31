@@ -1,4 +1,6 @@
 import { createServer, type Server } from "node:http";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { loadConfig } from "./config.js";
 import { StateStore } from "./state/store.js";
 import { Reviewer } from "./reviewer/reviewer.js";
@@ -8,11 +10,18 @@ import { CloneManager } from "./clone/manager.js";
 import { MetricsCollector } from "./metrics.js";
 import { setGhToken } from "./reviewer/github.js";
 
+const VERSION = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8")).version as string;
+const START_TIME = Date.now();
+
 function startHealthServer(port: number, metrics: MetricsCollector, store: StateStore): Server {
   const server = createServer((req, res) => {
     if (req.method === "GET" && req.url === "/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok" }));
+      res.end(JSON.stringify({
+        status: "ok",
+        version: VERSION,
+        uptime: Math.floor((Date.now() - START_TIME) / 1000),
+      }));
       return;
     }
     if (req.method === "GET" && req.url === "/metrics") {
@@ -73,7 +82,7 @@ function main(): void {
   }
 
   if (config.mode === "webhook" || config.mode === "both") {
-    webhook = new WebhookServer(config, reviewer, store, metrics);
+    webhook = new WebhookServer(config, reviewer, store, metrics, { version: VERSION, startTime: START_TIME });
     webhook.start();
   } else {
     // In polling-only mode, start a minimal health server so Docker health checks pass

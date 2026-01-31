@@ -30,6 +30,7 @@ export class WebhookServer {
     private reviewer: Reviewer,
     private store: StateStore,
     private metrics?: MetricsCollector,
+    private healthInfo?: { version: string; startTime: number },
   ) {
     try {
       this.commentTriggerRegex = new RegExp(config.review.commentTrigger, "m");
@@ -44,8 +45,12 @@ export class WebhookServer {
     this.server = createServer((req, res) => {
       // Health check
       if (req.method === "GET" && req.url === "/health") {
+        const info = this.healthInfo;
+        const body = info
+          ? { status: "ok", version: info.version, uptime: Math.floor((Date.now() - info.startTime) / 1000) }
+          : { status: "ok" };
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ status: "ok" }));
+        res.end(JSON.stringify(body));
         return;
       }
 
