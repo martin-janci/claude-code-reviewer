@@ -409,14 +409,6 @@ Every push to `main` with at least one `feat`, `fix`, or `perf` commit triggers:
 2. `CHANGELOG.md` update
 3. Git tag + push
 4. GitHub Release with generated notes
-5. Docker image build + push to `ghcr.io/martin-janci/claude-code-reviewer`
-
-### Docker Image Tags
-
-| Tag | Description |
-|-----|-------------|
-| `ghcr.io/martin-janci/claude-code-reviewer:latest` | Latest release |
-| `ghcr.io/martin-janci/claude-code-reviewer:1.2.3` | Specific version |
 
 ### Manual Release (Local)
 
