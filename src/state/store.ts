@@ -84,6 +84,7 @@ export class StateStore {
             sha,
             reviewedAt: now,
             commentId: null,
+            reviewId: null,
             verdict: "unknown",
             posted: true,
           },
@@ -97,6 +98,8 @@ export class StateStore {
         consecutiveErrors: 0,
         commentId: null,
         commentVerifiedAt: null,
+        reviewId: null,
+        reviewVerifiedAt: null,
         firstSeenAt: now,
         updatedAt: now,
         closedAt: null,
@@ -163,6 +166,8 @@ export class StateStore {
         consecutiveErrors: 0,
         commentId: null,
         commentVerifiedAt: null,
+        reviewId: null,
+        reviewVerifiedAt: null,
         firstSeenAt: now,
         updatedAt: now,
         closedAt: null,
@@ -192,6 +197,14 @@ export class StateStore {
     const key = StateStore.prKey(owner, repo, number);
     delete this.state.prs[key];
     this.save();
+  }
+
+  getStatusCounts(): Partial<Record<PRStatus, number>> {
+    const counts: Partial<Record<PRStatus, number>> = {};
+    for (const entry of Object.values(this.state.prs)) {
+      counts[entry.status] = (counts[entry.status] ?? 0) + 1;
+    }
+    return counts;
   }
 
   deleteMany(entries: Array<{ owner: string; repo: string; number: number }>): number {

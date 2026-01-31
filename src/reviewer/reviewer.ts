@@ -1,11 +1,15 @@
-import type { AppConfig, PullRequest, ReviewVerdict, ErrorPhase, PRState } from "../types.js";
+import type { AppConfig, PullRequest, ReviewVerdict, ReviewFinding, ErrorPhase, PRState } from "../types.js";
 import type { StateStore } from "../state/store.js";
 import type { CloneManager } from "../clone/manager.js";
+import type { MetricsCollector } from "../metrics.js";
+import type { ReviewComment } from "./github.js";
 import { shouldReview } from "../state/decisions.js";
-import { getPRDiff, findExistingComment, postComment, updateComment } from "./github.js";
+import { getPRDiff, postReview, postComment, updateComment, findExistingComment } from "./github.js";
 import { reviewDiff } from "./claude.js";
+import { parseCommentableLines, findNearestCommentableLine } from "./diff-parser.js";
+import { formatReviewBody, formatInlineComment } from "./formatter.js";
 
-function parseVerdict(body: string): ReviewVerdict {
+function parseLegacyVerdict(body: string): ReviewVerdict {
   // Scan first 5 non-empty lines for a verdict keyword
   const lines = body.split("\n").filter((l) => l.trim()).slice(0, 5);
   for (const line of lines) {
@@ -26,6 +30,7 @@ export class Reviewer {
     private config: AppConfig,
     private store: StateStore,
     private cloneManager?: CloneManager,
+    private metrics?: MetricsCollector,
   ) {}
 
   get inflight(): number {
@@ -83,6 +88,7 @@ export class Reviewer {
       if (state.status !== "skipped" || state.skipReason !== "draft") {
         this.store.update(owner, repo, prNumber, { status: "skipped", skipReason: "draft", skippedAtSha: null });
         Object.assign(state, { status: "skipped", skipReason: "draft", skippedAtSha: null });
+        this.metrics?.recordSkip("draft");
       }
       return;
     }
@@ -93,6 +99,7 @@ export class Reviewer {
       if (state.status !== "skipped" || state.skipReason !== "wip_title") {
         this.store.update(owner, repo, prNumber, { status: "skipped", skipReason: "wip_title", skippedAtSha: null });
         Object.assign(state, { status: "skipped", skipReason: "wip_title", skippedAtSha: null });
+        this.metrics?.recordSkip("wip_title");
       }
       return;
     }
@@ -121,6 +128,7 @@ export class Reviewer {
     const lineCount = diff.split("\n").length;
     if (lineCount > this.config.review.maxDiffLines) {
       console.log(`Skipping ${label}: diff too large (${lineCount} lines > ${this.config.review.maxDiffLines} max)`);
+      this.metrics?.recordSkip("diff_too_large");
       this.store.update(owner, repo, prNumber, {
         status: "skipped",
         skipReason: "diff_too_large",
@@ -171,31 +179,69 @@ export class Reviewer {
       return;
     }
 
-    // 10. Parse verdict
-    const verdict = parseVerdict(result.body);
-
-    // 11. Build comment body
+    // 10. Post review — structured (PR Reviews API) or legacy (issue comment)
     const tag = this.config.review.commentTag;
-    const body = `${tag}\n\n${result.body}\n\n---\n*Reviewed by Claude Code at commit ${headSha.slice(0, 7)}*`;
+    let verdict: ReviewVerdict;
+    let reviewId: string | null = null;
+    let commentId: string | null = state.commentId;
 
-    // 12. Post or update comment
-    let commentId: string;
-    try {
-      const existingId = state.commentId ?? await findExistingComment(owner, repo, prNumber, tag);
-      if (existingId) {
-        console.log(`Updating existing comment on ${label}`);
-        await updateComment(owner, repo, existingId, body);
-        commentId = existingId;
-      } else {
-        console.log(`Posting new comment on ${label}`);
-        commentId = await postComment(owner, repo, prNumber, body);
+    if (result.structured) {
+      // Structured path: PR Reviews API with inline comments
+      const structured = result.structured;
+      verdict = structured.verdict;
+
+      // Parse commentable lines from the diff
+      const commentable = parseCommentableLines(diff);
+
+      // Build inline comments, collecting orphans
+      const inlineComments: ReviewComment[] = [];
+      const orphanFindings: ReviewFinding[] = [];
+
+      for (const finding of structured.findings) {
+        const snappedLine = findNearestCommentableLine(commentable, finding.path, finding.line);
+        if (snappedLine != null) {
+          inlineComments.push({
+            path: finding.path,
+            line: snappedLine,
+            body: formatInlineComment(finding),
+          });
+        } else {
+          orphanFindings.push(finding);
+        }
       }
-    } catch (err) {
-      this.recordError(state, headSha, err, "comment_post");
-      return;
+
+      // Build top-level review body
+      const body = formatReviewBody(structured, headSha, tag, orphanFindings);
+
+      try {
+        console.log(`Posting PR review on ${label} (${inlineComments.length} inline comment(s), ${orphanFindings.length} orphan(s))`);
+        reviewId = await postReview(owner, repo, prNumber, body, headSha, inlineComments);
+      } catch (err) {
+        this.recordError(state, headSha, err, "comment_post");
+        return;
+      }
+    } else {
+      // Fallback path: legacy issue comment
+      verdict = parseLegacyVerdict(result.body);
+      const body = `${tag}\n\n${result.body}\n\n---\n*Reviewed by Claude Code at commit ${headSha.slice(0, 7)}*`;
+
+      try {
+        const existingId = state.commentId ?? await findExistingComment(owner, repo, prNumber, tag);
+        if (existingId) {
+          console.log(`Updating existing comment on ${label}`);
+          await updateComment(owner, repo, existingId, body);
+          commentId = existingId;
+        } else {
+          console.log(`Posting new comment on ${label}`);
+          commentId = await postComment(owner, repo, prNumber, body);
+        }
+      } catch (err) {
+        this.recordError(state, headSha, err, "comment_post");
+        return;
+      }
     }
 
-    // 13. Record review and transition to reviewed.
+    // 11. Record review and transition to reviewed.
     //     Re-read state to check for concurrent lifecycle events (e.g. webhook closed/merged
     //     the PR while the review was in progress — lifecycle events bypass the per-PR mutex).
     const current = this.store.get(owner, repo, prNumber);
@@ -210,6 +256,7 @@ export class Reviewer {
       sha: headSha,
       reviewedAt: now,
       commentId,
+      reviewId,
       verdict,
       posted: true,
     }].slice(-maxHistory);
@@ -220,7 +267,9 @@ export class Reviewer {
       lastReviewedSha: headSha,
       lastReviewedAt: now,
       commentId,
-      commentVerifiedAt: now,
+      commentVerifiedAt: commentId ? now : null,
+      reviewId,
+      reviewVerifiedAt: reviewId ? now : null,
       lastError: null,
       consecutiveErrors: 0,
       skipReason: null,
@@ -228,6 +277,7 @@ export class Reviewer {
       skippedAtSha: null,
     });
 
+    this.metrics?.recordReview(verdict);
     console.log(`Review complete for ${label} — verdict: ${verdict}`);
   }
 
@@ -290,6 +340,7 @@ export class Reviewer {
 
   private recordError(state: PRState, sha: string, err: unknown, phase: ErrorPhase): void {
     const message = err instanceof Error ? err.message : String(err);
+    this.metrics?.recordError(phase);
     console.error(`Error in ${phase} for ${state.owner}/${state.repo}#${state.number}:`, message);
 
     this.store.update(state.owner, state.repo, state.number, {

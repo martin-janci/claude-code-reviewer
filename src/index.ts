@@ -5,13 +5,19 @@ import { Reviewer } from "./reviewer/reviewer.js";
 import { Poller } from "./polling/poller.js";
 import { WebhookServer } from "./webhook/server.js";
 import { CloneManager } from "./clone/manager.js";
+import { MetricsCollector } from "./metrics.js";
 import { setGhToken } from "./reviewer/github.js";
 
-function startHealthServer(port: number): Server {
+function startHealthServer(port: number, metrics: MetricsCollector, store: StateStore): Server {
   const server = createServer((req, res) => {
     if (req.method === "GET" && req.url === "/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ status: "ok" }));
+      return;
+    }
+    if (req.method === "GET" && req.url === "/metrics") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(metrics.snapshot(store.getStatusCounts())));
       return;
     }
     res.writeHead(404);
@@ -46,7 +52,8 @@ function main(): void {
     }
   }
 
-  const reviewer = new Reviewer(config, store, cloneManager);
+  const metrics = new MetricsCollector();
+  const reviewer = new Reviewer(config, store, cloneManager, metrics);
 
   // Pass GitHub token to gh CLI wrapper
   if (config.github.token) {
@@ -66,11 +73,11 @@ function main(): void {
   }
 
   if (config.mode === "webhook" || config.mode === "both") {
-    webhook = new WebhookServer(config, reviewer, store);
+    webhook = new WebhookServer(config, reviewer, store, metrics);
     webhook.start();
   } else {
     // In polling-only mode, start a minimal health server so Docker health checks pass
-    healthServer = startHealthServer(config.webhook.port);
+    healthServer = startHealthServer(config.webhook.port, metrics, store);
   }
 
   // Graceful shutdown (guarded against concurrent SIGINT+SIGTERM)

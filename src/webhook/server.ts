@@ -3,6 +3,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { AppConfig, PullRequest } from "../types.js";
 import type { Reviewer } from "../reviewer/reviewer.js";
 import type { StateStore } from "../state/store.js";
+import type { MetricsCollector } from "../metrics.js";
 import { getPRDetails } from "../reviewer/github.js";
 
 function verifySignature(secret: string, payload: Buffer, signature: string): boolean {
@@ -28,6 +29,7 @@ export class WebhookServer {
     private config: AppConfig,
     private reviewer: Reviewer,
     private store: StateStore,
+    private metrics?: MetricsCollector,
   ) {
     try {
       this.commentTriggerRegex = new RegExp(config.review.commentTrigger, "m");
@@ -44,6 +46,13 @@ export class WebhookServer {
       if (req.method === "GET" && req.url === "/health") {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "ok" }));
+        return;
+      }
+
+      // Metrics endpoint
+      if (req.method === "GET" && req.url === "/metrics" && this.metrics) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(this.metrics.snapshot(this.store.getStatusCounts())));
         return;
       }
 
