@@ -42,7 +42,8 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
     userPrompt += `## Codebase Access\nYou have read-only access to the full repository in your working directory. Use Read, Grep, and Glob tools to explore the codebase when the diff raises questions about contracts, callers, patterns, or architectural impact. Do NOT read every file — only explore when the diff context is insufficient.\n\n`;
   }
 
-  userPrompt += `## Diff\n\`\`\`diff\n${diff}\n\`\`\``;
+  userPrompt += `## Diff\n\`\`\`diff\n${diff}\n\`\`\`\n\n`;
+  userPrompt += `## Output Requirements\nYour response MUST start with exactly one of: APPROVE, REQUEST_CHANGES, or COMMENT — alone on the first line, no other text.\nUse REQUEST_CHANGES if you find any warning or critical issue, including unused exports, dead code, or incomplete integrations.`;
 
   const args = ["-p", "--output-format", "text"];
 

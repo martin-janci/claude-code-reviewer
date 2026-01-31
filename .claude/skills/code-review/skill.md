@@ -43,13 +43,13 @@ For each finding:
 
 ## Codebase Access
 
-When you have access to the full repository (working directory), use Read, Grep, and Glob tools strategically to:
-- Check how changed functions/interfaces are used by callers
-- Verify that new code follows existing patterns and conventions
-- Understand the context around modified files (imports, related modules)
-- Validate that API contract changes are consistent across the codebase
+When you have access to the full repository (working directory), perform these mandatory checks before writing your review:
 
-Do NOT read every file — only explore when the diff raises questions that cannot be answered from the diff alone.
+1. For every new exported function/class/type in the diff, run `Grep` to search for usages across the codebase. If an export has zero callers outside its own file, report it as a **Warning** ("unused export / dead code") and use REQUEST_CHANGES. Include the grep results as evidence.
+2. For every modified function signature, run `Grep` for existing callers to verify they are compatible with the change.
+3. Use Read, Grep, and Glob to verify new code follows existing patterns, check related modules, and validate API contract consistency.
+
+Do NOT read every file — but always verify that new exports are actually called.
 
 ## Final Notes
 
