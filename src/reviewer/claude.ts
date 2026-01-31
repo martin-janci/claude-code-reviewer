@@ -45,7 +45,7 @@ export function reviewDiff(diff: string, prTitle: string, context?: ReviewContex
       if (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error("Claude review failed:", message);
-        resolve({ body: "", success: false });
+        resolve({ body: message, success: false });
         return;
       }
       resolve({ body: stdout.trim(), success: true });

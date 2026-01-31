@@ -53,15 +53,15 @@ export function loadConfig(path: string = "config.yaml"): AppConfig {
   }
   if (process.env.WEBHOOK_PORT) {
     const port = parseInt(process.env.WEBHOOK_PORT, 10);
-    if (Number.isNaN(port)) {
-      throw new Error(`Invalid WEBHOOK_PORT: "${process.env.WEBHOOK_PORT}"`);
+    if (Number.isNaN(port) || port < 1 || port > 65535) {
+      throw new Error(`Invalid WEBHOOK_PORT: "${process.env.WEBHOOK_PORT}" (must be 1-65535)`);
     }
     config.webhook.port = port;
   }
   if (process.env.POLLING_INTERVAL) {
     const interval = parseInt(process.env.POLLING_INTERVAL, 10);
-    if (Number.isNaN(interval)) {
-      throw new Error(`Invalid POLLING_INTERVAL: "${process.env.POLLING_INTERVAL}"`);
+    if (Number.isNaN(interval) || interval < 1) {
+      throw new Error(`Invalid POLLING_INTERVAL: "${process.env.POLLING_INTERVAL}" (must be >= 1)`);
     }
     config.polling.intervalSeconds = interval;
   }

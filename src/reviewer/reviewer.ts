@@ -132,7 +132,7 @@ export class Reviewer {
     // 9. Run Claude review
     const result = await reviewDiff(diff, title, context);
     if (!result.success) {
-      this.recordError(state, headSha, new Error("Claude review returned unsuccessful"), "claude_review");
+      this.recordError(state, headSha, new Error(result.body || "Claude review returned unsuccessful"), "claude_review");
       return;
     }
 
@@ -160,7 +160,15 @@ export class Reviewer {
       return;
     }
 
-    // 13. Record review and transition to reviewed
+    // 13. Record review and transition to reviewed.
+    //     Re-read state to check for concurrent lifecycle events (e.g. webhook closed/merged
+    //     the PR while the review was in progress — lifecycle events bypass the per-PR mutex).
+    const current = this.store.get(owner, repo, prNumber);
+    if (current && (current.status === "closed" || current.status === "merged")) {
+      console.log(`Review complete for ${label} but PR is now ${current.status} — not overwriting terminal state`);
+      return;
+    }
+
     const now = new Date().toISOString();
     const maxHistory = this.config.review.maxReviewHistory;
     const reviews = [...state.reviews, {

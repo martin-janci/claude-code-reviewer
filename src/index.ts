@@ -61,8 +61,9 @@ function main(): void {
     await poller?.stop();
     await webhook?.stop();
     if (healthServer) {
-      await new Promise<void>((resolve) => healthServer!.close(() => resolve()));
+      const closePromise = new Promise<void>((resolve) => healthServer!.close(() => resolve()));
       healthServer.closeAllConnections();
+      await closePromise;
     }
 
     // Wait for in-flight reviews to complete (up to 60s)

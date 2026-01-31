@@ -207,12 +207,17 @@ export class WebhookServer {
 
     if (action === "converted_to_draft") {
       console.log(`Webhook: ${label} converted to draft`);
-      this.store.update(owner, repo, prNumber, {
-        status: "skipped",
-        isDraft: true,
-        skipReason: "draft",
-        skippedAtSha: null,
-      });
+      if (this.config.review.skipDrafts) {
+        this.store.update(owner, repo, prNumber, {
+          status: "skipped",
+          isDraft: true,
+          skipReason: "draft",
+          skippedAtSha: null,
+        });
+      } else {
+        // skipDrafts is disabled — just update the draft flag without skipping
+        this.store.update(owner, repo, prNumber, { isDraft: true });
+      }
     }
   }
 
