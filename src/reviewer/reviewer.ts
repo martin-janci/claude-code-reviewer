@@ -217,10 +217,12 @@ export class Reviewer {
   }
 
   private evaluateTransitions(state: PRState): void {
+    // Note: store.update() mutates the live state object via Object.assign,
+    // so the `state` reference is updated in-place — no manual sync needed.
+
     // reviewed + new SHA → changes_pushed
     if (state.status === "reviewed" && state.lastReviewedSha && state.headSha !== state.lastReviewedSha) {
       this.store.setStatus(state.owner, state.repo, state.number, "changes_pushed");
-      state.status = "changes_pushed";
     }
 
     // skipped + condition cleared → pending_review
@@ -239,10 +241,6 @@ export class Reviewer {
           skipDiffLines: null,
           skippedAtSha: null,
         });
-        state.status = "pending_review";
-        state.skipReason = null;
-        state.skipDiffLines = null;
-        state.skippedAtSha = null;
       }
     }
   }

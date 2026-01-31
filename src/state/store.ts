@@ -121,6 +121,10 @@ export class StateStore {
     return `${owner}/${repo}#${number}`;
   }
 
+  /**
+   * Returns a live reference to the internal state object.
+   * Callers must NOT mutate the returned object directly — use update() instead.
+   */
   get(owner: string, repo: string, number: number): PRState | undefined {
     return this.state.prs[StateStore.prKey(owner, repo, number)];
   }
@@ -131,6 +135,11 @@ export class StateStore {
     return Object.values(this.state.prs).map((e) => ({ ...e }));
   }
 
+  /**
+   * Returns a live reference to the internal state object.
+   * The caller (Reviewer) holds a per-PR mutex while using this reference.
+   * Do not mutate directly outside of store.update().
+   */
   getOrCreate(owner: string, repo: string, number: number, defaults: Partial<PRState> = {}): PRState {
     const key = StateStore.prKey(owner, repo, number);
     if (!this.state.prs[key]) {

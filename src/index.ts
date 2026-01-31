@@ -52,13 +52,17 @@ function main(): void {
     healthServer = startHealthServer(config.webhook.port);
   }
 
-  // Graceful shutdown
+  // Graceful shutdown (guarded against concurrent SIGINT+SIGTERM)
+  let shuttingDown = false;
   const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     console.log("\nShutting down...");
     await poller?.stop();
     await webhook?.stop();
     if (healthServer) {
       await new Promise<void>((resolve) => healthServer!.close(() => resolve()));
+      healthServer.closeAllConnections();
     }
 
     // Wait for in-flight reviews to complete (up to 60s)

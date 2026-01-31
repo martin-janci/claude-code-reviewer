@@ -24,6 +24,9 @@ export async function verifyComments(store: StateStore, config: ReviewConfig): P
     try {
       const exists = await commentExists(entry.owner, entry.repo, entry.commentId);
 
+      // Re-check entry still exists (may have been deleted concurrently in "both" mode)
+      if (!store.get(entry.owner, entry.repo, entry.number)) continue;
+
       if (exists) {
         store.update(entry.owner, entry.repo, entry.number, {
           commentVerifiedAt: new Date().toISOString(),

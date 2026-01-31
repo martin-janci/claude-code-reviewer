@@ -136,6 +136,10 @@ export class Poller {
       try {
         const prState = await getPRState(entry.owner, entry.repo, entry.number);
         reconciled++;
+
+        // Re-check entry still exists (may have been deleted concurrently in "both" mode)
+        if (!this.store.get(entry.owner, entry.repo, entry.number)) continue;
+
         if (prState.state === "MERGED") {
           console.log(`Reconciled: ${key} is merged`);
           this.store.update(entry.owner, entry.repo, entry.number, {

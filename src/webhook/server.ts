@@ -46,6 +46,7 @@ export class WebhookServer {
         let bodyLen = 0;
         let aborted = false;
 
+        req.on("error", () => { aborted = true; });
         req.on("data", (chunk: Buffer) => {
           if (aborted) return;
           bodyLen += chunk.length;
@@ -126,7 +127,11 @@ export class WebhookServer {
 
           // Handle lifecycle events directly
           if (isLifecycleAction) {
-            this.handleLifecycleEvent(action, owner, repo, prData);
+            try {
+              this.handleLifecycleEvent(action, owner, repo, prData);
+            } catch (err) {
+              console.error(`Webhook lifecycle error for ${owner}/${repo}#${prData.number}:`, err);
+            }
             return;
           }
 
@@ -136,6 +141,12 @@ export class WebhookServer {
             if (!titleChanged) {
               return;
             }
+          }
+
+          // Validate nested payload fields before accessing
+          if (!prData.head?.sha || !prData.base?.ref) {
+            console.error(`Webhook: malformed PR payload for ${owner}/${repo}#${prData.number} — missing head.sha or base.ref`);
+            return;
           }
 
           // Handle review actions via processPR
@@ -179,8 +190,8 @@ export class WebhookServer {
       this.store.getOrCreate(owner, repo, prNumber, {
         title: prData.title,
         isDraft: prData.draft,
-        headSha: prData.head.sha,
-        baseBranch: prData.base.ref,
+        headSha: prData.head?.sha ?? "",
+        baseBranch: prData.base?.ref ?? "",
       });
     }
 

@@ -74,7 +74,7 @@ export function loadConfig(path: string = "config.yaml"): AppConfig {
   }
 
   if (config.repos.length === 0) {
-    throw new Error("No repos configured. Add repos to config.yaml or check your configuration.");
+    throw new Error("No repos configured. Add repos to config.yaml. If running in Docker, ensure config.yaml is mounted to /app/config.yaml.");
   }
 
   if (!config.github.token) {
