@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.1.0
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.0.0...v1.1.0)
+
+### 🚀 Enhancements
+
+- Add changelog and release automation ([5ae0b4e](https://github.com/martin-janci/claude-code-reviewer/commit/5ae0b4e))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.0.0
 
 Initial release of Claude Code PR Reviewer.
