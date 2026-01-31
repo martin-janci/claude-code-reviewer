@@ -19,9 +19,11 @@ src/
 │   └── poller.ts                # Non-overlapping poll loop with reconciliation
 ├── reviewer/
 │   ├── reviewer.ts              # Core review orchestration, per-PR mutex, state machine
-│   ├── github.ts                # gh CLI wrapper (list PRs, diffs, comments)
-│   ├── claude.ts                # claude CLI wrapper with skill path resolution
-│   └── comment-verifier.ts      # Detects deleted review comments
+│   ├── github.ts                # gh CLI wrapper (PRs, diffs, comments, reviews API)
+│   ├── claude.ts                # claude CLI wrapper with structured JSON parsing
+│   ├── diff-parser.ts           # Unified diff parser for commentable line detection
+│   ├── formatter.ts             # Review body and inline comment formatting
+│   └── comment-verifier.ts      # Detects deleted reviews and comments
 ├── state/
 │   ├── store.ts                 # JSON file persistence, atomic writes, V1→V2 migration
 │   ├── decisions.ts             # shouldReview() — centralized review gating logic
@@ -29,7 +31,7 @@ src/
 └── webhook/
     └── server.ts                # HTTP server for GitHub webhook events
 
-.claude/skills/code-review/skill.md  # Review prompt template for Claude
+.claude/skills/code-review/skill.md  # Review prompt template (Conventional Comments + JSON)
 config.yaml                     # Runtime configuration
 ```
 
@@ -42,6 +44,9 @@ config.yaml                     # Runtime configuration
 - **Lifecycle events** (close/merge/draft) bypass the per-PR mutex for immediate state updates
 - **`shouldReview()`** is the single decision point — all review gating logic lives in `decisions.ts`
 - **Codebase access** via bare clones + git worktrees (`clone/manager.ts`). Each PR gets an isolated worktree sharing the same object store. Claude receives read-only tools (`Read`, `Grep`, `Glob`) scoped to the worktree.
+- **PR Reviews API** — reviews are posted via `POST /pulls/{n}/reviews` with `event: "COMMENT"` (never approve/block from the bot). Inline comments use Conventional Comments format.
+- **Structured JSON output** from Claude with two-tier fallback parsing (direct → fence extraction → freeform legacy). Invalid JSON gracefully degrades to issue comment posting.
+- **Diff parser** validates line numbers — Claude's line references are snapped to the nearest commentable line or promoted to the top-level review body.
 
 ## PR State Flow
 
@@ -73,6 +78,29 @@ GITHUB_TOKEN=ghp_xxx node dist/index.js  # Production
 | Claude integration | `reviewer/claude.ts`, `.claude/skills/code-review/skill.md` |
 | GitHub API calls | `reviewer/github.ts` |
 | Codebase access | `clone/manager.ts`, `reviewer/reviewer.ts`, `reviewer/claude.ts` |
+| Inline comments | `reviewer/diff-parser.ts`, `reviewer/formatter.ts`, `reviewer/reviewer.ts` |
+| Review verification | `reviewer/comment-verifier.ts` (handles both review and legacy comment paths) |
+
+## Commit Conventions
+
+This project enforces [Conventional Commits](https://www.conventionalcommits.org/) via commitlint.
+
+**Required format:** `type(scope): description`
+
+**Types:**
+- `feat` — new feature (triggers minor version bump)
+- `fix` — bug fix (triggers patch version bump)
+- `perf` — performance improvement (triggers patch version bump)
+- `chore` — maintenance, dependencies
+- `docs` — documentation only
+- `refactor` — code restructuring without behavior change
+- `ci` — CI/CD changes
+- `style` — formatting, whitespace
+- `test` — adding or updating tests
+
+**Breaking changes:** Use `feat!:` or `fix!:` prefix, or add a `BREAKING CHANGE:` footer. Triggers major version bump.
+
+**Scope is optional:** `feat(webhook): ...` or `feat: ...` are both valid.
 
 ## Patterns and Conventions
 

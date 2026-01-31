@@ -8,9 +8,10 @@ Automated PR code review service that watches GitHub pull requests and posts rev
 2. Fetches the PR diff using `gh pr diff`
 3. Clones the repository (bare clone with git worktrees for isolation)
 4. Sends the diff to `claude -p` with read-only codebase access (`Read`, `Grep`, `Glob` tools)
-5. Posts or updates a review comment on the PR
-6. Cleans up the worktree after review
-7. Tracks the full PR lifecycle with a state machine to avoid duplicate reviews and handle edge cases
+5. Parses Claude's structured JSON output into inline comments with [Conventional Comments](https://conventionalcomments.org/) labels
+6. Posts a PR review via the GitHub Pull Request Reviews API with inline comments on specific diff lines
+7. Cleans up the worktree after review
+8. Tracks the full PR lifecycle with a state machine to avoid duplicate reviews and handle edge cases
 
 ## Architecture
 
@@ -51,9 +52,11 @@ Automated PR code review service that watches GitHub pull requests and posts rev
 | State Store | `src/state/store.ts` | JSON file persistence with atomic writes and V1 migration |
 | Decisions | `src/state/decisions.ts` | `shouldReview()` function — centralized review gating |
 | Cleanup | `src/state/cleanup.ts` | Purges stale closed/merged/error entries |
-| GitHub | `src/reviewer/github.ts` | `gh` CLI wrapper for API calls |
-| Claude | `src/reviewer/claude.ts` | Claude Code CLI wrapper for reviews |
-| Comment Verifier | `src/reviewer/comment-verifier.ts` | Detects deleted review comments |
+| GitHub | `src/reviewer/github.ts` | `gh` CLI wrapper for API calls (PRs, diffs, reviews) |
+| Claude | `src/reviewer/claude.ts` | Claude Code CLI wrapper with structured JSON parsing |
+| Diff Parser | `src/reviewer/diff-parser.ts` | Parses unified diffs for commentable line detection |
+| Formatter | `src/reviewer/formatter.ts` | Review body and inline comment formatting |
+| Review Verifier | `src/reviewer/comment-verifier.ts` | Detects deleted/dismissed reviews and comments |
 
 ## PR State Machine
 
@@ -312,28 +315,58 @@ If a V1 state file (simple `"owner/repo#N" → SHA` map) is detected, it is auto
 
 On startup, any entries with `"reviewing"` status are reset to `"pending_review"` to recover from unclean shutdowns.
 
-## Review Prompt
+## Review Output
 
-The review skill prompt lives at `.claude/skills/code-review/skill.md`. It instructs Claude to:
+Reviews are posted using the **GitHub Pull Request Reviews API** — not issue comments. This means:
 
-- Start with a verdict line: `APPROVE`, `REQUEST_CHANGES`, or `COMMENT`
-- Group findings by severity: Critical, Warning, Suggestion
-- Reference specific files and lines
-- Avoid inventing problems
+- **Inline comments** appear directly on the "Files changed" tab at specific lines
+- **Top-level summary** appears in the PR conversation as a collapsible review
+- **Always `COMMENT` event** — the bot never approves or blocks via the API; severity is in the content
 
-Edit this file to customize review focus areas, severity levels, and output format.
+### Conventional Comments
+
+Inline comments use [Conventional Comments](https://conventionalcomments.org/) format:
+
+| Label | Meaning | Blocking? |
+|-------|---------|-----------|
+| `issue` | Real problem — bugs, security, broken logic | Yes (default) |
+| `suggestion` | Improvement idea — better approach, refactoring | Only if fixing a real problem |
+| `nitpick` | Minor style preference | No |
+| `question` | Request for clarification | No |
+| `praise` | Acknowledgment of good work | No |
+
+Example inline comment:
+```
+**issue (blocking):** SQL injection risk. The query uses string concatenation...
+```
+
+### Structured JSON Output
+
+Claude is prompted to output a JSON object with verdict, summary, and per-file findings. The parser has a two-tier fallback:
+
+1. **Direct JSON parse** — Claude outputs raw JSON
+2. **Fence extraction** — Claude wraps JSON in ` ```json ``` `
+3. **Freeform fallback** — invalid JSON gracefully degrades to a legacy issue comment
+
+### Line Number Validation
+
+Claude may reference lines that aren't in the diff. The diff parser builds a map of commentable lines (RIGHT side) and snaps each finding to the nearest valid line (within 3 lines). Findings that can't be placed inline appear in the "Additional Findings" section of the top-level review body.
+
+### Review Prompt
+
+The review skill prompt lives at `.claude/skills/code-review/skill.md`. Edit this file to customize review focus areas, severity labels, and output format.
 
 ### Re-review Context
 
 When a PR is re-reviewed after new commits, the prompt includes context about the previous verdict and SHA, asking Claude to focus on what changed.
 
-## Comment Deduplication
+### Review Identification
 
-The service identifies its own comments using a hidden HTML tag (`<!-- claude-code-review -->`). When a PR receives new commits, the existing review comment is updated in place rather than posting a duplicate.
+The service identifies its own reviews using a hidden HTML tag (`<!-- claude-code-review -->`). Each review is a new `COMMENT` event — old reviews remain as history in the PR conversation.
 
-### Comment Verification
+### Review Verification
 
-Periodically (configurable via `commentVerifyIntervalMinutes`), the service checks whether its review comments still exist. If a comment was deleted, the PR is re-queued for review.
+Periodically (configurable via `commentVerifyIntervalMinutes`), the service checks whether its reviews still exist. If a review was deleted or dismissed, the PR is re-queued for review. Legacy issue comments are also verified for backward compatibility.
 
 ## Concurrency
 
@@ -348,6 +381,50 @@ Periodically (configurable via `commentVerifyIntervalMinutes`), the service chec
 - **Stale cleanup**: Error entries stuck at max retries are purged after `staleErrorDays`
 - **Corrupt state recovery**: If the state file is corrupted, the service starts fresh with an empty state
 
+## Releasing
+
+This project uses [Conventional Commits](https://www.conventionalcommits.org/) and automated releases.
+
+### Commit Format
+
+```
+type(scope): description
+
+# Examples:
+feat: add support for monorepo reviews
+fix(webhook): handle missing signature header
+docs: update setup instructions
+feat!: require Node.js 22 (breaking change)
+```
+
+**Types:** `feat`, `fix`, `chore`, `docs`, `refactor`, `perf`, `ci`, `style`, `test`
+
+Commits are validated by commitlint via a git hook — non-conforming messages are rejected.
+
+### Auto-Release (CI)
+
+Every push to `main` with at least one `feat`, `fix`, or `perf` commit triggers:
+
+1. Version bump (semver based on commit types)
+2. `CHANGELOG.md` update
+3. Git tag + push
+4. GitHub Release with generated notes
+5. Docker image build + push to `ghcr.io/martin-janci/claude-code-reviewer`
+
+### Docker Image Tags
+
+| Tag | Description |
+|-----|-------------|
+| `ghcr.io/martin-janci/claude-code-reviewer:latest` | Latest release |
+| `ghcr.io/martin-janci/claude-code-reviewer:1.2.3` | Specific version |
+
+### Manual Release (Local)
+
+```bash
+npm run release    # bump version, update CHANGELOG, tag, push, create GitHub Release
+npm run changelog  # preview changelog without releasing
+```
+
 ## Project Structure
 
 ```
@@ -361,10 +438,12 @@ claude-code-reviewer/
 │   ├── polling/
 │   │   └── poller.ts                # Poll loop with reconciliation
 │   ├── reviewer/
-│   │   ├── claude.ts                # Claude CLI wrapper
-│   │   ├── github.ts                # GitHub CLI wrapper
+│   │   ├── claude.ts                # Claude CLI wrapper with JSON parsing
+│   │   ├── github.ts                # GitHub CLI wrapper (PRs, reviews API)
 │   │   ├── reviewer.ts              # Core review state machine
-│   │   └── comment-verifier.ts      # Deleted comment detection
+│   │   ├── diff-parser.ts           # Unified diff → commentable lines
+│   │   ├── formatter.ts             # Review body + inline comment formatting
+│   │   └── comment-verifier.ts      # Review/comment verification
 │   ├── state/
 │   │   ├── store.ts                 # State persistence (CRUD, migration)
 │   │   ├── decisions.ts             # shouldReview() decision function
