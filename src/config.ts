@@ -20,6 +20,12 @@ const DEFAULTS: AppConfig = {
     commentVerifyIntervalMinutes: 60,
     maxReviewHistory: 20,
     commentTrigger: "^\\s*/review\\s*$",
+    codebaseAccess: true,
+    cloneDir: "data/clones",
+    cloneTimeoutMs: 120_000,
+    reviewTimeoutMs: 600_000,
+    reviewMaxTurns: 15,
+    staleWorktreeMinutes: 60,
   },
 };
 

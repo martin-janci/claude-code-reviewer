@@ -20,11 +20,26 @@ export interface ReviewContext {
   previousSha?: string;
 }
 
-export function reviewDiff(diff: string, prTitle: string, context?: ReviewContext): Promise<ReviewResult> {
+export interface ReviewOptions {
+  diff: string;
+  prTitle: string;
+  context?: ReviewContext;
+  cwd?: string;
+  timeoutMs?: number;
+  maxTurns?: number;
+}
+
+export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
+  const { diff, prTitle, context, cwd, timeoutMs, maxTurns } = options;
+
   let userPrompt = `## PR Title: ${prTitle}\n\n`;
 
   if (context?.previousVerdict && context.previousSha) {
     userPrompt += `## Re-review Context\nThis is a re-review. Previous verdict was **${context.previousVerdict}** at commit ${context.previousSha.slice(0, 7)}. Focus on what changed since the previous review.\n\n`;
+  }
+
+  if (cwd) {
+    userPrompt += `## Codebase Access\nYou have read-only access to the full repository in your working directory. Use Read, Grep, and Glob tools to explore the codebase when the diff raises questions about contracts, callers, patterns, or architectural impact. Do NOT read every file — only explore when the diff context is insufficient.\n\n`;
   }
 
   userPrompt += `## Diff\n\`\`\`diff\n${diff}\n\`\`\``;
@@ -36,11 +51,20 @@ export function reviewDiff(diff: string, prTitle: string, context?: ReviewContex
     args.push("--append-system-prompt-file", skillPath);
   }
 
+  if (cwd) {
+    args.push("--tools", "Read,Grep,Glob");
+  }
+
+  if (maxTurns != null) {
+    args.push("--max-turns", String(maxTurns));
+  }
+
   return new Promise((resolve) => {
     const child = execFile("claude", args, {
       encoding: "utf-8",
       maxBuffer: 10 * 1024 * 1024,
-      timeout: 300_000, // 5 minute timeout
+      timeout: timeoutMs ?? 300_000,
+      cwd: cwd ?? undefined,
     }, (err, stdout) => {
       if (err) {
         const message = err instanceof Error ? err.message : String(err);

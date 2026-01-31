@@ -11,6 +11,7 @@ FROM registry.rlt.sk/claude-code-custom:latest
 USER root
 RUN apk add --no-cache github-cli git
 USER node
+RUN git config --global advice.detachedHead false
 
 WORKDIR /app
 COPY --from=build /build/dist ./dist/

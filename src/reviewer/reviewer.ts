@@ -1,5 +1,6 @@
 import type { AppConfig, PullRequest, ReviewVerdict, ErrorPhase, PRState } from "../types.js";
 import type { StateStore } from "../state/store.js";
+import type { CloneManager } from "../clone/manager.js";
 import { shouldReview } from "../state/decisions.js";
 import { getPRDiff, findExistingComment, postComment, updateComment } from "./github.js";
 import { reviewDiff } from "./claude.js";
@@ -24,6 +25,7 @@ export class Reviewer {
   constructor(
     private config: AppConfig,
     private store: StateStore,
+    private cloneManager?: CloneManager,
   ) {}
 
   get inflight(): number {
@@ -135,8 +137,35 @@ export class Reviewer {
       previousSha: lastReview.sha,
     } : undefined;
 
+    // 8b. Prepare codebase worktree if enabled
+    let cwd: string | undefined;
+    if (this.cloneManager) {
+      try {
+        cwd = await this.cloneManager.prepareForPR(owner, repo, prNumber, headSha);
+        console.log(`Worktree ready for ${label} at ${cwd}`);
+      } catch (err) {
+        this.recordError(state, headSha, err, "clone_prepare");
+        return;
+      }
+    }
+
     // 9. Run Claude review
-    const result = await reviewDiff(diff, title, context);
+    const result = await reviewDiff({
+      diff,
+      prTitle: title,
+      context,
+      cwd,
+      timeoutMs: this.config.review.reviewTimeoutMs,
+      maxTurns: cwd ? this.config.review.reviewMaxTurns : undefined,
+    });
+
+    // 9b. Cleanup worktree (fire-and-forget)
+    if (this.cloneManager) {
+      this.cloneManager.cleanupPR(owner, repo, prNumber).catch((err) => {
+        console.error(`Worktree cleanup failed for ${label}:`, err);
+      });
+    }
+
     if (!result.success) {
       this.recordError(state, headSha, new Error(result.body || "Claude review returned unsuccessful"), "claude_review");
       return;

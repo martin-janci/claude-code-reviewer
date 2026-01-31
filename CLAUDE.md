@@ -13,6 +13,8 @@ src/
 ├── index.ts                     # Entry point, wiring, graceful shutdown
 ├── config.ts                    # YAML config loading + env var overrides
 ├── types.ts                     # All TypeScript interfaces and types
+├── clone/
+│   └── manager.ts               # Bare clones + git worktrees for codebase access
 ├── polling/
 │   └── poller.ts                # Non-overlapping poll loop with reconciliation
 ├── reviewer/
@@ -39,6 +41,7 @@ config.yaml                     # Runtime configuration
 - **Two event sources** (poller + webhook) share the same `Reviewer` and `StateStore`
 - **Lifecycle events** (close/merge/draft) bypass the per-PR mutex for immediate state updates
 - **`shouldReview()`** is the single decision point — all review gating logic lives in `decisions.ts`
+- **Codebase access** via bare clones + git worktrees (`clone/manager.ts`). Each PR gets an isolated worktree sharing the same object store. Claude receives read-only tools (`Read`, `Grep`, `Glob`) scoped to the worktree.
 
 ## PR State Flow
 
@@ -69,6 +72,7 @@ GITHUB_TOKEN=ghp_xxx node dist/index.js  # Production
 | Configuration | `config.ts`, `types.ts` (AppConfig, ReviewConfig) |
 | Claude integration | `reviewer/claude.ts`, `.claude/skills/code-review/skill.md` |
 | GitHub API calls | `reviewer/github.ts` |
+| Codebase access | `clone/manager.ts`, `reviewer/reviewer.ts`, `reviewer/claude.ts` |
 
 ## Patterns and Conventions
 

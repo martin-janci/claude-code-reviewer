@@ -1,6 +1,7 @@
 import type { AppConfig } from "../types.js";
 import type { Reviewer } from "../reviewer/reviewer.js";
 import type { StateStore } from "../state/store.js";
+import type { CloneManager } from "../clone/manager.js";
 import { listOpenPRs, getPRState } from "../reviewer/github.js";
 import { verifyComments } from "../reviewer/comment-verifier.js";
 import { cleanupStaleEntries } from "../state/cleanup.js";
@@ -17,6 +18,7 @@ export class Poller {
     private config: AppConfig,
     private reviewer: Reviewer,
     private store: StateStore,
+    private cloneManager?: CloneManager,
   ) {}
 
   start(): void {
@@ -108,6 +110,27 @@ export class Poller {
       }
     } catch (err) {
       console.error("Error during cleanup:", err);
+    }
+
+    // Prune stale worktrees and untracked clones
+    if (this.cloneManager) {
+      try {
+        const pruned = await this.cloneManager.pruneStaleWorktrees(this.config.review.staleWorktreeMinutes);
+        if (pruned > 0) {
+          console.log(`Worktree cleanup: pruned ${pruned} stale worktree(s)`);
+        }
+      } catch (err) {
+        console.error("Error pruning stale worktrees:", err);
+      }
+
+      try {
+        const pruned = await this.cloneManager.pruneUntracked(this.config.repos);
+        if (pruned > 0) {
+          console.log(`Clone cleanup: pruned ${pruned} untracked clone(s)`);
+        }
+      } catch (err) {
+        console.error("Error pruning untracked clones:", err);
+      }
     }
   }
 

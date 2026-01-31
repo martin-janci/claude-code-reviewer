@@ -29,6 +29,12 @@ export interface ReviewConfig {
   commentVerifyIntervalMinutes: number;
   maxReviewHistory: number;
   commentTrigger: string;
+  codebaseAccess: boolean;
+  cloneDir: string;
+  cloneTimeoutMs: number;
+  reviewTimeoutMs: number;
+  reviewMaxTurns: number;
+  staleWorktreeMinutes: number;
 }
 
 export interface AppConfig {
@@ -56,7 +62,7 @@ export type ReviewVerdict = "APPROVE" | "REQUEST_CHANGES" | "COMMENT" | "unknown
 
 export type SkipReason = "draft" | "wip_title" | "diff_too_large";
 
-export type ErrorPhase = "diff_fetch" | "claude_review" | "comment_post";
+export type ErrorPhase = "diff_fetch" | "clone_prepare" | "claude_review" | "comment_post";
 
 export interface ReviewRecord {
   sha: string;

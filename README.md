@@ -6,9 +6,11 @@ Automated PR code review service that watches GitHub pull requests and posts rev
 
 1. Detects new or updated PRs via **polling** or **GitHub webhooks**
 2. Fetches the PR diff using `gh pr diff`
-3. Sends the diff to `claude -p` with a customizable review prompt
-4. Posts or updates a review comment on the PR
-5. Tracks the full PR lifecycle with a state machine to avoid duplicate reviews and handle edge cases
+3. Clones the repository (bare clone with git worktrees for isolation)
+4. Sends the diff to `claude -p` with read-only codebase access (`Read`, `Grep`, `Glob` tools)
+5. Posts or updates a review comment on the PR
+6. Cleans up the worktree after review
+7. Tracks the full PR lifecycle with a state machine to avoid duplicate reviews and handle edge cases
 
 ## Architecture
 
@@ -25,12 +27,15 @@ Automated PR code review service that watches GitHub pull requests and posts rev
          │ (processPR) │
          └──────┬──────┘
                 │
-    ┌───────────┼───────────┐
-    │           │           │
-┌───▼───┐ ┌────▼────┐ ┌────▼────┐
-│  gh   │ │ claude  │ │  State  │
-│  CLI  │ │  CLI    │ │  Store  │
-└───────┘ └─────────┘ └─────────┘
+    ┌───────┬───┼───────┬──────────┐
+    │       │   │       │          │
+┌───▼───┐ ┌─▼───▼──┐ ┌─▼──────┐ ┌─▼──────┐
+│  gh   │ │ clone  │ │ claude │ │ State  │
+│  CLI  │ │ manager│ │  CLI   │ │ Store  │
+└───────┘ └────────┘ └────────┘ └────────┘
+              │
+        bare clones +
+        git worktrees
 ```
 
 ### Components
@@ -42,6 +47,7 @@ Automated PR code review service that watches GitHub pull requests and posts rev
 | Poller | `src/polling/poller.ts` | Non-overlapping poll loop with reconciliation and cleanup |
 | Webhook Server | `src/webhook/server.ts` | HTTP server for GitHub webhook events |
 | Reviewer | `src/reviewer/reviewer.ts` | Core review logic with state machine transitions |
+| Clone Manager | `src/clone/manager.ts` | Bare clones and git worktrees for codebase access |
 | State Store | `src/state/store.ts` | JSON file persistence with atomic writes and V1 migration |
 | Decisions | `src/state/decisions.ts` | `shouldReview()` function — centralized review gating |
 | Cleanup | `src/state/cleanup.ts` | Purges stale closed/merged/error entries |
@@ -98,6 +104,31 @@ skipped → pending_review (when condition clears)
 | Review comment deleted | Periodic verification detects deletion, re-queues review |
 | `/review` comment posted | Forced re-review bypassing debounce and error backoff |
 
+## Codebase Access
+
+By default, reviews include full codebase access — Claude can read any file in the repository, not just the diff. This enables deeper reviews that check callers, verify interface contracts, and understand architectural patterns.
+
+**How it works:**
+- Each repo is **bare-cloned** once to `data/clones/owner/repo/`
+- Each PR gets an isolated **git worktree** at `data/clones/owner/repo--pr-N/`
+- Claude receives read-only tools (`Read`, `Grep`, `Glob`) scoped to the worktree
+- Worktrees are cleaned up after review; stale ones are pruned each poll cycle
+- Clones share a single object store, so disk overhead is minimal
+
+**Configuration:**
+
+```yaml
+review:
+  codebaseAccess: true          # set false for diff-only reviews
+  cloneDir: data/clones         # stored in the reviewer-data Docker volume
+  cloneTimeoutMs: 120000        # timeout for git clone/fetch
+  reviewTimeoutMs: 600000       # timeout for claude review (10 min)
+  reviewMaxTurns: 15            # max agentic turns for codebase exploration
+  staleWorktreeMinutes: 60      # auto-cleanup threshold
+```
+
+Set `codebaseAccess: false` to revert to diff-only reviews. Clone failures are treated as errors (not fallback to diff-only) to ensure consistent review quality.
+
 ## Setup
 
 ### Prerequisites
@@ -141,6 +172,12 @@ review:
   commentVerifyIntervalMinutes: 60   # how often to check if review comment exists
   maxReviewHistory: 20               # max review records to keep per PR
   commentTrigger: "^\\s*/review\\s*$"  # regex to match PR comments that trigger a review
+  codebaseAccess: true                 # clone repos for full-context reviews
+  cloneDir: data/clones                # where repo clones are stored
+  cloneTimeoutMs: 120000               # timeout for git clone/fetch
+  reviewTimeoutMs: 600000              # timeout for claude review (10 min)
+  reviewMaxTurns: 15                   # max agentic turns for codebase exploration
+  staleWorktreeMinutes: 60             # cleanup worktrees older than this
 ```
 
 ### Environment Variables
@@ -319,6 +356,8 @@ claude-code-reviewer/
 │   ├── index.ts                     # Entry point
 │   ├── config.ts                    # Config loading with validation
 │   ├── types.ts                     # TypeScript type definitions
+│   ├── clone/
+│   │   └── manager.ts               # Bare clones + git worktrees
 │   ├── polling/
 │   │   └── poller.ts                # Poll loop with reconciliation
 │   ├── reviewer/

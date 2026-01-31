@@ -29,3 +29,9 @@ review:
   commentVerifyIntervalMinutes: 60   # how often to check if review comment still exists
   maxReviewHistory: 20               # max review records to keep per PR
   commentTrigger: "^\\s*/review\\s*$"  # regex to match PR comments that trigger a review
+  codebaseAccess: true               # clone repos for full-context reviews
+  cloneDir: data/clones              # where repo clones are stored
+  cloneTimeoutMs: 120000             # timeout for git clone/fetch (2 min)
+  reviewTimeoutMs: 600000            # timeout for claude review (10 min)
+  reviewMaxTurns: 15                 # max agentic turns for codebase exploration
+  staleWorktreeMinutes: 60           # cleanup worktrees older than this

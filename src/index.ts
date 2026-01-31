@@ -4,6 +4,7 @@ import { StateStore } from "./state/store.js";
 import { Reviewer } from "./reviewer/reviewer.js";
 import { Poller } from "./polling/poller.js";
 import { WebhookServer } from "./webhook/server.js";
+import { CloneManager } from "./clone/manager.js";
 import { setGhToken } from "./reviewer/github.js";
 
 function startHealthServer(port: number): Server {
@@ -25,7 +26,18 @@ function startHealthServer(port: number): Server {
 function main(): void {
   const config = loadConfig();
   const store = new StateStore();
-  const reviewer = new Reviewer(config, store);
+
+  let cloneManager: CloneManager | undefined;
+  if (config.review.codebaseAccess) {
+    cloneManager = new CloneManager(
+      config.review.cloneDir,
+      config.github.token || undefined,
+      config.review.cloneTimeoutMs,
+    );
+    console.log(`Codebase access enabled (clones at ${config.review.cloneDir})`);
+  }
+
+  const reviewer = new Reviewer(config, store, cloneManager);
 
   // Pass GitHub token to gh CLI wrapper
   if (config.github.token) {
@@ -40,7 +52,7 @@ function main(): void {
   console.log(`Watching ${config.repos.length} repo(s): ${config.repos.map((r) => `${r.owner}/${r.repo}`).join(", ")}`);
 
   if (config.mode === "polling" || config.mode === "both") {
-    poller = new Poller(config, reviewer, store);
+    poller = new Poller(config, reviewer, store, cloneManager);
     poller.start();
   }
 
