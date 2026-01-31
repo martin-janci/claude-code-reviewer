@@ -18,7 +18,12 @@ Focus on:
 
 ## Output Format
 
-Start with a one-line summary verdict: APPROVE, REQUEST_CHANGES, or COMMENT.
+CRITICAL: Your response MUST begin with exactly one of these three words on the first line, with no other text on that line:
+- APPROVE
+- REQUEST_CHANGES
+- COMMENT
+
+Do NOT start with headings, summaries, or any other text. The very first line of your output must be the verdict word alone.
 
 Then list findings grouped by severity:
 - **Critical** — must fix before merge
