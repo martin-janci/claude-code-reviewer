@@ -7,6 +7,12 @@ export function setGhToken(token: string): void {
   ghToken = token;
 }
 
+let ghTimeoutMs = 60_000;
+
+export function setGhTimeout(ms: number): void {
+  ghTimeoutMs = ms;
+}
+
 function gh(args: string[], input?: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const env = { ...process.env };
@@ -18,7 +24,7 @@ function gh(args: string[], input?: string): Promise<string> {
       encoding: "utf-8",
       maxBuffer: 10 * 1024 * 1024,
       env,
-      timeout: 60_000,
+      timeout: ghTimeoutMs,
     }, (err, stdout) => {
       if (err) return reject(err);
       resolve(stdout.trim());
