@@ -96,6 +96,7 @@ skipped → pending_review (when condition clears)
 | Service restart | Resets any `reviewing` → `pending_review` (crash recovery) |
 | Diff too large | `skipped` (diff_too_large), re-evaluates on new push |
 | Review comment deleted | Periodic verification detects deletion, re-queues review |
+| `/review` comment posted | Forced re-review bypassing debounce and error backoff |
 
 ## Setup
 
@@ -139,6 +140,7 @@ review:
   staleErrorDays: 30                 # purge max-retries error state after N days
   commentVerifyIntervalMinutes: 60   # how often to check if review comment exists
   maxReviewHistory: 20               # max review records to keep per PR
+  commentTrigger: "^\\s*/review\\s*$"  # regex to match PR comments that trigger a review
 ```
 
 ### Environment Variables
@@ -204,7 +206,7 @@ To use webhook mode, configure a GitHub webhook on your repository:
 2. Set **Payload URL** to `https://your-host:3000/webhook`
 3. Set **Content type** to `application/json`
 4. Set **Secret** to match your `WEBHOOK_SECRET`
-5. Select events: **Pull requests**
+5. Select events: **Pull requests** and **Issue comments**
 6. Save
 
 ### Handled Webhook Events
@@ -218,6 +220,23 @@ To use webhook mode, configure a GitHub webhook on your repository:
 | `edited` | Triggers review only if title changed (WIP detection) |
 | `closed` | Sets state to `closed` or `merged` directly |
 | `converted_to_draft` | Sets state to `skipped` (draft) directly |
+| `issue_comment` (created) | Triggers review if comment matches `commentTrigger` regex |
+
+### Comment-Triggered Review
+
+Post `/review` as a comment on a PR to trigger an immediate review. This is useful for:
+
+- Re-reviewing a PR that was already reviewed at the same SHA
+- Bypassing the debounce period after a push
+- Retrying after errors (bypasses backoff and max retries)
+
+The trigger is configurable via `review.commentTrigger` (default: `^\s*/review\s*$`). The regex is tested per-line (`m` flag), so `/review` can appear in a multi-line comment.
+
+**What gets bypassed:** already-reviewed check, debounce, error backoff/max retries.
+
+**What is NOT bypassed (policy/safety):** terminal states (closed/merged), reviewing lock (prevents duplicates), draft/WIP skip, diff size limit.
+
+Bot comments are ignored to prevent feedback loops.
 
 ## Health Check
 
