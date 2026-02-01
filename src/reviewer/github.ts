@@ -220,3 +220,80 @@ export async function updateComment(
     "--input", "-",
   ], JSON.stringify({ body }));
 }
+
+// --- PR Reviews API ---
+
+export interface ReviewComment {
+  path: string;
+  line: number;
+  body: string;
+}
+
+/**
+ * Post a PR review using the Pull Request Reviews API.
+ * Always uses event: "COMMENT" — the bot should never approve or block.
+ * Returns the review ID.
+ */
+export async function postReview(
+  owner: string,
+  repo: string,
+  prNumber: number,
+  body: string,
+  commitId: string,
+  comments: ReviewComment[],
+): Promise<string> {
+  const payload = {
+    body,
+    event: "COMMENT",
+    commit_id: commitId,
+    comments: comments.map((c) => ({
+      path: c.path,
+      line: c.line,
+      body: c.body,
+    })),
+  };
+
+  const json = await gh([
+    "api",
+    "--method", "POST",
+    `repos/${owner}/${repo}/pulls/${prNumber}/reviews`,
+    "--input", "-",
+  ], JSON.stringify(payload));
+
+  let result: { id: number };
+  try {
+    result = JSON.parse(json);
+  } catch {
+    throw new Error(`Failed to parse postReview response: ${json.slice(0, 200)}`);
+  }
+  return String(result.id);
+}
+
+/**
+ * Check if a PR review still exists and is not dismissed.
+ * Returns { exists: true/false, dismissed: true/false }.
+ */
+export async function reviewExists(
+  owner: string,
+  repo: string,
+  prNumber: number,
+  reviewId: string,
+): Promise<{ exists: boolean; dismissed: boolean }> {
+  try {
+    const json = await gh([
+      "api",
+      `repos/${owner}/${repo}/pulls/${prNumber}/reviews/${reviewId}`,
+    ]);
+    const review = JSON.parse(json) as { state: string };
+    return {
+      exists: true,
+      dismissed: review.state === "DISMISSED",
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("404") || message.includes("Not Found")) {
+      return { exists: false, dismissed: false };
+    }
+    throw err;
+  }
+}

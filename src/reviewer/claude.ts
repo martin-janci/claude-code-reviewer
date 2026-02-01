@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import type { ReviewResult } from "../types.js";
+import type { ReviewResult, ReviewVerdict, StructuredReview, ConventionalLabel, ReviewFinding } from "../types.js";
 
 // Resolve skill path: check Docker location first, then project-relative
 function resolveSkillPath(): string | null {
@@ -29,6 +29,97 @@ export interface ReviewOptions {
   maxTurns?: number;
 }
 
+const VALID_VERDICTS = new Set<string>(["APPROVE", "REQUEST_CHANGES", "COMMENT"]);
+const VALID_LABELS = new Set<string>(["issue", "suggestion", "nitpick", "question", "praise"]);
+
+const JSON_SCHEMA = `{
+  "verdict": "APPROVE | REQUEST_CHANGES | COMMENT",
+  "summary": "Brief one-line summary of the review.",
+  "findings": [
+    {
+      "severity": "issue | suggestion | nitpick | question | praise",
+      "blocking": true,
+      "path": "src/foo.ts",
+      "line": 42,
+      "body": "Explanation of the finding."
+    }
+  ],
+  "overall": "Optional overall notes (omit if not needed)."
+}`;
+
+/**
+ * Validate and normalize a parsed object into a StructuredReview.
+ * Returns null if the object doesn't match the expected schema.
+ */
+function validateStructuredReview(obj: unknown): StructuredReview | null {
+  if (!obj || typeof obj !== "object") return null;
+
+  const o = obj as Record<string, unknown>;
+
+  // Verdict
+  if (typeof o.verdict !== "string" || !VALID_VERDICTS.has(o.verdict)) return null;
+  const verdict = o.verdict as ReviewVerdict;
+
+  // Summary
+  if (typeof o.summary !== "string" || !o.summary.trim()) return null;
+  const summary = o.summary.trim();
+
+  // Findings
+  if (!Array.isArray(o.findings)) return null;
+  const findings: ReviewFinding[] = [];
+  for (const f of o.findings) {
+    if (!f || typeof f !== "object") continue;
+    const fi = f as Record<string, unknown>;
+    if (typeof fi.severity !== "string" || !VALID_LABELS.has(fi.severity)) continue;
+    if (typeof fi.path !== "string" || !fi.path) continue;
+    if (typeof fi.line !== "number" || fi.line < 1) continue;
+    if (typeof fi.body !== "string" || !fi.body) continue;
+    findings.push({
+      severity: fi.severity as ConventionalLabel,
+      blocking: fi.blocking === true,
+      path: fi.path,
+      line: fi.line,
+      body: fi.body,
+    });
+  }
+
+  // Overall (optional)
+  const overall = typeof o.overall === "string" && o.overall.trim() ? o.overall.trim() : undefined;
+
+  return { verdict, summary, findings, overall };
+}
+
+/**
+ * Attempt to parse Claude's output as a structured JSON review.
+ * Two-tier fallback: direct parse → fence extraction → null (freeform).
+ */
+export function parseStructuredReview(stdout: string): StructuredReview | null {
+  const trimmed = stdout.trim();
+
+  // Tier 1: direct JSON parse
+  try {
+    const obj = JSON.parse(trimmed);
+    const result = validateStructuredReview(obj);
+    if (result) return result;
+  } catch {
+    // Not direct JSON — try fence extraction
+  }
+
+  // Tier 2: extract from ```json ... ``` fence
+  const fenceMatch = trimmed.match(/```json\s*\n([\s\S]*?)\n\s*```/);
+  if (fenceMatch) {
+    try {
+      const obj = JSON.parse(fenceMatch[1]);
+      const result = validateStructuredReview(obj);
+      if (result) return result;
+    } catch {
+      // Invalid JSON in fence
+    }
+  }
+
+  return null;
+}
+
 export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
   const { diff, prTitle, context, cwd, timeoutMs, maxTurns } = options;
 
@@ -43,7 +134,7 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
   }
 
   userPrompt += `## Diff\n\`\`\`diff\n${diff}\n\`\`\`\n\n`;
-  userPrompt += `## Output Requirements\nYour response MUST start with exactly one of: APPROVE, REQUEST_CHANGES, or COMMENT — alone on the first line, no other text.\nUse REQUEST_CHANGES if you find any warning or critical issue, including unused exports, dead code, or incomplete integrations.`;
+  userPrompt += `## Output Requirements\nOutput ONLY a JSON object matching this schema — no markdown, no fences, no extra text:\n${JSON_SCHEMA}\n\nVerdict rules:\n- REQUEST_CHANGES if any finding has "blocking": true\n- APPROVE if no issues or only non-blocking suggestions\n- COMMENT for non-blocking observations worth noting`;
 
   const args = ["-p", "--output-format", "text"];
 
@@ -73,7 +164,17 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
         resolve({ body: message, success: false });
         return;
       }
-      resolve({ body: stdout.trim(), success: true });
+
+      const body = stdout.trim();
+      const structured = parseStructuredReview(body);
+
+      if (structured) {
+        console.log(`Parsed structured review: verdict=${structured.verdict}, ${structured.findings.length} finding(s)`);
+      } else {
+        console.warn("Claude output was not valid structured JSON — using freeform fallback");
+      }
+
+      resolve({ body, success: true, structured: structured ?? undefined });
     });
 
     if (child.stdin) {
