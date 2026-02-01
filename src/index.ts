@@ -8,7 +8,7 @@ import { Poller } from "./polling/poller.js";
 import { WebhookServer } from "./webhook/server.js";
 import { CloneManager } from "./clone/manager.js";
 import { MetricsCollector } from "./metrics.js";
-import { setGhToken } from "./reviewer/github.js";
+import { setGhToken, getPRDetails } from "./reviewer/github.js";
 
 let VERSION = "unknown";
 try {
@@ -17,6 +17,111 @@ try {
   // package.json missing or malformed — version will show as "unknown"
 }
 const START_TIME = Date.now();
+
+// --- One-shot CLI mode ---
+
+interface OneShotTarget {
+  owner: string;
+  repo: string;
+  prNumber: number;
+}
+
+function parseOneShotArg(): OneShotTarget | null {
+  const idx = process.argv.indexOf("--pr");
+  if (idx === -1) return null;
+
+  const value = process.argv[idx + 1];
+  if (!value) {
+    console.error("Error: --pr requires a value in the format owner/repo#number");
+    console.error("Usage: node dist/index.js --pr owner/repo#123");
+    process.exit(1);
+  }
+
+  const match = value.match(/^([^/]+)\/([^#]+)#(\d+)$/);
+  if (!match) {
+    console.error(`Error: Invalid --pr format "${value}". Expected owner/repo#number`);
+    console.error("Usage: node dist/index.js --pr owner/repo#123");
+    process.exit(1);
+  }
+
+  return { owner: match[1], repo: match[2], prNumber: parseInt(match[3], 10) };
+}
+
+async function runOneShot(target: OneShotTarget): Promise<void> {
+  const config = loadConfig("config.yaml", true);
+
+  // Inject the target repo if not already configured
+  const hasRepo = config.repos.some(
+    (r) => r.owner === target.owner && r.repo === target.repo,
+  );
+  if (!hasRepo) {
+    config.repos.push({ owner: target.owner, repo: target.repo });
+  }
+
+  if (config.github.token) {
+    setGhToken(config.github.token);
+  }
+
+  const store = new StateStore();
+
+  let cloneManager: CloneManager | undefined;
+  if (config.review.codebaseAccess) {
+    cloneManager = new CloneManager(
+      config.review.cloneDir,
+      config.github.token || undefined,
+      config.review.cloneTimeoutMs,
+    );
+  }
+
+  const metrics = new MetricsCollector();
+  const reviewer = new Reviewer(config, store, cloneManager, metrics);
+
+  const key = `${target.owner}/${target.repo}#${target.prNumber}`;
+  console.log(`One-shot review: ${key}`);
+
+  // Fetch PR details
+  let pr;
+  try {
+    pr = await getPRDetails(target.owner, target.repo, target.prNumber);
+  } catch (err) {
+    console.error(`Failed to fetch PR ${key}:`, err instanceof Error ? err.message : err);
+    process.exit(1);
+  }
+
+  // Force review to bypass "already reviewed" gating
+  pr.forceReview = true;
+
+  await reviewer.processPR(pr);
+
+  // Read final state to determine exit code
+  const state = store.get(target.owner, target.repo, target.prNumber);
+  if (!state) {
+    console.error(`No state recorded for ${key} after review`);
+    process.exit(1);
+  }
+
+  switch (state.status) {
+    case "reviewed": {
+      const lastReview = state.reviews[state.reviews.length - 1];
+      console.log(`Review complete — verdict: ${lastReview?.verdict ?? "unknown"}`);
+      process.exit(0);
+      break;
+    }
+    case "error":
+      console.error(`Review failed: ${state.lastError?.message ?? "unknown error"} (phase: ${state.lastError?.phase ?? "unknown"})`);
+      process.exit(1);
+      break;
+    case "skipped":
+      console.error(`Review skipped: ${state.skipReason ?? "unknown reason"}`);
+      process.exit(1);
+      break;
+    default:
+      console.log(`Review ended in unexpected status: ${state.status}`);
+      process.exit(1);
+  }
+}
+
+// --- Service mode ---
 
 function startHealthServer(port: number, metrics: MetricsCollector, store: StateStore): Server {
   const server = createServer((req, res) => {
@@ -45,6 +150,15 @@ function startHealthServer(port: number, metrics: MetricsCollector, store: State
 }
 
 function main(): void {
+  const oneShotTarget = parseOneShotArg();
+  if (oneShotTarget) {
+    runOneShot(oneShotTarget).catch((err) => {
+      console.error("One-shot review failed:", err);
+      process.exit(1);
+    });
+    return;
+  }
+
   const config = loadConfig();
   const store = new StateStore();
 

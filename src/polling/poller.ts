@@ -3,7 +3,7 @@ import type { Reviewer } from "../reviewer/reviewer.js";
 import type { StateStore } from "../state/store.js";
 import type { CloneManager } from "../clone/manager.js";
 import { listOpenPRs, getPRState } from "../reviewer/github.js";
-import { verifyComments } from "../reviewer/comment-verifier.js";
+import { verifyReviews } from "../reviewer/comment-verifier.js";
 import { cleanupStaleEntries } from "../state/cleanup.js";
 import { StateStore as StoreClass } from "../state/store.js";
 
@@ -94,7 +94,7 @@ export class Poller {
 
     // Verify comments on reviewed PRs
     try {
-      const requeued = await verifyComments(this.store, this.config.review);
+      const requeued = await verifyReviews(this.store, this.config.review);
       if (requeued > 0) {
         console.log(`Comment verification: ${requeued} PR(s) requeued for re-review`);
       }

@@ -60,6 +60,25 @@ export type PRStatus =
 
 export type ReviewVerdict = "APPROVE" | "REQUEST_CHANGES" | "COMMENT" | "unknown";
 
+// --- Structured Review (JSON output from Claude) ---
+
+export type ConventionalLabel = "issue" | "suggestion" | "nitpick" | "question" | "praise";
+
+export interface ReviewFinding {
+  severity: ConventionalLabel;
+  blocking: boolean;
+  path: string;
+  line: number;
+  body: string;
+}
+
+export interface StructuredReview {
+  verdict: ReviewVerdict;
+  summary: string;
+  findings: ReviewFinding[];
+  overall?: string;
+}
+
 export type SkipReason = "draft" | "wip_title" | "diff_too_large";
 
 export type ErrorPhase = "diff_fetch" | "clone_prepare" | "claude_review" | "comment_post";
@@ -68,6 +87,7 @@ export interface ReviewRecord {
   sha: string;
   reviewedAt: string;
   commentId: string | null;
+  reviewId: string | null;
   verdict: ReviewVerdict;
   posted: boolean;
 }
@@ -108,9 +128,13 @@ export interface PRState {
   lastError: ErrorRecord | null;
   consecutiveErrors: number;
 
-  // Comment tracking
+  // Comment tracking (legacy — issue comments)
   commentId: string | null;
   commentVerifiedAt: string | null;
+
+  // Review tracking (new — PR Reviews API)
+  reviewId: string | null;
+  reviewVerifiedAt: string | null;
 
   // Timestamps
   firstSeenAt: string;
@@ -150,4 +174,5 @@ export interface PullRequest {
 export interface ReviewResult {
   body: string;
   success: boolean;
+  structured?: StructuredReview;
 }
