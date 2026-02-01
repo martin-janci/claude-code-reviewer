@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.4.0
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.3.0...v1.4.0)
+
+### 🚀 Enhancements
+
+- Structured PR reviews with inline comments and resolution tracking ([#4](https://github.com/martin-janci/claude-code-reviewer/pull/4))
+
+### ❤️ Contributors
+
+- Martin Janči ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.3.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.2.0...v1.3.0)
