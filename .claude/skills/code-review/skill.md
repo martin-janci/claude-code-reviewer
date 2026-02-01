@@ -77,3 +77,27 @@ Rules:
 - `body` should be concise but complete — include the problem, impact, and suggested fix
 - Empty `findings` array is valid for APPROVE verdicts
 - If the diff looks good with no significant issues, return APPROVE with an empty findings array and a brief summary. Don't invent problems.
+
+## Re-review Resolution Tracking
+
+When re-reviewing a PR (previous findings are provided in the prompt), include a `resolutions` array for each previous finding:
+
+```
+"resolutions": [
+  {
+    "path": "src/foo.ts",
+    "line": 42,
+    "body": "Brief explanation of the resolution status.",
+    "resolution": "resolved | wont_fix | open"
+  }
+]
+```
+
+Resolution values:
+- `resolved` — the issue was fixed in the new code
+- `wont_fix` — the issue is intentionally not addressed (explain why in `body`)
+- `open` — the issue is still present and unresolved
+
+Use the same `path` and `line` from the previous finding to identify it. If any previous blocking finding has resolution `open`, the verdict MUST be `REQUEST_CHANGES`.
+
+Omit the `resolutions` field entirely on first reviews (when no previous findings are provided).

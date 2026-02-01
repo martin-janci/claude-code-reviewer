@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import type { ReviewResult, ReviewVerdict, StructuredReview, ConventionalLabel, ReviewFinding } from "../types.js";
+import type { ReviewResult, ReviewVerdict, StructuredReview, ConventionalLabel, ReviewFinding, FindingResolution, ResolutionEntry } from "../types.js";
 
 // Resolve skill path: check Docker location first, then project-relative
 function resolveSkillPath(): string | null {
@@ -18,6 +18,7 @@ function resolveSkillPath(): string | null {
 export interface ReviewContext {
   previousVerdict?: string;
   previousSha?: string;
+  previousFindings?: ReviewFinding[];
 }
 
 export interface ReviewOptions {
@@ -42,6 +43,14 @@ const JSON_SCHEMA = `{
       "path": "src/foo.ts",
       "line": 42,
       "body": "Explanation of the finding."
+    }
+  ],
+  "resolutions": [
+    {
+      "path": "src/foo.ts",
+      "line": 42,
+      "body": "Brief explanation of the resolution status.",
+      "resolution": "resolved | wont_fix | open"
     }
   ],
   "overall": "Optional overall notes (omit if not needed)."
@@ -83,10 +92,32 @@ function validateStructuredReview(obj: unknown): StructuredReview | null {
     });
   }
 
+  // Resolutions (optional — only present on re-reviews)
+  const VALID_RESOLUTIONS = new Set<string>(["resolved", "wont_fix", "open"]);
+  let resolutions: ResolutionEntry[] | undefined;
+  if (Array.isArray(o.resolutions)) {
+    const parsed: ResolutionEntry[] = [];
+    for (const r of o.resolutions) {
+      if (!r || typeof r !== "object") continue;
+      const ri = r as Record<string, unknown>;
+      if (typeof ri.path !== "string" || !ri.path) continue;
+      if (typeof ri.line !== "number" || ri.line < 1) continue;
+      if (typeof ri.body !== "string" || !ri.body) continue;
+      if (typeof ri.resolution !== "string" || !VALID_RESOLUTIONS.has(ri.resolution)) continue;
+      parsed.push({
+        path: ri.path,
+        line: ri.line,
+        body: ri.body,
+        resolution: ri.resolution as FindingResolution,
+      });
+    }
+    if (parsed.length > 0) resolutions = parsed;
+  }
+
   // Overall (optional)
   const overall = typeof o.overall === "string" && o.overall.trim() ? o.overall.trim() : undefined;
 
-  return { verdict, summary, findings, overall };
+  return { verdict, summary, findings, overall, resolutions };
 }
 
 /**
@@ -127,6 +158,18 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
 
   if (context?.previousVerdict && context.previousSha) {
     userPrompt += `## Re-review Context\nThis is a re-review. Previous verdict was **${context.previousVerdict}** at commit ${context.previousSha.slice(0, 7)}. Focus on what changed since the previous review.\n\n`;
+
+    if (context.previousFindings && context.previousFindings.length > 0) {
+      userPrompt += `## Previous Review Findings\nThe previous review had these findings:\n`;
+      for (const f of context.previousFindings) {
+        userPrompt += `- **${f.severity}${f.blocking ? " (blocking)" : ""}** \`${f.path}:${f.line}\`: ${f.body}\n`;
+      }
+      userPrompt += `\nFor each previous finding, include a \`resolutions\` entry in your JSON output stating whether it is:\n`;
+      userPrompt += `- "resolved" — the issue was fixed in the new code\n`;
+      userPrompt += `- "wont_fix" — the issue is intentionally not addressed (explain why)\n`;
+      userPrompt += `- "open" — the issue is still present and unresolved\n\n`;
+      userPrompt += `Use the same \`path\` and \`line\` from the previous finding to identify it. If any previous blocking finding has resolution "open", your verdict MUST be REQUEST_CHANGES.\n\n`;
+    }
   }
 
   if (cwd) {
@@ -134,7 +177,7 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
   }
 
   userPrompt += `## Diff\n\`\`\`diff\n${diff}\n\`\`\`\n\n`;
-  userPrompt += `## Output Requirements\nOutput ONLY a JSON object matching this schema — no markdown, no fences, no extra text:\n${JSON_SCHEMA}\n\nVerdict rules:\n- REQUEST_CHANGES if any finding has "blocking": true\n- APPROVE if no issues or only non-blocking suggestions\n- COMMENT for non-blocking observations worth noting`;
+  userPrompt += `## Output Requirements\nOutput ONLY a JSON object matching this schema — no markdown, no fences, no extra text:\n${JSON_SCHEMA}\n\nVerdict rules:\n- REQUEST_CHANGES if any finding has "blocking": true\n- APPROVE if no issues or only non-blocking suggestions\n- COMMENT for non-blocking observations worth noting\n\nResolutions array: only include when re-reviewing (previous findings were provided). Omit the field entirely on first reviews.`;
 
   const args = ["-p", "--output-format", "text"];
 

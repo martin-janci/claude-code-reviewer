@@ -297,3 +297,122 @@ export async function reviewExists(
     throw err;
   }
 }
+
+
+// --- GraphQL: Review Thread Resolution ---
+
+export interface ReviewThread {
+  id: string;
+  isResolved: boolean;
+  path: string;
+  line: number | null;
+  body: string;
+}
+
+/**
+ * Fetch review threads for a PR via GraphQL with cursor-based pagination.
+ * Returns threads with their ID, resolved status, file path, line, and first comment body.
+ */
+export async function getReviewThreads(
+  owner: string,
+  repo: string,
+  prNumber: number,
+): Promise<ReviewThread[]> {
+  const query = `
+    query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $pr) {
+          reviewThreads(first: 100, after: $cursor) {
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+            nodes {
+              id
+              isResolved
+              path
+              line
+              comments(first: 1) {
+                nodes {
+                  body
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const allThreads: ReviewThread[] = [];
+  let cursor: string | null = null;
+
+  do {
+    const args = [
+      "api", "graphql",
+      "-f", `query=${query}`,
+      "-f", `owner=${owner}`,
+      "-f", `repo=${repo}`,
+      "-F", `pr=${prNumber}`,
+    ];
+    if (cursor) {
+      args.push("-f", `cursor=${cursor}`);
+    }
+
+    const json = await gh(args);
+
+    const result = JSON.parse(json) as {
+      data: {
+        repository: {
+          pullRequest: {
+            reviewThreads: {
+              pageInfo: { hasNextPage: boolean; endCursor: string | null };
+              nodes: Array<{
+                id: string;
+                isResolved: boolean;
+                path: string;
+                line: number | null;
+                comments: { nodes: Array<{ body: string }> };
+              }>;
+            };
+          };
+        };
+      };
+    };
+
+    const threadData = result.data.repository.pullRequest.reviewThreads;
+
+    for (const t of threadData.nodes) {
+      allThreads.push({
+        id: t.id,
+        isResolved: t.isResolved,
+        path: t.path,
+        line: t.line,
+        body: t.comments.nodes[0]?.body ?? "",
+      });
+    }
+
+    cursor = threadData.pageInfo.hasNextPage ? threadData.pageInfo.endCursor : null;
+  } while (cursor);
+
+  return allThreads;
+}
+
+/**
+ * Resolve a PR review thread via GraphQL mutation.
+ */
+export async function resolveReviewThread(threadId: string): Promise<void> {
+  const query = `
+    mutation($threadId: ID!) {
+      resolveReviewThread(input: {threadId: $threadId}) {
+        thread { id isResolved }
+      }
+    }
+  `;
+
+  await gh([
+    "api", "graphql",
+    "-f", `query=${query}`,
+    "-f", `threadId=${threadId}`,
+  ]);
+}
