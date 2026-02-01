@@ -34,6 +34,9 @@ export class MetricsCollector {
     clone_prepare: 0,
     claude_review: 0,
     comment_post: 0,
+    jira_validate: 0,
+    description_generate: 0,
+    label_apply: 0,
   };
   private skipCount = 0;
   private skipReasonCounts: Partial<Record<SkipReason, number>> = {};

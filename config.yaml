@@ -35,3 +35,27 @@ review:
   reviewTimeoutMs: 600000            # timeout for claude review (10 min)
   reviewMaxTurns: 15                 # max agentic turns for codebase exploration
   staleWorktreeMinutes: 60           # cleanup worktrees older than this
+
+# --- Optional Features (all disabled by default) ---
+
+features:
+  # Jira integration: extract issue keys from PR titles/branches and link in reviews
+  jira:
+    enabled: false
+    baseUrl: ""              # e.g. "https://company.atlassian.net" — or JIRA_BASE_URL env var
+    token: ""                # Jira API token — or JIRA_TOKEN env var
+    email: ""                # Jira user email — or JIRA_EMAIL env var
+    projectKeys: []          # e.g. ["PROJ","ENG"] — empty = match any Jira key pattern
+
+  # Auto-generate PR descriptions from diffs using Claude
+  autoDescription:
+    enabled: false
+    overwriteExisting: false   # if true, replace existing body; if false, only fill empty bodies
+    timeoutMs: 120000          # timeout for Claude description generation
+
+  # Auto-label PRs based on review verdict, finding severity, and file paths in diff
+  autoLabel:
+    enabled: false
+    verdictLabels: {}          # e.g. { APPROVE: ["approved"], REQUEST_CHANGES: ["changes-requested"] }
+    severityLabels: {}         # e.g. { issue: ["has-issues"], suggestion: ["has-suggestions"] }
+    diffLabels: []             # e.g. [{ pattern: "src/api/**", label: "api" }, { pattern: "*.css", label: "styles" }]

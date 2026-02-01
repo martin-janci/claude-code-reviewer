@@ -39,10 +39,15 @@ export class StateStore {
       console.log("Migrated state file from V1 to V2");
     }
 
-    // Backfill fields added after initial V2 schema (reviewId, reviewVerifiedAt)
+    // Backfill fields added after initial V2 schema
     for (const entry of Object.values(this.state.prs)) {
       entry.reviewId ??= null;
       entry.reviewVerifiedAt ??= null;
+      entry.headBranch ??= "";
+      entry.jiraKey ??= null;
+      entry.jiraValidated ??= false;
+      entry.descriptionGenerated ??= false;
+      entry.labelsApplied ??= [];
       for (const rev of entry.reviews) {
         rev.reviewId ??= null;
         rev.findings ??= [];
@@ -89,6 +94,7 @@ export class StateStore {
         isDraft: false,
         headSha: sha,
         baseBranch: "",
+        headBranch: "",
         reviews: [
           {
             sha,
@@ -115,6 +121,10 @@ export class StateStore {
         updatedAt: now,
         closedAt: null,
         lastPushAt: null,
+        jiraKey: null,
+        jiraValidated: false,
+        descriptionGenerated: false,
+        labelsApplied: [],
       };
     }
 
@@ -167,6 +177,7 @@ export class StateStore {
         isDraft: defaults.isDraft ?? false,
         headSha: defaults.headSha ?? "",
         baseBranch: defaults.baseBranch ?? "",
+        headBranch: defaults.headBranch ?? "",
         reviews: [],
         lastReviewedSha: null,
         lastReviewedAt: null,
@@ -183,6 +194,10 @@ export class StateStore {
         updatedAt: now,
         closedAt: null,
         lastPushAt: null,
+        jiraKey: null,
+        jiraValidated: false,
+        descriptionGenerated: false,
+        labelsApplied: [],
       };
       this.save();
     }

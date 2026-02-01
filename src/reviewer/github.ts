@@ -40,7 +40,7 @@ export async function listOpenPRs(owner: string, repo: string): Promise<PullRequ
     "pr", "list",
     "--repo", `${owner}/${repo}`,
     "--state", "open",
-    "--json", "number,title,headRefOid,isDraft,baseRefName",
+    "--json", "number,title,headRefOid,isDraft,baseRefName,headRefName",
     "--limit", "1000",
   ]);
 
@@ -52,6 +52,7 @@ export async function listOpenPRs(owner: string, repo: string): Promise<PullRequ
     headRefOid: string;
     isDraft: boolean;
     baseRefName: string;
+    headRefName: string;
   }>;
 
   return raw.map((pr) => ({
@@ -60,6 +61,7 @@ export async function listOpenPRs(owner: string, repo: string): Promise<PullRequ
     headSha: pr.headRefOid,
     isDraft: pr.isDraft,
     baseBranch: pr.baseRefName,
+    headBranch: pr.headRefName,
     owner,
     repo,
   }));
@@ -73,7 +75,7 @@ export async function getPRDetails(
   const json = await gh([
     "pr", "view", String(prNumber),
     "--repo", `${owner}/${repo}`,
-    "--json", "number,title,headRefOid,isDraft,baseRefName",
+    "--json", "number,title,headRefOid,isDraft,baseRefName,headRefName",
   ]);
 
   if (!json) {
@@ -86,6 +88,7 @@ export async function getPRDetails(
     headRefOid: string;
     isDraft: boolean;
     baseRefName: string;
+    headRefName: string;
   };
 
   return {
@@ -94,6 +97,7 @@ export async function getPRDetails(
     headSha: raw.headRefOid,
     isDraft: raw.isDraft,
     baseBranch: raw.baseRefName,
+    headBranch: raw.headRefName,
     owner,
     repo,
   };
@@ -219,6 +223,56 @@ export async function updateComment(
     `repos/${owner}/${repo}/issues/comments/${commentId}`,
     "--input", "-",
   ], JSON.stringify({ body }));
+}
+
+// --- PR Body and Labels ---
+
+export async function getPRBody(owner: string, repo: string, prNumber: number): Promise<string> {
+  const json = await gh([
+    "pr", "view", String(prNumber),
+    "--repo", `${owner}/${repo}`,
+    "--json", "body",
+  ]);
+  if (!json) return "";
+  const raw = JSON.parse(json) as { body: string };
+  return raw.body ?? "";
+}
+
+export async function updatePRBody(owner: string, repo: string, prNumber: number, body: string): Promise<void> {
+  await gh([
+    "pr", "edit", String(prNumber),
+    "--repo", `${owner}/${repo}`,
+    "--body", body,
+  ]);
+}
+
+export async function getPRLabels(owner: string, repo: string, prNumber: number): Promise<string[]> {
+  const json = await gh([
+    "pr", "view", String(prNumber),
+    "--repo", `${owner}/${repo}`,
+    "--json", "labels",
+  ]);
+  if (!json) return [];
+  const raw = JSON.parse(json) as { labels: Array<{ name: string }> };
+  return (raw.labels ?? []).map((l) => l.name);
+}
+
+export async function addLabels(owner: string, repo: string, prNumber: number, labels: string[]): Promise<void> {
+  if (labels.length === 0) return;
+  await gh([
+    "pr", "edit", String(prNumber),
+    "--repo", `${owner}/${repo}`,
+    "--add-label", labels.join(","),
+  ]);
+}
+
+export async function removeLabels(owner: string, repo: string, prNumber: number, labels: string[]): Promise<void> {
+  if (labels.length === 0) return;
+  await gh([
+    "pr", "edit", String(prNumber),
+    "--repo", `${owner}/${repo}`,
+    "--remove-label", labels.join(","),
+  ]);
 }
 
 // --- PR Reviews API ---

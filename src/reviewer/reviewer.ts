@@ -4,10 +4,13 @@ import type { CloneManager } from "../clone/manager.js";
 import type { MetricsCollector } from "../metrics.js";
 import type { ReviewComment } from "./github.js";
 import { shouldReview } from "../state/decisions.js";
-import { getPRDiff, postReview, postComment, updateComment, findExistingComment, getReviewThreads, resolveReviewThread } from "./github.js";
+import { getPRDiff, getPRBody, updatePRBody, getPRLabels, postReview, postComment, updateComment, findExistingComment, getReviewThreads, resolveReviewThread } from "./github.js";
 import { reviewDiff } from "./claude.js";
 import { parseCommentableLines, findNearestCommentableLine } from "./diff-parser.js";
-import { formatReviewBody, formatInlineComment } from "./formatter.js";
+import { formatReviewBody, formatInlineComment, type JiraLink } from "./formatter.js";
+import { extractJiraKey, validateJiraIssue } from "../features/jira.js";
+import { generateDescription } from "../features/auto-description.js";
+import { computeLabels, applyLabels } from "../features/auto-label.js";
 
 function parseLegacyVerdict(body: string): ReviewVerdict {
   // Scan first 5 non-empty lines for a verdict keyword
@@ -62,7 +65,7 @@ export class Reviewer {
   }
 
   private async doProcessPR(pr: PullRequest): Promise<void> {
-    const { owner, repo, number: prNumber, title, headSha, isDraft, baseBranch } = pr;
+    const { owner, repo, number: prNumber, title, headSha, isDraft, baseBranch, headBranch } = pr;
     const label = `${owner}/${repo}#${prNumber}`;
 
     // 1. Get or create state entry
@@ -71,10 +74,27 @@ export class Reviewer {
       isDraft,
       headSha,
       baseBranch,
+      headBranch,
     });
 
     // 2. Sync metadata — detect changes
     this.syncMetadata(state, pr);
+
+    // 2b. Jira key extraction (after metadata sync so title/branch are current)
+    if (this.config.features.jira.enabled) {
+      const currentKey = extractJiraKey(
+        state.title,
+        state.headBranch,
+        this.config.features.jira.projectKeys,
+      );
+      if (currentKey !== state.jiraKey) {
+        this.store.update(owner, repo, prNumber, {
+          jiraKey: currentKey,
+          jiraValidated: false,
+        });
+        Object.assign(state, { jiraKey: currentKey, jiraValidated: false });
+      }
+    }
 
     // 3. Evaluate transitions
     this.evaluateTransitions(state);
@@ -138,6 +158,29 @@ export class Reviewer {
       return;
     }
 
+    // 7b. Auto-generate PR description if enabled and body is empty
+    if (this.config.features.autoDescription.enabled && !state.descriptionGenerated) {
+      try {
+        const currentBody = await getPRBody(owner, repo, prNumber);
+        const hasBody = currentBody.trim().length > 0;
+        if (!hasBody || this.config.features.autoDescription.overwriteExisting) {
+          console.log(`Generating PR description for ${label}`);
+          const description = await generateDescription(
+            diff, title, this.config.features.autoDescription.timeoutMs,
+          );
+          if (description) {
+            await updatePRBody(owner, repo, prNumber, description);
+            console.log(`PR description posted for ${label}`);
+          }
+        }
+        this.store.update(owner, repo, prNumber, { descriptionGenerated: true });
+        Object.assign(state, { descriptionGenerated: true });
+      } catch (err) {
+        // Non-fatal: log and continue with review
+        console.warn(`Auto-description failed for ${label}:`, err instanceof Error ? err.message : err);
+      }
+    }
+
     // 8. Build re-review context if applicable
     const lastReview = state.reviews.length > 0 ? state.reviews[state.reviews.length - 1] : null;
 
@@ -199,6 +242,42 @@ export class Reviewer {
       return;
     }
 
+    // 9c. Jira validation (after Claude review, before posting)
+    let jiraLink: JiraLink | undefined;
+    if (this.config.features.jira.enabled && state.jiraKey) {
+      const jiraConfig = this.config.features.jira;
+      if (jiraConfig.baseUrl && jiraConfig.email && jiraConfig.token && !state.jiraValidated) {
+        try {
+          const validation = await validateJiraIssue(
+            jiraConfig.baseUrl, jiraConfig.email, jiraConfig.token, state.jiraKey,
+          );
+          jiraLink = {
+            key: state.jiraKey,
+            url: validation.url,
+            summary: validation.summary,
+            valid: validation.valid,
+          };
+          this.store.update(owner, repo, prNumber, { jiraValidated: validation.valid });
+          Object.assign(state, { jiraValidated: validation.valid });
+        } catch (err) {
+          // Non-fatal: skip Jira link if validation fails
+          console.warn(`Jira validation failed for ${state.jiraKey} on ${label}:`, err instanceof Error ? err.message : err);
+          jiraLink = {
+            key: state.jiraKey,
+            url: `${jiraConfig.baseUrl}/browse/${state.jiraKey}`,
+            valid: false,
+          };
+        }
+      } else if (jiraConfig.baseUrl) {
+        // Already validated or missing credentials — link without summary
+        jiraLink = {
+          key: state.jiraKey,
+          url: `${jiraConfig.baseUrl}/browse/${state.jiraKey}`,
+          valid: state.jiraValidated,
+        };
+      }
+    }
+
     // 10. Post review — structured (PR Reviews API) or legacy (issue comment)
     const tag = this.config.review.commentTag;
     let verdict: ReviewVerdict;
@@ -246,7 +325,7 @@ export class Reviewer {
       }
 
       // Build top-level review body
-      const body = formatReviewBody(structured, headSha, tag, orphanFindings);
+      const body = formatReviewBody(structured, headSha, tag, orphanFindings, jiraLink);
 
       try {
         console.log(`Posting PR review on ${label} (${inlineComments.length} inline comment(s), ${orphanFindings.length} orphan(s))`);
@@ -318,6 +397,27 @@ export class Reviewer {
       }
     }
 
+    // 10c. Auto-labeling (after review is posted)
+    if (this.config.features.autoLabel.enabled && result.structured) {
+      try {
+        const currentLabels = await getPRLabels(owner, repo, prNumber);
+        const labelDecision = computeLabels(
+          verdict, result.structured.findings, diff,
+          this.config.features.autoLabel, currentLabels,
+        );
+        if (labelDecision.add.length > 0 || labelDecision.remove.length > 0) {
+          await applyLabels(owner, repo, prNumber, labelDecision);
+          const applied = [...currentLabels.filter((l) => !labelDecision.remove.includes(l)), ...labelDecision.add];
+          this.store.update(owner, repo, prNumber, { labelsApplied: applied });
+          Object.assign(state, { labelsApplied: applied });
+          console.log(`Labels updated on ${label}: +[${labelDecision.add.join(",")}] -[${labelDecision.remove.join(",")}]`);
+        }
+      } catch (err) {
+        // Non-fatal: log and continue
+        console.warn(`Auto-labeling failed for ${label}:`, err instanceof Error ? err.message : err);
+      }
+    }
+
     // 11. Record review and transition to reviewed.
     //     Re-read state to check for concurrent lifecycle events (e.g. webhook closed/merged
     //     the PR while the review was in progress — lifecycle events bypass the per-PR mutex).
@@ -374,6 +474,10 @@ export class Reviewer {
     }
     if (state.baseBranch !== pr.baseBranch) {
       updates.baseBranch = pr.baseBranch;
+      changed = true;
+    }
+    if (state.headBranch !== pr.headBranch) {
+      updates.headBranch = pr.headBranch;
       changed = true;
     }
     if (state.headSha !== pr.headSha) {

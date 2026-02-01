@@ -190,6 +190,7 @@ export class WebhookServer {
             headSha: prData.head.sha,
             isDraft: prData.draft,
             baseBranch: prData.base.ref,
+            headBranch: prData.head.ref,
             owner,
             repo,
           };
@@ -226,6 +227,7 @@ export class WebhookServer {
         isDraft: prData.draft,
         headSha: prData.head?.sha ?? "",
         baseBranch: prData.base?.ref ?? "",
+        headBranch: prData.head?.ref ?? "",
       });
     }
 
