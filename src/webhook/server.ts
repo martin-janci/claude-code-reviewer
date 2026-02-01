@@ -3,6 +3,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { AppConfig, PullRequest } from "../types.js";
 import type { Reviewer } from "../reviewer/reviewer.js";
 import type { StateStore } from "../state/store.js";
+import type { MetricsCollector } from "../metrics.js";
 import { getPRDetails } from "../reviewer/github.js";
 
 function verifySignature(secret: string, payload: Buffer, signature: string): boolean {
@@ -28,6 +29,8 @@ export class WebhookServer {
     private config: AppConfig,
     private reviewer: Reviewer,
     private store: StateStore,
+    private metrics?: MetricsCollector,
+    private healthInfo?: { version: string; startTime: number },
   ) {
     try {
       this.commentTriggerRegex = new RegExp(config.review.commentTrigger, "m");
@@ -42,8 +45,25 @@ export class WebhookServer {
     this.server = createServer((req, res) => {
       // Health check
       if (req.method === "GET" && req.url === "/health") {
+        const info = this.healthInfo;
+        const body = info
+          ? { status: "ok", version: info.version, uptime: Math.floor((Date.now() - info.startTime) / 1000) }
+          : { status: "ok" };
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ status: "ok" }));
+        res.end(JSON.stringify(body));
+        return;
+      }
+
+      // Metrics endpoint
+      if (req.method === "GET" && req.url === "/metrics") {
+        if (this.metrics && this.healthInfo) {
+          const uptime = Math.floor((Date.now() - this.healthInfo.startTime) / 1000);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(this.metrics.snapshot(uptime, this.store.getStatusCounts())));
+        } else {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Metrics not configured" }));
+        }
         return;
       }
 
