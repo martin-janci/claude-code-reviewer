@@ -39,6 +39,15 @@ export class StateStore {
       console.log("Migrated state file from V1 to V2");
     }
 
+    // Backfill fields added after initial V2 schema (reviewId, reviewVerifiedAt)
+    for (const entry of Object.values(this.state.prs)) {
+      entry.reviewId ??= null;
+      entry.reviewVerifiedAt ??= null;
+      for (const rev of entry.reviews) {
+        rev.reviewId ??= null;
+      }
+    }
+
     // Reset any "reviewing" entries to "pending_review" (crash recovery)
     let recovered = false;
     for (const entry of Object.values(this.state.prs)) {
