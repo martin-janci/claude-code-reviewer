@@ -48,7 +48,7 @@ export function parseCommentableLines(diff: string): CommentableLines {
       rightLine++;
     } else if (line.startsWith("-")) {
       // Deletion: not commentable (no right-side line)
-    } else if (line.startsWith(" ") || line === "") {
+    } else if (line.startsWith(" ")) {
       // Context line: commentable on the right side
       lines.add(rightLine);
       rightLine++;

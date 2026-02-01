@@ -32,7 +32,7 @@ export function formatReviewBody(
     // Group by severity
     const grouped = groupBySeverity(structured.findings);
     for (const [label, findings] of grouped) {
-      parts.push(`### ${capitalize(label)}${label === "issue" ? "s" : "s"}`);
+      parts.push(`### ${pluralizeLabel(label)}`);
       for (const f of findings) {
         const blocking = f.blocking ? " (blocking)" : "";
         parts.push(`- \`${f.path}:${f.line}\` — ${truncate(f.body, 120)}${blocking}`);
@@ -93,6 +93,18 @@ function groupBySeverity(findings: ReviewFinding[]): Array<[ConventionalLabel, R
   }
 
   return order.filter((l) => grouped.has(l)).map((l) => [l, grouped.get(l)!]);
+}
+
+const LABEL_PLURALS: Record<ConventionalLabel, string> = {
+  issue: "Issues",
+  suggestion: "Suggestions",
+  nitpick: "Nitpicks",
+  question: "Questions",
+  praise: "Praise",
+};
+
+function pluralizeLabel(label: ConventionalLabel): string {
+  return LABEL_PLURALS[label];
 }
 
 function capitalize(s: string): string {
