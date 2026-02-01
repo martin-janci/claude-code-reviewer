@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.3.0
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.2.0...v1.3.0)
+
+### 🚀 Enhancements
+
+- Add structured PR reviews with inline comments via Reviews API ([bc82784](https://github.com/martin-janci/claude-code-reviewer/commit/bc82784))
+- Add one-shot CLI review mode via --pr flag ([43c74ea](https://github.com/martin-janci/claude-code-reviewer/commit/43c74ea))
+
+### 🩹 Fixes
+
+- Address review findings on formatter and diff parser ([a2b1656](https://github.com/martin-janci/claude-code-reviewer/commit/a2b1656))
+- Backfill new fields on V2 state load and remove dead code ([31d973b](https://github.com/martin-janci/claude-code-reviewer/commit/31d973b))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.2.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.1.0...v1.2.0)
