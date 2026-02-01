@@ -29,7 +29,7 @@ const DEFAULTS: AppConfig = {
   },
 };
 
-export function loadConfig(path: string = "config.yaml"): AppConfig {
+export function loadConfig(path: string = "config.yaml", allowEmptyRepos = false): AppConfig {
   let fileConfig: Partial<AppConfig> = {};
 
   try {
@@ -80,7 +80,7 @@ export function loadConfig(path: string = "config.yaml"): AppConfig {
     config.mode = process.env.MODE as AppConfig["mode"];
   }
 
-  if (config.repos.length === 0) {
+  if (config.repos.length === 0 && !allowEmptyRepos) {
     throw new Error("No repos configured. Add repos to config.yaml. If running in Docker, ensure config.yaml is mounted to /app/config.yaml.");
   }
 
