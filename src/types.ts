@@ -64,6 +64,8 @@ export type ReviewVerdict = "APPROVE" | "REQUEST_CHANGES" | "COMMENT" | "unknown
 
 export type ConventionalLabel = "issue" | "suggestion" | "nitpick" | "question" | "praise";
 
+export type FindingResolution = "resolved" | "wont_fix" | "open";
+
 export interface ReviewFinding {
   severity: ConventionalLabel;
   blocking: boolean;
@@ -72,11 +74,19 @@ export interface ReviewFinding {
   body: string;
 }
 
+export interface ResolutionEntry {
+  path: string;
+  line: number;
+  body: string;
+  resolution: FindingResolution;
+}
+
 export interface StructuredReview {
   verdict: ReviewVerdict;
   summary: string;
   findings: ReviewFinding[];
   overall?: string;
+  resolutions?: ResolutionEntry[];
 }
 
 export type SkipReason = "draft" | "wip_title" | "diff_too_large";
@@ -90,6 +100,7 @@ export interface ReviewRecord {
   reviewId: string | null;
   verdict: ReviewVerdict;
   posted: boolean;
+  findings: ReviewFinding[];
 }
 
 export interface ErrorRecord {

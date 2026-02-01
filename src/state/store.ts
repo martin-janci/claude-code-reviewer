@@ -45,6 +45,7 @@ export class StateStore {
       entry.reviewVerifiedAt ??= null;
       for (const rev of entry.reviews) {
         rev.reviewId ??= null;
+        rev.findings ??= [];
       }
     }
 
@@ -96,6 +97,7 @@ export class StateStore {
             reviewId: null,
             verdict: "unknown",
             posted: true,
+            findings: [],
           },
         ],
         lastReviewedSha: sha,

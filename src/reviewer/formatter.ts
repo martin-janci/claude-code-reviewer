@@ -55,6 +55,17 @@ export function formatReviewBody(
     }
   }
 
+  // Previous finding resolutions
+  if (structured.resolutions?.length) {
+    parts.push(`### Previous Finding Resolutions`);
+    parts.push("");
+    for (const r of structured.resolutions) {
+      const icon = r.resolution === "resolved" ? "\u2705" : r.resolution === "wont_fix" ? "\u23ED\uFE0F" : "\u274C";
+      parts.push(`${icon} \`${r.path}:${r.line}\` — **${r.resolution}**: ${r.body}`);
+    }
+    parts.push("");
+  }
+
   // Overall notes
   if (structured.overall) {
     parts.push(structured.overall);

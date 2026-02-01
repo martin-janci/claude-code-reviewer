@@ -4,7 +4,7 @@ import type { CloneManager } from "../clone/manager.js";
 import type { MetricsCollector } from "../metrics.js";
 import type { ReviewComment } from "./github.js";
 import { shouldReview } from "../state/decisions.js";
-import { getPRDiff, postReview, postComment, updateComment, findExistingComment } from "./github.js";
+import { getPRDiff, postReview, postComment, updateComment, findExistingComment, getReviewThreads, resolveReviewThread } from "./github.js";
 import { reviewDiff } from "./claude.js";
 import { parseCommentableLines, findNearestCommentableLine } from "./diff-parser.js";
 import { formatReviewBody, formatInlineComment } from "./formatter.js";
@@ -140,9 +140,29 @@ export class Reviewer {
 
     // 8. Build re-review context if applicable
     const lastReview = state.reviews.length > 0 ? state.reviews[state.reviews.length - 1] : null;
+
+    // Collect unique findings from ALL previous reviews for thread resolution.
+    // Each review iteration may rephrase the same finding, creating different thread
+    // bodies on GitHub. We need every unique body to match threads correctly.
+    // Deduplicate by path:line:body to avoid exact duplicates while keeping rephrased ones.
+    const allPreviousFindings: ReviewFinding[] = [];
+    if (state.reviews.length > 0) {
+      const seen = new Set<string>();
+      for (const rev of state.reviews) {
+        for (const f of rev.findings ?? []) {
+          const key = `${f.path}:${f.line}:${f.body}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            allPreviousFindings.push(f);
+          }
+        }
+      }
+    }
+
     const context = lastReview ? {
       previousVerdict: lastReview.verdict,
       previousSha: lastReview.sha,
+      previousFindings: allPreviousFindings,
     } : undefined;
 
     // 8b. Prepare codebase worktree if enabled
@@ -190,6 +210,21 @@ export class Reviewer {
       const structured = result.structured;
       verdict = structured.verdict;
 
+      // Auto-escalate verdict if any previous blocking finding is still open
+      if (structured.resolutions?.length && context?.previousFindings?.length) {
+        const hasOpenBlocking = context.previousFindings.some((pf) => {
+          if (!pf.blocking) return false;
+          const resolution = structured.resolutions?.find(
+            (r) => r.path === pf.path && r.line === pf.line,
+          );
+          return !resolution || resolution.resolution === "open";
+        });
+        if (hasOpenBlocking && verdict !== "REQUEST_CHANGES") {
+          console.log(`Escalating verdict to REQUEST_CHANGES — unresolved blocking finding(s) on ${label}`);
+          verdict = "REQUEST_CHANGES";
+        }
+      }
+
       // Parse commentable lines from the diff
       const commentable = parseCommentableLines(diff);
 
@@ -219,6 +254,48 @@ export class Reviewer {
       } catch (err) {
         this.recordError(state, headSha, err, "comment_post");
         return;
+      }
+
+      // 10b. Resolve review threads for findings marked as resolved.
+      //
+      // A single conceptual issue may span multiple threads across review iterations
+      // (e.g. "matching logic is flawed" → "matching logic is still flawed" → fixed).
+      // Each iteration creates a new thread with slightly different body text.
+      // For each resolved finding, collect ALL previous findings at the same path:line
+      // (across all reviews) and resolve any thread whose body matches any of them.
+      const resolvedResolutions = structured.resolutions?.filter((r) => r.resolution === "resolved") ?? [];
+      if (resolvedResolutions.length > 0 && context?.previousFindings?.length) {
+        try {
+          const threads = await getReviewThreads(owner, repo, prNumber);
+          const unresolvedThreads = threads.filter((t) => !t.isResolved);
+          const resolvedIds = new Set<string>();
+
+          for (const resolution of resolvedResolutions) {
+            // Find ALL previous findings at this path:line (across review iterations)
+            const relatedFindings = context.previousFindings.filter(
+              (pf) => pf.path === resolution.path && pf.line === resolution.line,
+            );
+            if (relatedFindings.length === 0) continue;
+
+            // Resolve any unresolved thread whose body matches any related finding
+            for (const thread of unresolvedThreads) {
+              if (resolvedIds.has(thread.id)) continue;
+              if (thread.path !== resolution.path) continue;
+              const matches = relatedFindings.some((pf) => thread.body.includes(pf.body));
+              if (matches) {
+                await resolveReviewThread(thread.id);
+                resolvedIds.add(thread.id);
+              }
+            }
+          }
+
+          if (resolvedIds.size > 0) {
+            console.log(`Resolved ${resolvedIds.size} review thread(s) on ${label}`);
+          }
+        } catch (err) {
+          // Non-fatal — thread resolution is best-effort
+          console.warn(`Failed to resolve review threads on ${label}:`, err instanceof Error ? err.message : err);
+        }
       }
     } else {
       // Fallback path: legacy issue comment
@@ -261,6 +338,7 @@ export class Reviewer {
       reviewId,
       verdict,
       posted: true,
+      findings: result.structured?.findings ?? [],
     }].slice(-maxHistory);
 
     this.store.update(owner, repo, prNumber, {
