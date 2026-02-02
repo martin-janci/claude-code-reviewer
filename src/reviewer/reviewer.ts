@@ -46,6 +46,9 @@ export class Reviewer {
     // Per-PR mutex: wait in a loop until no lock exists for this key.
     // Loop handles 3+ concurrent callers correctly — after waking,
     // re-check in case another waiter acquired the lock first.
+    if (this.locks.has(key)) {
+      console.log(`Waiting for mutex on ${key} (another review in progress)`);
+    }
     while (this.locks.has(key)) {
       await this.locks.get(key);
     }
@@ -54,6 +57,7 @@ export class Reviewer {
     const lock = new Promise<void>((resolve) => { unlock = resolve; });
     this.locks.set(key, lock);
     this.inflightCount++;
+    console.log(`Processing ${key} (sha: ${pr.headSha.slice(0, 7)}, inflight: ${this.inflightCount})`);
 
     try {
       await this.doProcessPR(pr);
@@ -61,6 +65,7 @@ export class Reviewer {
       this.inflightCount--;
       this.locks.delete(key);
       unlock!();
+      console.log(`Finished processing ${key}`);
     }
   }
 
@@ -98,6 +103,7 @@ export class Reviewer {
 
     // 3. Evaluate transitions
     this.evaluateTransitions(state);
+    console.log(`State for ${label}: status=${state.status}, headSha=${state.headSha.slice(0, 7)}, lastReviewedSha=${state.lastReviewedSha?.slice(0, 7) ?? "none"}, errors=${state.consecutiveErrors}`);
 
     // 4. Persist skip status for draft/WIP so we don't re-evaluate every cycle.
     //    Also update skip reason if already skipped for a different reason (e.g. diff_too_large → draft).
