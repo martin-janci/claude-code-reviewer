@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.7.4
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.5.0...v1.7.4)
+
+### 🩹 Fixes
+
+- Bug fixes, Docker reliability, and review false positive reduction ([#6](https://github.com/martin-janci/claude-code-reviewer/pull/6))
+
+### ❤️ Contributors
+
+- Martin Janči ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.5.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.4.0...v1.5.0)
