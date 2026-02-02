@@ -104,9 +104,17 @@ export class WebhookServer {
           const body = rawBody.toString("utf-8");
 
           const event = req.headers["x-github-event"] as string;
-          if (event !== "pull_request" && event !== "issue_comment") {
+          if (event !== "pull_request" && event !== "issue_comment" && event !== "push") {
+            console.log(`Webhook: ignored event type "${event}"`);
             res.writeHead(200);
             res.end("Ignored event");
+            return;
+          }
+
+          // Push events are accepted but not processed — PR synchronize handles reviews
+          if (event === "push") {
+            res.writeHead(200);
+            res.end("OK");
             return;
           }
 
