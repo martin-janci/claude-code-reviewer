@@ -15,7 +15,7 @@ done
 
 # Fix ownership — must come after copy/mkdir
 chown -R node:node /home/node/.claude 2>/dev/null || true
-chmod -R 777 /home/node/.claude 2>/dev/null || true
+chmod -R u=rwX,go=rX /home/node/.claude 2>/dev/null || true
 chown -R node:node /app/data 2>/dev/null || true
 
 # Symlink so root's claude also sees the same dir (for manual exec debugging)

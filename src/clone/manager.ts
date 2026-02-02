@@ -34,6 +34,12 @@ export class CloneManager {
     this.timeoutMs = timeoutMs ?? 120_000;
   }
 
+  /** Redact token from error messages to prevent credential leakage in logs */
+  private redactToken(message: string): string {
+    if (!this.ghToken) return message;
+    return message.replaceAll(this.ghToken, "***");
+  }
+
   /** Build authenticated HTTPS URL for GitHub repos */
   private repoUrl(owner: string, repo: string): string {
     if (this.ghToken) {
@@ -63,7 +69,7 @@ export class CloneManager {
       // Validate existing clone isn't corrupted
       if (existsSync(clonePath)) {
         try {
-          await git(["rev-parse", "--git-dir"], { cwd: clonePath, timeout: 10_000 });
+          await git(["rev-parse", "--git-dir"], { cwd: clonePath, timeout: 5_000 });
         } catch {
           console.warn(`Corrupted bare clone detected at ${clonePath}, removing for re-clone`);
           rmSync(clonePath, { recursive: true, force: true });
@@ -74,13 +80,19 @@ export class CloneManager {
 
       // -c credential.helper= disables any credential helpers that might
       // override the token embedded in the URL (e.g. stale gh auth config).
-      if (existsSync(clonePath)) {
-        // Update remote URL in case token changed, then fetch
-        await git(["remote", "set-url", "origin", url], { cwd: clonePath, timeout: 10_000 });
-        await git(["-c", "credential.helper=", "fetch", "origin"], { cwd: clonePath, timeout: this.timeoutMs });
-      } else {
-        mkdirSync(dirname(clonePath), { recursive: true });
-        await git(["-c", "credential.helper=", "clone", "--bare", url, clonePath], { timeout: this.timeoutMs });
+      try {
+        if (existsSync(clonePath)) {
+          // Update remote URL in case token changed, then fetch
+          await git(["remote", "set-url", "origin", url], { cwd: clonePath, timeout: 10_000 });
+          await git(["-c", "credential.helper=", "fetch", "origin"], { cwd: clonePath, timeout: this.timeoutMs });
+        } else {
+          mkdirSync(dirname(clonePath), { recursive: true });
+          await git(["-c", "credential.helper=", "clone", "--bare", url, clonePath], { timeout: this.timeoutMs });
+        }
+      } catch (err) {
+        // Redact token from error messages to prevent credential leakage in logs
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(this.redactToken(message));
       }
       return clonePath;
     } finally {
@@ -103,10 +115,15 @@ export class CloneManager {
     const worktreePath = join(this.baseDir, `${owner}/${repo}--pr-${prNumber}`);
 
     // Fetch the PR ref (remote URL already has auth token from ensureClone)
-    await git(["-c", "credential.helper=", "fetch", "origin", `pull/${prNumber}/head`], {
-      cwd: clonePath,
-      timeout: this.timeoutMs,
-    });
+    try {
+      await git(["-c", "credential.helper=", "fetch", "origin", `pull/${prNumber}/head`], {
+        cwd: clonePath,
+        timeout: this.timeoutMs,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(this.redactToken(message));
+    }
 
     // Remove stale worktree if it exists
     if (existsSync(worktreePath)) {
