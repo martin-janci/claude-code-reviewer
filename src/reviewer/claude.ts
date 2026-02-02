@@ -214,6 +214,7 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
         if (stdout?.trim()) {
           console.error("Claude stdout:", stdout.trim().slice(0, 2000));
         }
+        console.error("Prompt preview:", userPrompt.slice(0, 200));
         resolve({ body: message, success: false });
         return;
       }
