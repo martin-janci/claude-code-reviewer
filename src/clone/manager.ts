@@ -21,35 +21,25 @@ function git(
   });
 }
 
-function gitClone(
-  repoSlug: string,
-  dest: string,
-  env: NodeJS.ProcessEnv,
-  timeout: number,
-): Promise<string> {
-  const url = `https://github.com/${repoSlug}.git`;
-  return git(["clone", "--bare", url, dest], { env, timeout });
-}
-
 export class CloneManager {
   private baseDir: string;
-  /** Env for git calls (GH_TOKEN + http.extraheader for HTTPS auth) */
-  private gitEnv: NodeJS.ProcessEnv;
+  private ghToken: string | undefined;
   private timeoutMs: number;
   // Per-repo mutex to prevent concurrent clone/fetch operations
   private repoLocks = new Map<string, Promise<void>>();
 
   constructor(baseDir: string, ghToken?: string, timeoutMs?: number) {
     this.baseDir = resolve(baseDir);
+    this.ghToken = ghToken;
     this.timeoutMs = timeoutMs ?? 120_000;
-    this.gitEnv = { ...process.env };
-    if (ghToken) {
-      this.gitEnv.GH_TOKEN = ghToken;
-      // Configure git to use GH_TOKEN for HTTPS auth via header injection.
-      this.gitEnv.GIT_CONFIG_COUNT = "1";
-      this.gitEnv.GIT_CONFIG_KEY_0 = "http.https://github.com/.extraheader";
-      this.gitEnv.GIT_CONFIG_VALUE_0 = `Authorization: token ${ghToken}`;
+  }
+
+  /** Build authenticated HTTPS URL for GitHub repos */
+  private repoUrl(owner: string, repo: string): string {
+    if (this.ghToken) {
+      return `https://x-access-token:${this.ghToken}@github.com/${owner}/${repo}.git`;
     }
+    return `https://github.com/${owner}/${repo}.git`;
   }
 
   /**
@@ -80,16 +70,14 @@ export class CloneManager {
         }
       }
 
+      const url = this.repoUrl(owner, repo);
+
       if (existsSync(clonePath)) {
-        // Fetch latest (raw git — uses gitEnv with header auth)
-        await git(["fetch", "origin"], {
-          cwd: clonePath,
-          env: this.gitEnv,
-          timeout: this.timeoutMs,
-        });
+        // Update remote URL in case token changed, then fetch
+        await git(["remote", "set-url", "origin", url], { cwd: clonePath, timeout: 10_000 });
+        await git(["fetch", "origin"], { cwd: clonePath, timeout: this.timeoutMs });
       } else {
-        // Clone bare (raw git with token header auth)
-        await gitClone(`${owner}/${repo}`, clonePath, this.gitEnv, this.timeoutMs);
+        await git(["clone", "--bare", url, clonePath], { timeout: this.timeoutMs });
       }
       return clonePath;
     } finally {
@@ -111,10 +99,9 @@ export class CloneManager {
     const clonePath = await this.ensureClone(owner, repo);
     const worktreePath = join(this.baseDir, `${owner}/${repo}--pr-${prNumber}`);
 
-    // Fetch the PR ref
+    // Fetch the PR ref (remote URL already has auth token from ensureClone)
     await git(["fetch", "origin", `pull/${prNumber}/head`], {
       cwd: clonePath,
-      env: this.gitEnv,
       timeout: this.timeoutMs,
     });
 
