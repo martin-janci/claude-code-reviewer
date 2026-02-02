@@ -211,6 +211,9 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
         if (stderr?.trim()) {
           console.error("Claude stderr:", stderr.trim());
         }
+        if (stdout?.trim()) {
+          console.error("Claude stdout:", stdout.trim().slice(0, 2000));
+        }
         resolve({ body: message, success: false });
         return;
       }
