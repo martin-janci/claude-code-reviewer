@@ -95,6 +95,7 @@ export function computeLabels(
 
 /**
  * Apply label changes to a PR via the GitHub API.
+ * Errors are logged and swallowed — labeling is non-fatal.
  */
 export async function applyLabels(
   owner: string,

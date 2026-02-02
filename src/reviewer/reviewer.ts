@@ -178,6 +178,7 @@ export class Reviewer {
       } catch (err) {
         // Non-fatal: log and continue with review
         console.warn(`Auto-description failed for ${label}:`, err instanceof Error ? err.message : err);
+        this.metrics?.recordError("description_generate");
       }
     }
 
@@ -262,6 +263,7 @@ export class Reviewer {
         } catch (err) {
           // Non-fatal: skip Jira link if validation fails
           console.warn(`Jira validation failed for ${state.jiraKey} on ${label}:`, err instanceof Error ? err.message : err);
+          this.metrics?.recordError("jira_validate");
           jiraLink = {
             key: state.jiraKey,
             url: `${jiraConfig.baseUrl}/browse/${state.jiraKey}`,
@@ -415,6 +417,7 @@ export class Reviewer {
       } catch (err) {
         // Non-fatal: log and continue
         console.warn(`Auto-labeling failed for ${label}:`, err instanceof Error ? err.message : err);
+        this.metrics?.recordError("label_apply");
       }
     }
 

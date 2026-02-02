@@ -38,7 +38,7 @@ export function extractJiraKey(
   return candidates[0];
 }
 
-export interface JiraValidationResult {
+interface JiraValidationResult {
   valid: boolean;
   summary?: string;
   url: string;
