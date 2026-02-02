@@ -127,6 +127,7 @@ export class Reviewer {
     // 5. Check if we should review
     const decision = shouldReview(state, this.config.review, pr.forceReview);
     if (!decision.shouldReview) {
+      console.log(`Skipping ${label}: ${decision.reason} (status: ${state.status})`);
       return;
     }
 
