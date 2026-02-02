@@ -53,6 +53,11 @@ export class CloneManager {
     this.env = { ...process.env };
     if (ghToken) {
       this.env.GH_TOKEN = ghToken;
+      // Configure git to use GH_TOKEN for HTTPS auth via header injection.
+      // This avoids requiring `gh auth setup-git` or a credential helper.
+      this.env.GIT_CONFIG_COUNT = "1";
+      this.env.GIT_CONFIG_KEY_0 = "http.https://github.com/.extraheader";
+      this.env.GIT_CONFIG_VALUE_0 = `Authorization: token ${ghToken}`;
     }
   }
 
