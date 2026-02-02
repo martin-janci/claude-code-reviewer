@@ -45,7 +45,7 @@ features:
     baseUrl: ""              # e.g. "https://company.atlassian.net" — or JIRA_BASE_URL env var
     token: ""                # Jira API token — or JIRA_TOKEN env var
     email: ""                # Jira user email — or JIRA_EMAIL env var
-    projectKeys: []          # e.g. ["PROJ","ENG"] — empty = match any Jira key pattern
+    projectKeys: []          # e.g. ["PROJ", "ENG"] — empty = match any Jira key pattern
 
   # Auto-generate PR descriptions from diffs using Claude
   autoDescription:

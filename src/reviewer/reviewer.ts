@@ -409,9 +409,11 @@ export class Reviewer {
         );
         if (labelDecision.add.length > 0 || labelDecision.remove.length > 0) {
           await applyLabels(owner, repo, prNumber, labelDecision);
-          const applied = [...currentLabels.filter((l) => !labelDecision.remove.includes(l)), ...labelDecision.add];
-          this.store.update(owner, repo, prNumber, { labelsApplied: applied });
-          Object.assign(state, { labelsApplied: applied });
+          // Re-fetch actual labels from GitHub after applying to avoid stale state
+          // from partial failures (e.g. addLabels succeeds but removeLabels fails)
+          const actualLabels = await getPRLabels(owner, repo, prNumber);
+          this.store.update(owner, repo, prNumber, { labelsApplied: actualLabels });
+          Object.assign(state, { labelsApplied: actualLabels });
           console.log(`Labels updated on ${label}: +[${labelDecision.add.join(",")}] -[${labelDecision.remove.join(",")}]`);
         }
       } catch (err) {
