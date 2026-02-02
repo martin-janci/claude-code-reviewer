@@ -1,38 +1,28 @@
 #!/bin/sh
-# Discover where Claude credentials actually live.
-# Possible locations: /root/.claude, /home/.claude, /home/node/.claude
-CLAUDE_SRC=""
-for candidate in /root/.claude /home/.claude /home/node/.claude; do
-  if [ -f "$candidate/.credentials.json" ]; then
-    CLAUDE_SRC="$candidate"
-    break
+# Ensure /home/node/.claude exists as a real writable directory
+mkdir -p /home/node/.claude
+for sub in debug todos projects statsig; do
+  mkdir -p "/home/node/.claude/$sub"
+done
+
+# Copy credentials from wherever they exist (root login stores at /root/.claude)
+for candidate in /root/.claude /home/.claude; do
+  if [ -f "$candidate/.credentials.json" ] && [ ! -f /home/node/.claude/.credentials.json ]; then
+    echo "Copying credentials from $candidate to /home/node/.claude"
+    cp -a "$candidate/.credentials.json" /home/node/.claude/.credentials.json
   fi
 done
 
-# Determine the node user's HOME
-NODE_HOME=$(su-exec node sh -c 'echo $HOME')
-NODE_CLAUDE="$NODE_HOME/.claude"
-
-# If credentials exist but not where the node user expects, symlink
-if [ -n "$CLAUDE_SRC" ] && [ "$CLAUDE_SRC" != "$NODE_CLAUDE" ]; then
-  echo "Linking credentials: $CLAUDE_SRC -> $NODE_CLAUDE"
-  rm -rf "$NODE_CLAUDE" 2>/dev/null || true
-  ln -sf "$CLAUDE_SRC" "$NODE_CLAUDE"
-fi
-
-# Fix ownership on volumes that may be mounted as root.
-# On some filesystems (e.g. Synology NAS), chown silently fails on bind mounts,
-# so we also mkdir + chmod the dirs Claude CLI needs at runtime.
-for claude_dir in "$NODE_CLAUDE" "$CLAUDE_SRC"; do
-  [ -n "$claude_dir" ] && [ -d "$claude_dir" ] || continue
-  chown -R node:node "$claude_dir" 2>/dev/null || true
-  for sub in debug todos projects statsig; do
-    mkdir -p "$claude_dir/$sub"
-    chmod 777 "$claude_dir/$sub" 2>/dev/null || true
-  done
-  chmod 777 "$claude_dir" 2>/dev/null || true
-done
+# Fix ownership — must come after copy/mkdir
+chown -R node:node /home/node/.claude 2>/dev/null || true
+chmod -R 777 /home/node/.claude 2>/dev/null || true
 chown -R node:node /app/data 2>/dev/null || true
+
+# Symlink so root's claude also sees the same dir (for manual exec debugging)
+if [ ! -L /root/.claude ] && [ -d /root/.claude ]; then
+  rm -rf /root/.claude
+fi
+ln -sf /home/node/.claude /root/.claude 2>/dev/null || true
 
 # Configure git
 su-exec node git config --global advice.detachedHead false
