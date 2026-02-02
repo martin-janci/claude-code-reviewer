@@ -200,10 +200,13 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
       maxBuffer: 10 * 1024 * 1024,
       timeout: timeoutMs ?? 300_000,
       cwd: cwd ?? undefined,
-    }, (err, stdout) => {
+    }, (err, stdout, stderr) => {
       if (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error("Claude review failed:", message);
+        if (stderr?.trim()) {
+          console.error("Claude stderr:", stderr.trim());
+        }
         resolve({ body: message, success: false });
         return;
       }
