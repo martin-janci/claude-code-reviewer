@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
-import { existsSync, readdirSync, statSync, rmSync } from "node:fs";
-import { resolve, join } from "node:path";
+import { existsSync, readdirSync, statSync, rmSync, mkdirSync } from "node:fs";
+import { resolve, join, dirname } from "node:path";
 import type { RepoConfig } from "../types.js";
 
 function git(
@@ -79,6 +79,7 @@ export class CloneManager {
         await git(["remote", "set-url", "origin", url], { cwd: clonePath, timeout: 10_000 });
         await git(["-c", "credential.helper=", "fetch", "origin"], { cwd: clonePath, timeout: this.timeoutMs });
       } else {
+        mkdirSync(dirname(clonePath), { recursive: true });
         await git(["-c", "credential.helper=", "clone", "--bare", url, clonePath], { timeout: this.timeoutMs });
       }
       return clonePath;
