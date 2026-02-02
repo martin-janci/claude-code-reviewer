@@ -74,6 +74,16 @@ export class CloneManager {
     this.repoLocks.set(key, lock);
 
     try {
+      // Validate existing clone isn't corrupted
+      if (existsSync(clonePath)) {
+        try {
+          await git(["rev-parse", "--git-dir"], { cwd: clonePath, timeout: 10_000 });
+        } catch {
+          console.warn(`Corrupted bare clone detected at ${clonePath}, removing for re-clone`);
+          rmSync(clonePath, { recursive: true, force: true });
+        }
+      }
+
       if (existsSync(clonePath)) {
         // Fetch latest
         await git(["fetch", "origin"], {

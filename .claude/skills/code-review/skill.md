@@ -49,6 +49,8 @@ When you have access to the full repository (working directory), perform these m
 
 Do NOT read every file — but always verify that new exports are actually called.
 
+**Exclusions:** Do NOT flag `.claude/skills/` files as unused exports — these are user-invocable Claude Code skills invoked via slash commands, not programmatic imports.
+
 ## JSON Output Format
 
 Output ONLY a JSON object. No markdown, no fences, no extra text before or after.
