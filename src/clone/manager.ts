@@ -72,12 +72,14 @@ export class CloneManager {
 
       const url = this.repoUrl(owner, repo);
 
+      // -c credential.helper= disables any credential helpers that might
+      // override the token embedded in the URL (e.g. stale gh auth config).
       if (existsSync(clonePath)) {
         // Update remote URL in case token changed, then fetch
         await git(["remote", "set-url", "origin", url], { cwd: clonePath, timeout: 10_000 });
-        await git(["fetch", "origin"], { cwd: clonePath, timeout: this.timeoutMs });
+        await git(["-c", "credential.helper=", "fetch", "origin"], { cwd: clonePath, timeout: this.timeoutMs });
       } else {
-        await git(["clone", "--bare", url, clonePath], { timeout: this.timeoutMs });
+        await git(["-c", "credential.helper=", "clone", "--bare", url, clonePath], { timeout: this.timeoutMs });
       }
       return clonePath;
     } finally {
@@ -100,7 +102,7 @@ export class CloneManager {
     const worktreePath = join(this.baseDir, `${owner}/${repo}--pr-${prNumber}`);
 
     // Fetch the PR ref (remote URL already has auth token from ensureClone)
-    await git(["fetch", "origin", `pull/${prNumber}/head`], {
+    await git(["-c", "credential.helper=", "fetch", "origin", `pull/${prNumber}/head`], {
       cwd: clonePath,
       timeout: this.timeoutMs,
     });
