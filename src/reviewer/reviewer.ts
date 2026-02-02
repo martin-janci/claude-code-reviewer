@@ -325,6 +325,11 @@ export class Reviewer {
       const orphanFindings: ReviewFinding[] = [];
 
       for (const finding of structured.findings) {
+        // Praise goes in the review body, not as inline comments
+        if (finding.severity === "praise") {
+          orphanFindings.push(finding);
+          continue;
+        }
         const snappedLine = findNearestCommentableLine(commentable, finding.path, finding.line);
         if (snappedLine != null) {
           inlineComments.push({
