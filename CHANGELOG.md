@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.5.0
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.4.0...v1.5.0)
+
+### 🚀 Enhancements
+
+- Add operator skills and intelligent PR management features ([#5](https://github.com/martin-janci/claude-code-reviewer/pull/5))
+
+### ❤️ Contributors
+
+- Martin Janči ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.4.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.3.0...v1.4.0)
