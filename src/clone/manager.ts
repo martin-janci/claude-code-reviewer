@@ -42,7 +42,10 @@ function ghClone(
 
 export class CloneManager {
   private baseDir: string;
-  private env: NodeJS.ProcessEnv;
+  /** Env for `gh` CLI calls (GH_TOKEN only, no git config overrides) */
+  private ghEnv: NodeJS.ProcessEnv;
+  /** Env for raw `git` calls (GH_TOKEN + http.extraheader for HTTPS auth) */
+  private gitEnv: NodeJS.ProcessEnv;
   private timeoutMs: number;
   // Per-repo mutex to prevent concurrent clone/fetch operations
   private repoLocks = new Map<string, Promise<void>>();
@@ -50,14 +53,16 @@ export class CloneManager {
   constructor(baseDir: string, ghToken?: string, timeoutMs?: number) {
     this.baseDir = resolve(baseDir);
     this.timeoutMs = timeoutMs ?? 120_000;
-    this.env = { ...process.env };
+    this.ghEnv = { ...process.env };
+    this.gitEnv = { ...process.env };
     if (ghToken) {
-      this.env.GH_TOKEN = ghToken;
-      // Configure git to use GH_TOKEN for HTTPS auth via header injection.
-      // This avoids requiring `gh auth setup-git` or a credential helper.
-      this.env.GIT_CONFIG_COUNT = "1";
-      this.env.GIT_CONFIG_KEY_0 = "http.https://github.com/.extraheader";
-      this.env.GIT_CONFIG_VALUE_0 = `Authorization: token ${ghToken}`;
+      this.ghEnv.GH_TOKEN = ghToken;
+      this.gitEnv.GH_TOKEN = ghToken;
+      // Configure raw git to use GH_TOKEN for HTTPS auth via header injection.
+      // Only applied to gitEnv — gh CLI handles its own auth via GH_TOKEN.
+      this.gitEnv.GIT_CONFIG_COUNT = "1";
+      this.gitEnv.GIT_CONFIG_KEY_0 = "http.https://github.com/.extraheader";
+      this.gitEnv.GIT_CONFIG_VALUE_0 = `Authorization: token ${ghToken}`;
     }
   }
 
@@ -90,15 +95,15 @@ export class CloneManager {
       }
 
       if (existsSync(clonePath)) {
-        // Fetch latest
+        // Fetch latest (raw git — uses gitEnv with header auth)
         await git(["fetch", "origin"], {
           cwd: clonePath,
-          env: this.env,
+          env: this.gitEnv,
           timeout: this.timeoutMs,
         });
       } else {
-        // Clone bare
-        await ghClone(`${owner}/${repo}`, clonePath, this.env, this.timeoutMs);
+        // Clone bare (gh CLI — uses ghEnv, gh handles its own auth)
+        await ghClone(`${owner}/${repo}`, clonePath, this.ghEnv, this.timeoutMs);
       }
       return clonePath;
     } finally {
@@ -123,7 +128,7 @@ export class CloneManager {
     // Fetch the PR ref
     await git(["fetch", "origin", `pull/${prNumber}/head`], {
       cwd: clonePath,
-      env: this.env,
+      env: this.gitEnv,
       timeout: this.timeoutMs,
     });
 
