@@ -1,27 +1,26 @@
 #!/bin/sh
+# Ensure /home/.claude and /home/node/.claude point to the same location.
+# The base image uses HOME=/home (credentials at /home/.claude/), but the
+# node user's HOME is /home/node. Symlink so both paths work.
+if [ -d /home/node/.claude ] && [ ! -e /home/.claude ]; then
+  ln -s /home/node/.claude /home/.claude
+elif [ -d /home/.claude ] && [ ! -e /home/node/.claude ]; then
+  ln -s /home/.claude /home/node/.claude
+fi
+
 # Fix ownership on volumes that may be mounted as root.
 # On some filesystems (e.g. Synology NAS), chown silently fails on bind mounts,
 # so we also mkdir + chmod the dirs Claude CLI needs at runtime.
 for claude_dir in /home/node/.claude /home/.claude; do
-  if [ -d "$claude_dir" ]; then
-    chown -R node:node "$claude_dir" 2>/dev/null || true
-    for sub in debug todos projects statsig; do
-      mkdir -p "$claude_dir/$sub"
-      chmod 777 "$claude_dir/$sub" 2>/dev/null || true
-    done
-    chmod 777 "$claude_dir" 2>/dev/null || true
-  fi
+  [ -d "$claude_dir" ] || continue
+  chown -R node:node "$claude_dir" 2>/dev/null || true
+  for sub in debug todos projects statsig; do
+    mkdir -p "$claude_dir/$sub"
+    chmod 777 "$claude_dir/$sub" 2>/dev/null || true
+  done
+  chmod 777 "$claude_dir" 2>/dev/null || true
 done
 chown -R node:node /app/data 2>/dev/null || true
-
-# Detect where Claude credentials live and set HOME accordingly.
-# The base image default HOME is /home (credentials at /home/.claude/),
-# but docker-compose may bind-mount to /home/node/.claude instead.
-if [ -f /home/node/.claude/.credentials.json ]; then
-  export HOME=/home/node
-elif [ -f /home/.claude/.credentials.json ]; then
-  export HOME=/home
-fi
 
 # Configure git
 su-exec node git config --global advice.detachedHead false
