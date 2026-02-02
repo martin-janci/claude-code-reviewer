@@ -401,6 +401,7 @@ export class Reviewer {
 
     // 10c. Auto-labeling (after review is posted)
     if (this.config.features.autoLabel.enabled && result.structured) {
+      let labelsMutated = false;
       try {
         const currentLabels = await getPRLabels(owner, repo, prNumber);
         const labelDecision = computeLabels(
@@ -408,18 +409,26 @@ export class Reviewer {
           this.config.features.autoLabel, currentLabels,
         );
         if (labelDecision.add.length > 0 || labelDecision.remove.length > 0) {
+          labelsMutated = true;
           await applyLabels(owner, repo, prNumber, labelDecision);
-          // Re-fetch actual labels from GitHub after applying to avoid stale state
-          // from partial failures (e.g. addLabels succeeds but removeLabels fails)
-          const actualLabels = await getPRLabels(owner, repo, prNumber);
-          this.store.update(owner, repo, prNumber, { labelsApplied: actualLabels });
-          Object.assign(state, { labelsApplied: actualLabels });
           console.log(`Labels updated on ${label}: +[${labelDecision.add.join(",")}] -[${labelDecision.remove.join(",")}]`);
         }
       } catch (err) {
         // Non-fatal: log and continue
         console.warn(`Auto-labeling failed for ${label}:`, err instanceof Error ? err.message : err);
         this.metrics?.recordError("label_apply");
+      } finally {
+        // Always re-fetch from GitHub after any mutation attempt so state
+        // reflects reality even on partial failures (e.g. add succeeds, remove fails)
+        if (labelsMutated) {
+          try {
+            const actualLabels = await getPRLabels(owner, repo, prNumber);
+            this.store.update(owner, repo, prNumber, { labelsApplied: actualLabels });
+            Object.assign(state, { labelsApplied: actualLabels });
+          } catch {
+            // Best-effort — label state may be stale but review still proceeds
+          }
+        }
       }
     }
 
