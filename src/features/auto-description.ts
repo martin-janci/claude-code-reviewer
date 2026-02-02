@@ -3,8 +3,14 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
 function resolveDescriptionSkillPath(): string | null {
-  const p = resolve(process.cwd(), ".claude/skills/auto-description-prompt/skill.md");
-  return existsSync(p) ? p : null;
+  const candidates = [
+    "/home/node/.claude/skills/auto-description-prompt/skill.md",
+    resolve(process.cwd(), ".claude/skills/auto-description-prompt/skill.md"),
+  ];
+  for (const p of candidates) {
+    if (existsSync(p)) return p;
+  }
+  return null;
 }
 
 /**

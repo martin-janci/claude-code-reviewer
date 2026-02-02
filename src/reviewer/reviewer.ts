@@ -46,6 +46,9 @@ export class Reviewer {
     // Per-PR mutex: wait in a loop until no lock exists for this key.
     // Loop handles 3+ concurrent callers correctly — after waking,
     // re-check in case another waiter acquired the lock first.
+    if (this.locks.has(key)) {
+      console.log(`Waiting for mutex on ${key} (another review in progress)`);
+    }
     while (this.locks.has(key)) {
       await this.locks.get(key);
     }
@@ -54,6 +57,7 @@ export class Reviewer {
     const lock = new Promise<void>((resolve) => { unlock = resolve; });
     this.locks.set(key, lock);
     this.inflightCount++;
+    console.log(`Processing ${key} (sha: ${pr.headSha.slice(0, 7)}, inflight: ${this.inflightCount})`);
 
     try {
       await this.doProcessPR(pr);
@@ -61,6 +65,7 @@ export class Reviewer {
       this.inflightCount--;
       this.locks.delete(key);
       unlock!();
+      console.log(`Finished processing ${key}`);
     }
   }
 
@@ -98,6 +103,7 @@ export class Reviewer {
 
     // 3. Evaluate transitions
     this.evaluateTransitions(state);
+    console.log(`State for ${label}: status=${state.status}, headSha=${state.headSha.slice(0, 7)}, lastReviewedSha=${state.lastReviewedSha?.slice(0, 7) ?? "none"}, errors=${state.consecutiveErrors}`);
 
     // 4. Persist skip status for draft/WIP so we don't re-evaluate every cycle.
     //    Also update skip reason if already skipped for a different reason (e.g. diff_too_large → draft).
@@ -127,6 +133,7 @@ export class Reviewer {
     // 5. Check if we should review
     const decision = shouldReview(state, this.config.review, pr.forceReview);
     if (!decision.shouldReview) {
+      console.log(`Skipping ${label}: ${decision.reason} (status: ${state.status})`);
       return;
     }
 
@@ -222,6 +229,7 @@ export class Reviewer {
     }
 
     // 9. Run Claude review
+    console.log(`Starting Claude review for ${label} (timeout: ${this.config.review.reviewTimeoutMs}ms, maxTurns: ${cwd ? this.config.review.reviewMaxTurns : "n/a"}, codebase: ${cwd ? "yes" : "no"})`);
     const result = await reviewDiff({
       diff,
       prTitle: title,
@@ -239,9 +247,12 @@ export class Reviewer {
     }
 
     if (!result.success) {
+      console.error(`Claude review failed for ${label}`);
       this.recordError(state, headSha, new Error(result.body || "Claude review returned unsuccessful"), "claude_review");
       return;
     }
+    console.log(`Claude review succeeded for ${label} (structured: ${result.structured ? "yes" : "no"})`);
+
 
     // 9c. Jira validation (after Claude review, before posting)
     let jiraLink: JiraLink | undefined;
@@ -314,6 +325,11 @@ export class Reviewer {
       const orphanFindings: ReviewFinding[] = [];
 
       for (const finding of structured.findings) {
+        // Praise goes in the review body, not as inline comments
+        if (finding.severity === "praise") {
+          orphanFindings.push(finding);
+          continue;
+        }
         const snappedLine = findNearestCommentableLine(commentable, finding.path, finding.line);
         if (snappedLine != null) {
           inlineComments.push({
@@ -324,6 +340,10 @@ export class Reviewer {
         } else {
           orphanFindings.push(finding);
         }
+      }
+
+      if (orphanFindings.length > 0) {
+        console.log(`${orphanFindings.length} finding(s) could not be placed inline — promoted to review body on ${label}`);
       }
 
       // Build top-level review body
@@ -347,7 +367,9 @@ export class Reviewer {
       const resolvedResolutions = structured.resolutions?.filter((r) => r.resolution === "resolved") ?? [];
       if (resolvedResolutions.length > 0 && context?.previousFindings?.length) {
         try {
+          console.log(`Fetching review threads for ${label} to resolve ${resolvedResolutions.length} resolved finding(s)`);
           const threads = await getReviewThreads(owner, repo, prNumber);
+          console.log(`Found ${threads.length} thread(s) (${threads.filter(t => !t.isResolved).length} unresolved) on ${label}`);
           const unresolvedThreads = threads.filter((t) => !t.isResolved);
           const resolvedIds = new Set<string>();
 

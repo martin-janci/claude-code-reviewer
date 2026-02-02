@@ -1,6 +1,7 @@
 services:
   reviewer:
-    build: .
+    image: registry.rlt.sk/claude-code-reviewer:latest
+    # build: .
     environment:
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}

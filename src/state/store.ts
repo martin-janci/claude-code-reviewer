@@ -41,7 +41,8 @@ export class StateStore {
 
     // Backfill fields added after initial V2 schema
     for (const entry of Object.values(this.state.prs)) {
-      entry.reviewId = typeof entry.reviewId === "number" ? entry.reviewId : null;
+      entry.reviewId = typeof entry.reviewId === "string" ? entry.reviewId
+        : typeof entry.reviewId === "number" ? String(entry.reviewId) : null;
       entry.reviewVerifiedAt = typeof entry.reviewVerifiedAt === "string" ? entry.reviewVerifiedAt : null;
       entry.headBranch = typeof entry.headBranch === "string" ? entry.headBranch : "";
       entry.jiraKey = typeof entry.jiraKey === "string" ? entry.jiraKey : null;
@@ -49,7 +50,8 @@ export class StateStore {
       entry.descriptionGenerated = typeof entry.descriptionGenerated === "boolean" ? entry.descriptionGenerated : false;
       entry.labelsApplied = Array.isArray(entry.labelsApplied) ? entry.labelsApplied : [];
       for (const rev of entry.reviews) {
-        rev.reviewId ??= null;
+        rev.reviewId = typeof rev.reviewId === "string" ? rev.reviewId
+          : typeof rev.reviewId === "number" ? String(rev.reviewId) : null;
         rev.findings ??= [];
       }
     }

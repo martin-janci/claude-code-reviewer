@@ -1,6 +1,6 @@
-import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { exec, execFile } from "node:child_process";
+import { existsSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
+import { resolve, join } from "node:path";
 import type { ReviewResult, ReviewVerdict, StructuredReview, ConventionalLabel, ReviewFinding, FindingResolution, ResolutionEntry } from "../types.js";
 
 // Resolve skill path: check Docker location first, then project-relative
@@ -194,21 +194,45 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
     args.push("--max-turns", String(maxTurns));
   }
 
+  // Write prompt to temp file and redirect stdin via shell — more reliable
+  // than Node.js child.stdin.write() which can race with process startup.
+  const promptDir = "/tmp/claude-prompts";
+  mkdirSync(promptDir, { recursive: true });
+  const promptFile = join(promptDir, `review-${Date.now()}.txt`);
+  writeFileSync(promptFile, userPrompt);
+
+  const shellCmd = `claude ${args.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(" ")} < '${promptFile}'`;
+
+  console.log(`Invoking claude CLI: args=[${args.join(" ")}], timeout=${timeoutMs ?? 300_000}ms, cwd=${cwd ?? "none"}, prompt=${Buffer.byteLength(userPrompt)} bytes`);
+  const startTime = Date.now();
+
   return new Promise((resolve) => {
-    const child = execFile("claude", args, {
+    exec(shellCmd, {
       encoding: "utf-8",
       maxBuffer: 10 * 1024 * 1024,
       timeout: timeoutMs ?? 300_000,
       cwd: cwd ?? undefined,
-    }, (err, stdout) => {
+    }, (err, stdout, stderr) => {
+      // Clean up temp file
+      try { unlinkSync(promptFile); } catch {}
+
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       if (err) {
         const message = err instanceof Error ? err.message : String(err);
-        console.error("Claude review failed:", message);
+        console.error(`Claude CLI failed after ${elapsed}s: ${message}`);
+        if (stderr?.trim()) {
+          console.error("Claude stderr:", stderr.trim());
+        }
+        if (stdout?.trim()) {
+          console.error("Claude stdout:", stdout.trim().slice(0, 2000));
+        }
+        console.error("Prompt preview:", userPrompt.slice(0, 200));
         resolve({ body: message, success: false });
         return;
       }
 
       const body = stdout.trim();
+      console.log(`Claude CLI completed in ${elapsed}s (${body.length} bytes output)`);
       const structured = parseStructuredReview(body);
 
       if (structured) {
@@ -219,14 +243,5 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
 
       resolve({ body, success: true, structured: structured ?? undefined });
     });
-
-    if (child.stdin) {
-      child.stdin.on("error", () => {
-        // Ignore stdin errors — the child may have exited before consuming all input.
-        // The execFile callback will report the actual failure.
-      });
-      child.stdin.write(userPrompt);
-      child.stdin.end();
-    }
   });
 }
