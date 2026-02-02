@@ -194,7 +194,7 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
     args.push("--max-turns", String(maxTurns));
   }
 
-  console.log(`Invoking claude CLI: args=[${args.join(" ")}], timeout=${timeoutMs ?? 300_000}ms, cwd=${cwd ?? "none"}`);
+  console.log(`Invoking claude CLI: args=[${args.join(" ")}], timeout=${timeoutMs ?? 300_000}ms, cwd=${cwd ?? "none"}, prompt=${Buffer.byteLength(userPrompt)} bytes`);
   const startTime = Date.now();
 
   return new Promise((resolve) => {
@@ -239,7 +239,6 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
       });
       child.stdin.write(userPrompt);
       child.stdin.end();
-      console.log(`Sent prompt to claude stdin (${Buffer.byteLength(userPrompt)} bytes)`);
     }
   });
 }
