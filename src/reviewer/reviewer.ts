@@ -222,6 +222,7 @@ export class Reviewer {
     }
 
     // 9. Run Claude review
+    console.log(`Starting Claude review for ${label} (timeout: ${this.config.review.reviewTimeoutMs}ms, maxTurns: ${cwd ? this.config.review.reviewMaxTurns : "n/a"}, codebase: ${cwd ? "yes" : "no"})`);
     const result = await reviewDiff({
       diff,
       prTitle: title,
@@ -239,9 +240,12 @@ export class Reviewer {
     }
 
     if (!result.success) {
+      console.error(`Claude review failed for ${label}`);
       this.recordError(state, headSha, new Error(result.body || "Claude review returned unsuccessful"), "claude_review");
       return;
     }
+    console.log(`Claude review succeeded for ${label} (structured: ${result.structured ? "yes" : "no"})`);
+
 
     // 9c. Jira validation (after Claude review, before posting)
     let jiraLink: JiraLink | undefined;
@@ -326,6 +330,10 @@ export class Reviewer {
         }
       }
 
+      if (orphanFindings.length > 0) {
+        console.log(`${orphanFindings.length} finding(s) could not be placed inline — promoted to review body on ${label}`);
+      }
+
       // Build top-level review body
       const body = formatReviewBody(structured, headSha, tag, orphanFindings, jiraLink);
 
@@ -347,7 +355,9 @@ export class Reviewer {
       const resolvedResolutions = structured.resolutions?.filter((r) => r.resolution === "resolved") ?? [];
       if (resolvedResolutions.length > 0 && context?.previousFindings?.length) {
         try {
+          console.log(`Fetching review threads for ${label} to resolve ${resolvedResolutions.length} resolved finding(s)`);
           const threads = await getReviewThreads(owner, repo, prNumber);
+          console.log(`Found ${threads.length} thread(s) (${threads.filter(t => !t.isResolved).length} unresolved) on ${label}`);
           const unresolvedThreads = threads.filter((t) => !t.isResolved);
           const resolvedIds = new Set<string>();
 

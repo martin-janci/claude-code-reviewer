@@ -194,6 +194,9 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
     args.push("--max-turns", String(maxTurns));
   }
 
+  console.log(`Invoking claude CLI: args=[${args.join(" ")}], timeout=${timeoutMs ?? 300_000}ms, cwd=${cwd ?? "none"}`);
+  const startTime = Date.now();
+
   return new Promise((resolve) => {
     const child = execFile("claude", args, {
       encoding: "utf-8",
@@ -201,9 +204,10 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
       timeout: timeoutMs ?? 300_000,
       cwd: cwd ?? undefined,
     }, (err, stdout, stderr) => {
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       if (err) {
         const message = err instanceof Error ? err.message : String(err);
-        console.error("Claude review failed:", message);
+        console.error(`Claude CLI failed after ${elapsed}s: ${message}`);
         if (stderr?.trim()) {
           console.error("Claude stderr:", stderr.trim());
         }
@@ -212,6 +216,7 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
       }
 
       const body = stdout.trim();
+      console.log(`Claude CLI completed in ${elapsed}s (${body.length} bytes output)`);
       const structured = parseStructuredReview(body);
 
       if (structured) {
@@ -230,6 +235,7 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
       });
       child.stdin.write(userPrompt);
       child.stdin.end();
+      console.log(`Sent prompt to claude stdin (${Buffer.byteLength(userPrompt)} bytes)`);
     }
   });
 }

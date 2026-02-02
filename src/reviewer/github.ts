@@ -193,6 +193,7 @@ export async function postComment(
   prNumber: number,
   body: string,
 ): Promise<string> {
+  console.log(`GitHub API: POST issue comment on ${owner}/${repo}#${prNumber} (${body.length} chars)`);
   // Use stdin for the body to avoid ARG_MAX limits with large review comments
   const json = await gh([
     "api",
@@ -207,6 +208,7 @@ export async function postComment(
   } catch {
     throw new Error(`Failed to parse postComment response: ${json.slice(0, 200)}`);
   }
+  console.log(`GitHub API: Comment posted — id=${result.id}`);
   return String(result.id);
 }
 
@@ -216,6 +218,7 @@ export async function updateComment(
   commentId: string,
   body: string,
 ): Promise<void> {
+  console.log(`GitHub API: PATCH comment ${commentId} on ${owner}/${repo} (${body.length} chars)`);
   // Use stdin for the body to avoid ARG_MAX limits with large review comments
   await gh([
     "api",
@@ -223,6 +226,7 @@ export async function updateComment(
     `repos/${owner}/${repo}/issues/comments/${commentId}`,
     "--input", "-",
   ], JSON.stringify({ body }));
+  console.log(`GitHub API: Comment ${commentId} updated`);
 }
 
 // --- PR Body and Labels ---
@@ -296,6 +300,7 @@ export async function postReview(
   commitId: string,
   comments: ReviewComment[],
 ): Promise<string> {
+  console.log(`GitHub API: POST PR review on ${owner}/${repo}#${prNumber} (${comments.length} inline comment(s), ${body.length} chars body, commit=${commitId.slice(0, 7)})`);
   const payload = {
     body,
     event: "COMMENT",
@@ -320,6 +325,7 @@ export async function postReview(
   } catch {
     throw new Error(`Failed to parse postReview response: ${json.slice(0, 200)}`);
   }
+  console.log(`GitHub API: Review posted — id=${result.id}`);
   return String(result.id);
 }
 
@@ -456,6 +462,7 @@ export async function getReviewThreads(
  * Resolve a PR review thread via GraphQL mutation.
  */
 export async function resolveReviewThread(threadId: string): Promise<void> {
+  console.log(`GitHub API: Resolving review thread ${threadId}`);
   const query = `
     mutation($threadId: ID!) {
       resolveReviewThread(input: {threadId: $threadId}) {
