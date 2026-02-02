@@ -13,7 +13,7 @@ github:
 
 repos:
   - owner: martin-janci
-    repo: my-project
+    repo: claude-code-reviewer
   # - owner: martin-janci
   #   repo: another-project
 
@@ -33,7 +33,7 @@ review:
   cloneDir: data/clones              # where repo clones are stored
   cloneTimeoutMs: 120000             # timeout for git clone/fetch (2 min)
   reviewTimeoutMs: 600000            # timeout for claude review (10 min)
-  reviewMaxTurns: 15                 # max agentic turns for codebase exploration
+  reviewMaxTurns: 30                 # max agentic turns for codebase exploration
   staleWorktreeMinutes: 60           # cleanup worktrees older than this
 
 # --- Optional Features (all disabled by default) ---
