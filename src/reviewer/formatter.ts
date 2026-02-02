@@ -1,5 +1,12 @@
 import type { ConventionalLabel, ReviewFinding, StructuredReview } from "../types.js";
 
+export interface JiraLink {
+  key: string;
+  url: string;
+  summary?: string;
+  valid: boolean;
+}
+
 /**
  * Format the top-level review body with a collapsible summary.
  * orphanFindings are findings that couldn't be placed as inline comments.
@@ -9,8 +16,19 @@ export function formatReviewBody(
   headSha: string,
   tag: string,
   orphanFindings: ReviewFinding[],
+  jira?: JiraLink,
 ): string {
   const parts: string[] = [tag, ""];
+
+  // Jira link (before summary)
+  if (jira) {
+    if (jira.valid && jira.summary) {
+      parts.push(`**Jira:** [${jira.key} \u2014 ${jira.summary}](${jira.url})`);
+    } else {
+      parts.push(`**Jira:** [${jira.key}](${jira.url})`);
+    }
+    parts.push("");
+  }
 
   // Summary
   parts.push(`## Review Summary`);

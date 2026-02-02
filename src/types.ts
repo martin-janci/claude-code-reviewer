@@ -37,6 +37,38 @@ export interface ReviewConfig {
   staleWorktreeMinutes: number;
 }
 
+export interface JiraConfig {
+  enabled: boolean;
+  baseUrl: string;
+  token: string;
+  email: string;
+  projectKeys: string[];
+}
+
+export interface AutoDescriptionConfig {
+  enabled: boolean;
+  overwriteExisting: boolean;
+  timeoutMs: number;
+}
+
+export interface DiffLabelRule {
+  pattern: string;
+  label: string;
+}
+
+export interface AutoLabelConfig {
+  enabled: boolean;
+  verdictLabels: Partial<Record<ReviewVerdict, string[]>>;
+  severityLabels: Partial<Record<ConventionalLabel, string[]>>;
+  diffLabels: DiffLabelRule[];
+}
+
+export interface FeaturesConfig {
+  jira: JiraConfig;
+  autoDescription: AutoDescriptionConfig;
+  autoLabel: AutoLabelConfig;
+}
+
 export interface AppConfig {
   mode: "polling" | "webhook" | "both";
   polling: PollingConfig;
@@ -44,6 +76,7 @@ export interface AppConfig {
   github: GithubConfig;
   repos: RepoConfig[];
   review: ReviewConfig;
+  features: FeaturesConfig;
 }
 
 // --- PR State Machine ---
@@ -91,7 +124,7 @@ export interface StructuredReview {
 
 export type SkipReason = "draft" | "wip_title" | "diff_too_large";
 
-export type ErrorPhase = "diff_fetch" | "clone_prepare" | "claude_review" | "comment_post";
+export type ErrorPhase = "diff_fetch" | "clone_prepare" | "claude_review" | "comment_post" | "jira_validate" | "description_generate" | "label_apply";
 
 export interface ReviewRecord {
   sha: string;
@@ -124,6 +157,7 @@ export interface PRState {
   isDraft: boolean;
   headSha: string;
   baseBranch: string;
+  headBranch: string;
 
   // Review history
   reviews: ReviewRecord[];
@@ -154,6 +188,12 @@ export interface PRState {
 
   // Debounce
   lastPushAt: string | null;
+
+  // Feature tracking
+  jiraKey: string | null;
+  jiraValidated: boolean;
+  descriptionGenerated: boolean;
+  labelsApplied: string[];
 }
 
 export interface ReviewDecision {
@@ -177,6 +217,7 @@ export interface PullRequest {
   headSha: string;
   isDraft: boolean;
   baseBranch: string;
+  headBranch: string;
   owner: string;
   repo: string;
   forceReview?: boolean;

@@ -15,6 +15,10 @@ src/
 ├── types.ts                     # All TypeScript interfaces and types
 ├── clone/
 │   └── manager.ts               # Bare clones + git worktrees for codebase access
+├── features/
+│   ├── jira.ts                  # Jira key extraction + REST API validation
+│   ├── auto-description.ts      # PR description generation via Claude CLI
+│   └── auto-label.ts            # Label computation from verdict/severity/diff paths
 ├── polling/
 │   └── poller.ts                # Non-overlapping poll loop with reconciliation
 ├── reviewer/
@@ -31,8 +35,11 @@ src/
 └── webhook/
     └── server.ts                # HTTP server for GitHub webhook events
 
-.claude/skills/code-review/skill.md  # Review prompt template (Conventional Comments + JSON)
-config.yaml                     # Runtime configuration
+.claude/skills/code-review/skill.md              # Review prompt template (Conventional Comments + JSON)
+.claude/skills/auto-description-prompt/skill.md  # System prompt for auto-description (not user-invocable)
+.claude/skills/generate-pr-description/skill.md  # Manual PR description generation skill
+.claude/skills/jira-lookup/skill.md              # Manual Jira issue lookup skill
+config.yaml                                      # Runtime configuration
 ```
 
 ## Key Architecture Decisions
@@ -74,12 +81,15 @@ GITHUB_TOKEN=ghp_xxx node dist/index.js  # Production
 | Review logic | `reviewer/reviewer.ts`, `state/decisions.ts` |
 | Adding webhook events | `webhook/server.ts`, `types.ts` |
 | State persistence | `state/store.ts`, `types.ts` (PRState, StateFileV2) |
-| Configuration | `config.ts`, `types.ts` (AppConfig, ReviewConfig) |
+| Configuration | `config.ts`, `types.ts` (AppConfig, ReviewConfig, FeaturesConfig) |
 | Claude integration | `reviewer/claude.ts`, `.claude/skills/code-review/skill.md` |
 | GitHub API calls | `reviewer/github.ts` |
 | Codebase access | `clone/manager.ts`, `reviewer/reviewer.ts`, `reviewer/claude.ts` |
 | Inline comments | `reviewer/diff-parser.ts`, `reviewer/formatter.ts`, `reviewer/reviewer.ts` |
 | Review verification | `reviewer/comment-verifier.ts` (handles both review and legacy comment paths) |
+| Jira integration | `features/jira.ts`, `reviewer/formatter.ts` (JiraLink), `reviewer/reviewer.ts` |
+| Auto-description | `features/auto-description.ts`, `.claude/skills/auto-description-prompt/skill.md` |
+| Auto-labeling | `features/auto-label.ts`, `reviewer/reviewer.ts` |
 
 ## Commit Conventions
 
@@ -110,6 +120,7 @@ This project enforces [Conventional Commits](https://www.conventionalcommits.org
 - **Webhook responses:** Send HTTP response immediately (202), then process asynchronously
 - **Config defaults:** All defaults live in `DEFAULTS` constant in `config.ts`
 - **CLI wrappers:** Both `gh` and `claude` are invoked via `child_process.execFile` with timeouts
+- **Features:** Optional features (Jira, auto-description, auto-label) are disabled by default and configured under `features:` in `config.yaml`. Each feature is non-fatal — errors are logged but never block the review pipeline.
 
 ## Testing
 

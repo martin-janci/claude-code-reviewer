@@ -27,6 +27,11 @@ const DEFAULTS: AppConfig = {
     reviewMaxTurns: 15,
     staleWorktreeMinutes: 60,
   },
+  features: {
+    jira: { enabled: false, baseUrl: "", token: "", email: "", projectKeys: [] },
+    autoDescription: { enabled: false, overwriteExisting: false, timeoutMs: 120_000 },
+    autoLabel: { enabled: false, verdictLabels: {}, severityLabels: {}, diffLabels: [] },
+  },
 };
 
 export function loadConfig(path: string = "config.yaml", allowEmptyRepos = false): AppConfig {
@@ -42,6 +47,7 @@ export function loadConfig(path: string = "config.yaml", allowEmptyRepos = false
     console.warn(`Config file not found at ${path}, using defaults + env vars`);
   }
 
+  const fileFeatures = (fileConfig as any).features as Partial<AppConfig["features"]> | undefined;
   const config: AppConfig = {
     mode: fileConfig.mode ?? DEFAULTS.mode,
     polling: { ...DEFAULTS.polling, ...fileConfig.polling },
@@ -49,6 +55,11 @@ export function loadConfig(path: string = "config.yaml", allowEmptyRepos = false
     github: { ...DEFAULTS.github, ...fileConfig.github },
     repos: fileConfig.repos ?? DEFAULTS.repos,
     review: { ...DEFAULTS.review, ...fileConfig.review },
+    features: {
+      jira: { ...DEFAULTS.features.jira, ...fileFeatures?.jira },
+      autoDescription: { ...DEFAULTS.features.autoDescription, ...fileFeatures?.autoDescription },
+      autoLabel: { ...DEFAULTS.features.autoLabel, ...fileFeatures?.autoLabel },
+    },
   };
 
   // Environment variable overrides
@@ -78,6 +89,15 @@ export function loadConfig(path: string = "config.yaml", allowEmptyRepos = false
       throw new Error(`Invalid MODE: "${process.env.MODE}". Must be one of: ${validModes.join(", ")}`);
     }
     config.mode = process.env.MODE as AppConfig["mode"];
+  }
+  if (process.env.JIRA_TOKEN) {
+    config.features.jira.token = process.env.JIRA_TOKEN;
+  }
+  if (process.env.JIRA_EMAIL) {
+    config.features.jira.email = process.env.JIRA_EMAIL;
+  }
+  if (process.env.JIRA_BASE_URL) {
+    config.features.jira.baseUrl = process.env.JIRA_BASE_URL;
   }
 
   if (config.repos.length === 0 && !allowEmptyRepos) {
