@@ -1,18 +1,30 @@
 #!/bin/sh
-# Ensure /home/.claude and /home/node/.claude point to the same location.
-# The base image uses HOME=/home (credentials at /home/.claude/), but the
-# node user's HOME is /home/node. Symlink so both paths work.
-if [ -d /home/node/.claude ] && [ ! -e /home/.claude ]; then
-  ln -s /home/node/.claude /home/.claude
-elif [ -d /home/.claude ] && [ ! -e /home/node/.claude ]; then
-  ln -s /home/.claude /home/node/.claude
+# Discover where Claude credentials actually live.
+# Possible locations: /root/.claude, /home/.claude, /home/node/.claude
+CLAUDE_SRC=""
+for candidate in /root/.claude /home/.claude /home/node/.claude; do
+  if [ -f "$candidate/.credentials.json" ]; then
+    CLAUDE_SRC="$candidate"
+    break
+  fi
+done
+
+# Determine the node user's HOME
+NODE_HOME=$(su-exec node sh -c 'echo $HOME')
+NODE_CLAUDE="$NODE_HOME/.claude"
+
+# If credentials exist but not where the node user expects, symlink
+if [ -n "$CLAUDE_SRC" ] && [ "$CLAUDE_SRC" != "$NODE_CLAUDE" ]; then
+  echo "Linking credentials: $CLAUDE_SRC -> $NODE_CLAUDE"
+  rm -rf "$NODE_CLAUDE" 2>/dev/null || true
+  ln -sf "$CLAUDE_SRC" "$NODE_CLAUDE"
 fi
 
 # Fix ownership on volumes that may be mounted as root.
 # On some filesystems (e.g. Synology NAS), chown silently fails on bind mounts,
 # so we also mkdir + chmod the dirs Claude CLI needs at runtime.
-for claude_dir in /home/node/.claude /home/.claude; do
-  [ -d "$claude_dir" ] || continue
+for claude_dir in "$NODE_CLAUDE" "$CLAUDE_SRC"; do
+  [ -n "$claude_dir" ] && [ -d "$claude_dir" ] || continue
   chown -R node:node "$claude_dir" 2>/dev/null || true
   for sub in debug todos projects statsig; do
     mkdir -p "$claude_dir/$sub"
