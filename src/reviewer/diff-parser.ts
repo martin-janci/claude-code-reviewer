@@ -114,6 +114,28 @@ export function parseCommentableLines(diff: string): CommentableLines {
 }
 
 /**
+ * Extract all file paths from a unified diff.
+ */
+export function extractDiffPaths(diff: string): string[] {
+  const paths: string[] = [];
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("+++ b/")) {
+      paths.push(line.slice(6));
+    }
+  }
+  return paths;
+}
+
+/**
+ * Check if any paths in the diff match security-sensitive glob patterns.
+ * Returns the list of matching paths.
+ */
+export function findSecurityPaths(diffPaths: string[], securityPatterns: string[]): string[] {
+  if (securityPatterns.length === 0) return [];
+  return diffPaths.filter((path) => securityPatterns.some((p) => globMatch(p, path)));
+}
+
+/**
  * Find the nearest commentable line to the given target line for a file.
  * Returns null if no commentable line is within maxDistance.
  */

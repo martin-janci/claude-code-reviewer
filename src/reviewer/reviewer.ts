@@ -1,17 +1,21 @@
-import type { AppConfig, PullRequest, ReviewVerdict, ReviewFinding, ErrorPhase, ErrorKind, PRState, FeatureExecution, FeatureName, FeatureStatus } from "../types.js";
+import type { AppConfig, PullRequest, ReviewVerdict, ReviewFinding, ErrorPhase, ErrorKind, PRState, ReviewResult } from "../types.js";
 import type { StateStore } from "../state/store.js";
 import type { CloneManager } from "../clone/manager.js";
 import type { MetricsCollector, PhaseTimings } from "../metrics.js";
 import type { Logger } from "../logger.js";
 import type { ReviewComment } from "./github.js";
+import type { Feature, FeatureContext } from "../features/plugin.js";
+import { runFeatures } from "../features/plugin.js";
+import { jiraPlugin } from "../features/jira-plugin.js";
+import { autoDescriptionPlugin } from "../features/auto-description-plugin.js";
+import { autoLabelPlugin } from "../features/auto-label-plugin.js";
+import { slackPlugin } from "../features/slack-plugin.js";
 import { shouldReview } from "../state/decisions.js";
-import { getPRDiff, getPRBody, updatePRBody, getPRLabels, postReview, postComment, updateComment, findExistingComment, getReviewThreads, resolveReviewThread } from "./github.js";
+import { getPRDiff, postReview, postComment, updateComment, deleteComment, findExistingComment, getReviewThreads, resolveReviewThread, type ReviewEvent } from "./github.js";
 import { reviewDiff } from "./claude.js";
-import { parseCommentableLines, findNearestCommentableLine, filterDiff } from "./diff-parser.js";
-import { formatReviewBody, formatInlineComment, type JiraLink } from "./formatter.js";
-import { extractJiraKey, validateJiraIssue } from "../features/jira.js";
-import { generateDescription } from "../features/auto-description.js";
-import { computeLabels, applyLabels } from "../features/auto-label.js";
+import { parseCommentableLines, findNearestCommentableLine, filterDiff, extractDiffPaths, findSecurityPaths } from "./diff-parser.js";
+import { formatReviewBody, formatInlineComment, filterByConfidence, type JiraLink } from "./formatter.js";
+import { extractJiraKey } from "../features/jira.js";
 
 function parseLegacyVerdict(body: string): ReviewVerdict {
   // Scan first 5 non-empty lines for a verdict keyword
@@ -33,7 +37,6 @@ function parseLegacyVerdict(body: string): ReviewVerdict {
  */
 function classifyError(err: unknown, phase: ErrorPhase): ErrorKind {
   const message = err instanceof Error ? err.message : String(err);
-  const msgLower = message.toLowerCase();
 
   // Permanent: resource not found or deleted
   if (/404|not found/i.test(message)) return "permanent";
@@ -54,9 +57,25 @@ function classifyError(err: unknown, phase: ErrorPhase): ErrorKind {
   return "transient";
 }
 
+/** Internal state passed through review phases */
+interface ReviewPhaseState {
+  pr: PullRequest;
+  state: PRState;
+  log: Logger;
+  diff: string;
+  cwd?: string;
+  timings: Partial<PhaseTimings>;
+  phaseStart: number;
+  jiraLink?: JiraLink;
+}
+
 export class Reviewer {
   private locks = new Map<string, Promise<void>>();
   private inflightCount = 0;
+  private features: Feature[];
+  // Semaphore for limiting concurrent reviews
+  private concurrencyQueue: Array<() => void> = [];
+  private activeReviews = 0;
 
   constructor(
     private config: AppConfig,
@@ -64,7 +83,49 @@ export class Reviewer {
     private logger: Logger,
     private cloneManager?: CloneManager,
     private metrics?: MetricsCollector,
-  ) {}
+  ) {
+    // Register feature plugins
+    this.features = [
+      jiraPlugin,
+      autoDescriptionPlugin,
+      autoLabelPlugin,
+      slackPlugin,
+    ];
+  }
+
+  /**
+   * Acquire a slot in the concurrency pool.
+   * Returns a release function to call when done.
+   */
+  private async acquireConcurrencySlot(log: Logger): Promise<() => void> {
+    const maxConcurrent = this.config.review.maxConcurrentReviews;
+
+    if (this.activeReviews < maxConcurrent) {
+      this.activeReviews++;
+      log.debug("Acquired concurrency slot", { active: this.activeReviews, max: maxConcurrent });
+      return () => this.releaseConcurrencySlot(log);
+    }
+
+    // Wait in queue
+    log.info("Waiting for concurrency slot", { active: this.activeReviews, max: maxConcurrent, queued: this.concurrencyQueue.length });
+    await new Promise<void>((resolve) => {
+      this.concurrencyQueue.push(resolve);
+    });
+    this.activeReviews++;
+    log.debug("Acquired concurrency slot after wait", { active: this.activeReviews, max: maxConcurrent });
+    return () => this.releaseConcurrencySlot(log);
+  }
+
+  private releaseConcurrencySlot(log: Logger): void {
+    this.activeReviews--;
+    log.debug("Released concurrency slot", { active: this.activeReviews, queued: this.concurrencyQueue.length });
+
+    // Wake next waiter if any
+    const next = this.concurrencyQueue.shift();
+    if (next) {
+      next();
+    }
+  }
 
   get lockKeys(): string[] {
     return [...this.locks.keys()];
@@ -89,11 +150,14 @@ export class Reviewer {
       await this.locks.get(key);
     }
 
+    // Acquire concurrency slot (limits total parallel reviews across all PRs)
+    const releaseConcurrency = await this.acquireConcurrencySlot(log);
+
     let unlock: () => void;
     const lock = new Promise<void>((resolve) => { unlock = resolve; });
     this.locks.set(key, lock);
     this.inflightCount++;
-    log.info("Processing PR", { sha: pr.headSha.slice(0, 7), inflight: this.inflightCount });
+    log.info("Processing PR", { sha: pr.headSha.slice(0, 7), inflight: this.inflightCount, maxConcurrent: this.config.review.maxConcurrentReviews });
 
     try {
       await this.doProcessPR(pr, log);
@@ -101,15 +165,190 @@ export class Reviewer {
       this.inflightCount--;
       this.locks.delete(key);
       unlock!();
+      releaseConcurrency();
       log.info("Finished processing PR");
     }
   }
 
   private async doProcessPR(pr: PullRequest, log: Logger): Promise<void> {
-    const { owner, repo, number: prNumber, title, headSha, isDraft, baseBranch, headBranch } = pr;
-    const label = `${owner}/${repo}#${prNumber}`;
+    const { owner, repo, number: prNumber, headSha } = pr;
 
-    // 1. Get or create state entry
+    log.info("Phase 1: Initializing state", { phase: "init" });
+
+    // Phase 1: Initialize state and check gating conditions
+    const state = this.initializeState(pr, log);
+    if (!state) {
+      log.info("Phase 1: Gating check failed, skipping review", { phase: "init" });
+      return;
+    }
+
+    log.info("Phase 2: Fetching diff", { phase: "diff_fetch" });
+
+    // Phase 2: Fetch and filter diff
+    const diffResult = await this.fetchDiff(pr, log);
+    if (!diffResult) {
+      log.info("Phase 2: Diff fetch failed", { phase: "diff_fetch" });
+      return;
+    }
+
+    log.info("Phase 2: Diff fetched", { phase: "diff_fetch", lines: diffResult.diff.split("\n").length, durationMs: diffResult.diffFetchMs });
+
+    // Set status to reviewing (lock)
+    this.store.setStatus(owner, repo, prNumber, "reviewing");
+    log.info("Status set to reviewing", { phase: "reviewing" });
+
+    const phaseStart = Date.now();
+    const timings: Partial<PhaseTimings> = { diff_fetch_ms: diffResult.diffFetchMs };
+
+    // Post "review started" comment
+    let statusCommentId: string | null = null;
+    if (!this.config.review.dryRun) {
+      try {
+        const startMessage = `🔍 **Review started** for commit \`${headSha.slice(0, 7)}\`\n\n_Claude is analyzing your changes..._`;
+        statusCommentId = await postComment(owner, repo, prNumber, startMessage);
+        log.info("Posted review-started comment", { commentId: statusCommentId });
+      } catch (err) {
+        log.warn("Failed to post review-started comment", { error: String(err) });
+      }
+    }
+
+    // Helper to delete status comment (fire-and-forget)
+    const deleteStatusComment = () => {
+      if (statusCommentId) {
+        deleteComment(owner, repo, statusCommentId).catch((err) => {
+          log.warn("Failed to delete status comment", { error: String(err) });
+        });
+      }
+    };
+
+    // Update capacity metrics
+    const queueDepth = (this.store.getStatusCounts().pending_review ?? 0) + (this.store.getStatusCounts().changes_pushed ?? 0);
+    this.metrics?.updateCapacity(this.inflightCount, queueDepth);
+
+    // Check diff size
+    const lineCount = diffResult.diff.split("\n").length;
+    if (lineCount > this.config.review.maxDiffLines) {
+      log.info("Skipping: diff too large", { lineCount, maxDiffLines: this.config.review.maxDiffLines });
+      this.metrics?.recordSkip("diff_too_large");
+      this.store.update(owner, repo, prNumber, {
+        status: "skipped",
+        skipReason: "diff_too_large",
+        skipDiffLines: lineCount,
+        skippedAtSha: headSha,
+      });
+      deleteStatusComment();
+      return;
+    }
+
+    try {
+    // Build feature context for pre_review phase
+    const featureCtx: FeatureContext = {
+      pr,
+      state: this.store.get(owner, repo, prNumber)!,
+      config: this.config,
+      logger: log,
+      store: this.store,
+      dryRun: this.config.review.dryRun,
+      diff: diffResult.diff,
+    };
+
+    // Run pre_review features (jira extraction, auto-description)
+    log.info("Running pre_review features", { phase: "pre_review_features" });
+    await runFeatures(this.features, "pre_review", featureCtx);
+    log.info("Completed pre_review features", { phase: "pre_review_features" });
+
+    // Re-read state after features may have modified it
+    const currentState = this.store.get(owner, repo, prNumber)!;
+
+    // Phase 3: Prepare codebase worktree if enabled
+    let cwd: string | undefined;
+    if (this.cloneManager) {
+      log.info("Phase 3: Preparing worktree", { phase: "clone_prepare" });
+      try {
+        const t0 = Date.now();
+        cwd = await this.cloneManager.prepareForPR(owner, repo, prNumber, headSha);
+        timings.clone_prepare_ms = Date.now() - t0;
+        log.info("Phase 3: Worktree ready", { phase: "clone_prepare", cwd, durationMs: timings.clone_prepare_ms });
+      } catch (err) {
+        log.error("Phase 3: Worktree preparation failed", { phase: "clone_prepare", error: String(err) });
+        this.recordError(owner, repo, prNumber, headSha, err, "clone_prepare", log);
+        return;
+      }
+    }
+
+    // Phase 4: Run Claude review
+    log.info("Phase 4: Starting Claude review", { phase: "claude_review", codebaseAccess: !!cwd });
+    const reviewResult = await this.runReview(pr, currentState, diffResult.diff, cwd, timings, log);
+    if (!reviewResult) {
+      log.info("Phase 4: Claude review failed", { phase: "claude_review" });
+      return;
+    }
+    log.info("Phase 4: Claude review completed", { phase: "claude_review", structured: !!reviewResult.structured, durationMs: timings.claude_review_ms });
+
+    // Cleanup worktree (fire-and-forget)
+    if (this.cloneManager) {
+      log.debug("Cleaning up worktree", { phase: "worktree_cleanup" });
+      this.cloneManager.cleanupPR(owner, repo, prNumber).catch((err) => {
+        log.error("Worktree cleanup failed", { phase: "worktree_cleanup", error: String(err) });
+      });
+    }
+
+    // Build Jira link from state if validated
+    let jiraLink: JiraLink | undefined;
+    if (this.config.features.jira.enabled && currentState.jiraKey && this.config.features.jira.baseUrl) {
+      jiraLink = {
+        key: currentState.jiraKey,
+        url: `${this.config.features.jira.baseUrl}/browse/${currentState.jiraKey}`,
+        valid: currentState.jiraValidated,
+      };
+      log.debug("Jira link built", { jiraKey: currentState.jiraKey, valid: currentState.jiraValidated });
+    }
+
+    // Phase 5: Post review results
+    log.info("Phase 5: Posting review results", { phase: "comment_post" });
+    const postResult = await this.postResults(
+      { pr, state: currentState, log, diff: diffResult.diff, cwd, timings, phaseStart, jiraLink },
+      reviewResult,
+    );
+    if (!postResult) {
+      log.info("Phase 5: Failed to post review", { phase: "comment_post" });
+      return;
+    }
+    log.info("Phase 5: Review posted", { phase: "comment_post", verdict: postResult.verdict, reviewId: postResult.reviewId, durationMs: timings.comment_post_ms });
+
+    // Run post_review features (auto-labeling)
+    log.info("Running post_review features", { phase: "post_review_features" });
+    const postFeatureCtx: FeatureContext = {
+      ...featureCtx,
+      state: this.store.get(owner, repo, prNumber)!,
+      reviewResult: reviewResult.structured,
+      verdict: postResult.verdict,
+    };
+    await runFeatures(this.features, "post_review", postFeatureCtx);
+    log.info("Completed post_review features", { phase: "post_review_features" });
+
+    // Phase 6: Finalize review
+    log.info("Phase 6: Finalizing review", { phase: "finalize" });
+    this.finalizeReview(
+      { pr, state: this.store.get(owner, repo, prNumber)!, log, diff: diffResult.diff, timings, phaseStart },
+      reviewResult,
+      postResult,
+    );
+    log.info("Phase 6: Review finalized", { phase: "finalize" });
+    } finally {
+      // Always delete the status comment when review finishes (success or error)
+      deleteStatusComment();
+    }
+  }
+
+  /**
+   * Phase 1: Initialize state, sync metadata, check gating conditions.
+   * Returns null if PR should not be reviewed.
+   */
+  private initializeState(pr: PullRequest, log: Logger): PRState | null {
+    const { owner, repo, number: prNumber, title, headSha, isDraft, baseBranch, headBranch } = pr;
+
+    // Get or create state entry
     const state = this.store.getOrCreate(owner, repo, prNumber, {
       title,
       isDraft,
@@ -118,10 +357,10 @@ export class Reviewer {
       headBranch,
     });
 
-    // 2. Sync metadata — detect changes
+    // Sync metadata — detect changes
     this.syncMetadata(state, pr);
 
-    // 2b. Jira key extraction (after metadata sync so title/branch are current)
+    // Jira key extraction (after metadata sync so title/branch are current)
     if (this.config.features.jira.enabled) {
       const currentKey = extractJiraKey(
         state.title,
@@ -133,70 +372,69 @@ export class Reviewer {
           jiraKey: currentKey,
           jiraValidated: false,
         });
-        Object.assign(state, { jiraKey: currentKey, jiraValidated: false });
       }
     }
 
-    // 3. Evaluate transitions
+    // Evaluate transitions
     this.evaluateTransitions(state);
-    log.info("PR state", { status: state.status, headSha: state.headSha.slice(0, 7), lastReviewedSha: state.lastReviewedSha?.slice(0, 7) ?? "none", errors: state.consecutiveErrors });
+    const freshState = this.store.get(owner, repo, prNumber)!;
+    log.info("PR state", { status: freshState.status, headSha: freshState.headSha.slice(0, 7), lastReviewedSha: freshState.lastReviewedSha?.slice(0, 7) ?? "none", errors: freshState.consecutiveErrors });
 
-    // 4. Persist skip status for draft/WIP so we don't re-evaluate every cycle.
-    //    Also update skip reason if already skipped for a different reason (e.g. diff_too_large → draft).
-    if (this.config.review.skipDrafts && state.isDraft) {
+    // Check skip conditions
+    if (this.config.review.skipDrafts && freshState.isDraft) {
       if (pr.forceReview) {
         log.info("Ignoring /review trigger: PR is a draft (skipDrafts is enabled)");
       }
-      if (state.status !== "skipped" || state.skipReason !== "draft") {
+      if (freshState.status !== "skipped" || freshState.skipReason !== "draft") {
         this.store.update(owner, repo, prNumber, { status: "skipped", skipReason: "draft", skippedAtSha: null });
-        Object.assign(state, { status: "skipped", skipReason: "draft", skippedAtSha: null });
         this.metrics?.recordSkip("draft");
       }
-      return;
+      return null;
     }
-    if (this.config.review.skipWip && state.title.toLowerCase().startsWith("wip")) {
+    if (this.config.review.skipWip && freshState.title.toLowerCase().startsWith("wip")) {
       if (pr.forceReview) {
         log.info("Ignoring /review trigger: PR title starts with WIP (skipWip is enabled)");
       }
-      if (state.status !== "skipped" || state.skipReason !== "wip_title") {
+      if (freshState.status !== "skipped" || freshState.skipReason !== "wip_title") {
         this.store.update(owner, repo, prNumber, { status: "skipped", skipReason: "wip_title", skippedAtSha: null });
-        Object.assign(state, { status: "skipped", skipReason: "wip_title", skippedAtSha: null });
         this.metrics?.recordSkip("wip_title");
       }
-      return;
+      return null;
     }
 
-    // 5. Check if we should review
-    const decision = shouldReview(state, this.config.review, pr.forceReview);
+    // Check if we should review
+    const decision = shouldReview(freshState, this.config.review, pr.forceReview);
     if (!decision.shouldReview) {
-      log.info("Skipping PR", { reason: decision.reason, status: state.status });
-      return;
+      log.info("Skipping PR", { reason: decision.reason, status: freshState.status });
+      return null;
     }
 
     log.info("Reviewing PR", { sha: headSha.slice(0, 7), reason: decision.reason });
+    return freshState;
+  }
 
-    // 5. Set status to reviewing (lock)
-    this.store.setStatus(owner, repo, prNumber, "reviewing");
+  /**
+   * Phase 2: Fetch diff and apply exclusion filters.
+   * Returns null on error.
+   */
+  private async fetchDiff(
+    pr: PullRequest,
+    log: Logger,
+  ): Promise<{ diff: string; diffFetchMs: number } | null> {
+    const { owner, repo, number: prNumber, headSha } = pr;
 
-    const phaseStart = Date.now();
-    const timings: Partial<PhaseTimings> = {};
-
-    // Update capacity metrics
-    const queueDepth = (this.store.getStatusCounts().pending_review ?? 0) + (this.store.getStatusCounts().changes_pushed ?? 0);
-    this.metrics?.updateCapacity(this.inflightCount, queueDepth);
-
-    // 6. Fetch diff
     let diff: string;
+    let diffFetchMs: number;
     try {
       const t0 = Date.now();
       diff = await getPRDiff(owner, repo, prNumber);
-      timings.diff_fetch_ms = Date.now() - t0;
+      diffFetchMs = Date.now() - t0;
     } catch (err) {
-      this.recordError(state, headSha, err, "diff_fetch", log);
-      return;
+      this.recordError(owner, repo, prNumber, headSha, err, "diff_fetch", log);
+      return null;
     }
 
-    // 6b. Filter excluded paths from diff
+    // Filter excluded paths from diff
     if (this.config.review.excludePaths.length > 0) {
       const { filtered, excludedCount } = filterDiff(diff, this.config.review.excludePaths);
       if (excludedCount > 0) {
@@ -205,61 +443,27 @@ export class Reviewer {
       }
     }
 
-    // 7. Check diff size
-    const lineCount = diff.split("\n").length;
-    if (lineCount > this.config.review.maxDiffLines) {
-      log.info("Skipping: diff too large", { lineCount, maxDiffLines: this.config.review.maxDiffLines });
-      this.metrics?.recordSkip("diff_too_large");
-      this.store.update(owner, repo, prNumber, {
-        status: "skipped",
-        skipReason: "diff_too_large",
-        skipDiffLines: lineCount,
-        skippedAtSha: headSha,
-      });
-      return;
-    }
+    return { diff, diffFetchMs };
+  }
 
-    // 7b. Auto-generate PR description if enabled and body is empty
-    const skipDescription = pr.overrides?.skipDescription ?? false;
-    if (this.config.features.autoDescription.enabled && !state.descriptionGenerated && !skipDescription) {
-      const featureT0 = Date.now();
-      try {
-        const currentBody = await getPRBody(owner, repo, prNumber);
-        const hasBody = currentBody.trim().length > 0;
-        if (!hasBody || this.config.features.autoDescription.overwriteExisting) {
-          log.info("Generating PR description", { phase: "description_generate" });
-          const description = await generateDescription(
-            diff, title, this.config.features.autoDescription.timeoutMs,
-          );
-          if (description) {
-            if (this.config.review.dryRun) {
-              log.info("Dry run: skipping PR description update");
-            } else {
-              await updatePRBody(owner, repo, prNumber, description);
-              log.info("PR description posted");
-            }
-          }
-        }
-        this.store.update(owner, repo, prNumber, { descriptionGenerated: true });
-        Object.assign(state, { descriptionGenerated: true });
-        this.recordFeatureExecution(state, "auto_description", "success", Date.now() - featureT0);
-      } catch (err) {
-        // Non-fatal: log and continue with review
-        log.warn("Auto-description failed", { phase: "description_generate", error: err instanceof Error ? err.message : String(err) });
-        this.metrics?.recordError("description_generate");
-        this.recordFeatureExecution(state, "auto_description", "error", Date.now() - featureT0, err instanceof Error ? err.message : String(err));
-      }
-    } else if (this.config.features.autoDescription.enabled && (state.descriptionGenerated || skipDescription)) {
-      this.recordFeatureExecution(state, "auto_description", "skipped", undefined, skipDescription ? "override" : "already_done");
-    }
+  /**
+   * Phase 4: Run Claude review.
+   * Returns null on error.
+   */
+  private async runReview(
+    pr: PullRequest,
+    state: Readonly<PRState>,
+    diff: string,
+    cwd: string | undefined,
+    timings: Partial<PhaseTimings>,
+    log: Logger,
+  ): Promise<ReviewResult | null> {
+    const { owner, repo, number: prNumber, headSha, title } = pr;
 
-    // 8. Build re-review context if applicable
+    // Build re-review context if applicable
     const lastReview = state.reviews.length > 0 ? state.reviews[state.reviews.length - 1] : null;
 
-    // Collect unique findings from ALL previous reviews for thread resolution.
-    // Each review iteration may rephrase the same finding, creating different thread
-    // bodies on GitHub. We need every unique body to match threads correctly.
-    // Deduplicate by path:line:body to avoid exact duplicates while keeping rephrased ones.
+    // Collect unique findings from ALL previous reviews for thread resolution
     const allPreviousFindings: ReviewFinding[] = [];
     if (state.reviews.length > 0) {
       const seen = new Set<string>();
@@ -280,23 +484,17 @@ export class Reviewer {
       previousFindings: allPreviousFindings,
     } : undefined;
 
-    // 8b. Prepare codebase worktree if enabled
-    let cwd: string | undefined;
-    if (this.cloneManager) {
-      try {
-        const t0 = Date.now();
-        cwd = await this.cloneManager.prepareForPR(owner, repo, prNumber, headSha);
-        timings.clone_prepare_ms = Date.now() - t0;
-        log.info("Worktree ready", { phase: "clone_prepare", cwd, durationMs: timings.clone_prepare_ms });
-      } catch (err) {
-        this.recordError(state, headSha, err, "clone_prepare", log);
-        return;
-      }
+    // Detect security-sensitive paths
+    const diffPaths = extractDiffPaths(diff);
+    const securityPaths = findSecurityPaths(diffPaths, this.config.review.securityPaths);
+    if (securityPaths.length > 0) {
+      log.info("Security-sensitive paths detected", { paths: securityPaths });
     }
 
-    // 9. Run Claude review
+    // Run Claude review
     const effectiveMaxTurns = pr.overrides?.maxTurns ?? (cwd ? this.config.review.reviewMaxTurns : undefined);
-    log.info("Starting Claude review", { phase: "claude_review", timeoutMs: this.config.review.reviewTimeoutMs, maxTurns: effectiveMaxTurns, codebase: !!cwd, focusPaths: pr.overrides?.focusPaths });
+    log.info("Starting Claude review", { phase: "claude_review", timeoutMs: this.config.review.reviewTimeoutMs, maxTurns: effectiveMaxTurns, codebase: !!cwd, focusPaths: pr.overrides?.focusPaths, securityPaths: securityPaths.length > 0 ? securityPaths : undefined });
+
     const claudeT0 = Date.now();
     const result = await reviewDiff({
       diff,
@@ -307,81 +505,73 @@ export class Reviewer {
       maxTurns: effectiveMaxTurns,
       logger: log,
       focusPaths: pr.overrides?.focusPaths,
+      securityPaths: securityPaths.length > 0 ? securityPaths : undefined,
     });
-
     timings.claude_review_ms = Date.now() - claudeT0;
-
-    // 9b. Cleanup worktree (fire-and-forget)
-    if (this.cloneManager) {
-      this.cloneManager.cleanupPR(owner, repo, prNumber).catch((err) => {
-        log.error("Worktree cleanup failed", { error: String(err) });
-      });
-    }
 
     if (!result.success) {
       log.error("Claude review failed", { phase: "claude_review" });
-      this.recordError(state, headSha, new Error(result.body || "Claude review returned unsuccessful"), "claude_review", log);
-      return;
+      this.recordError(owner, repo, prNumber, headSha, new Error(result.body || "Claude review returned unsuccessful"), "claude_review", log);
+      return null;
     }
+
     log.info("Claude review succeeded", { structured: !!result.structured });
+    return result;
+  }
 
+  /**
+   * Phase 5: Post review results to GitHub.
+   * Returns null on error.
+   */
+  private async postResults(
+    phase: ReviewPhaseState,
+    result: ReviewResult,
+  ): Promise<{ verdict: ReviewVerdict; reviewId: string | null; commentId: string | null } | null> {
+    const { pr, state, log, diff, jiraLink, timings } = phase;
+    const { owner, repo, number: prNumber, headSha } = pr;
 
-    // 9c. Jira validation (after Claude review, before posting)
-    let jiraLink: JiraLink | undefined;
-    if (this.config.features.jira.enabled && state.jiraKey) {
-      const jiraConfig = this.config.features.jira;
-      const featureT0 = Date.now();
-      if (jiraConfig.baseUrl && jiraConfig.email && jiraConfig.token && !state.jiraValidated) {
-        try {
-          const validation = await validateJiraIssue(
-            jiraConfig.baseUrl, jiraConfig.email, jiraConfig.token, state.jiraKey,
-          );
-          jiraLink = {
-            key: state.jiraKey,
-            url: validation.url,
-            summary: validation.summary,
-            valid: validation.valid,
-          };
-          this.store.update(owner, repo, prNumber, { jiraValidated: validation.valid });
-          Object.assign(state, { jiraValidated: validation.valid });
-          this.recordFeatureExecution(state, "jira", "success", Date.now() - featureT0);
-        } catch (err) {
-          // Non-fatal: skip Jira link if validation fails
-          log.warn("Jira validation failed", { phase: "jira_validate", jiraKey: state.jiraKey, error: err instanceof Error ? err.message : String(err) });
-          this.metrics?.recordError("jira_validate");
-          jiraLink = {
-            key: state.jiraKey,
-            url: `${jiraConfig.baseUrl}/browse/${state.jiraKey}`,
-            valid: false,
-          };
-          this.recordFeatureExecution(state, "jira", "error", Date.now() - featureT0, err instanceof Error ? err.message : String(err));
-        }
-      } else if (jiraConfig.baseUrl) {
-        // Already validated or missing credentials — link without summary
-        jiraLink = {
-          key: state.jiraKey,
-          url: `${jiraConfig.baseUrl}/browse/${state.jiraKey}`,
-          valid: state.jiraValidated,
-        };
-        this.recordFeatureExecution(state, "jira", "skipped", undefined, state.jiraValidated ? "already_validated" : "missing_credentials");
-      }
-    }
-
-    // 10. Post review — structured (PR Reviews API) or legacy (issue comment)
     const postT0 = Date.now();
     const tag = this.config.review.commentTag;
     let verdict: ReviewVerdict;
     let reviewId: string | null = null;
     let commentId: string | null = state.commentId;
 
+    // Build re-review context for thread resolution
+    const allPreviousFindings: ReviewFinding[] = [];
+    if (state.reviews.length > 0) {
+      const seen = new Set<string>();
+      for (const rev of state.reviews) {
+        for (const f of rev.findings ?? []) {
+          const key = `${f.path}:${f.line}:${f.body}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            allPreviousFindings.push(f);
+          }
+        }
+      }
+    }
+
     if (result.structured) {
       // Structured path: PR Reviews API with inline comments
       const structured = result.structured;
       verdict = structured.verdict;
 
+      // Apply confidence filtering
+      const confidenceThreshold = this.config.review.confidenceThreshold;
+      const filteredFindings = filterByConfidence(structured.findings, confidenceThreshold);
+      if (filteredFindings.length < structured.findings.length) {
+        log.info("Filtered low-confidence findings", {
+          threshold: confidenceThreshold,
+          before: structured.findings.length,
+          after: filteredFindings.length,
+        });
+      }
+      // Use filtered findings for the rest of the review
+      structured.findings = filteredFindings;
+
       // Auto-escalate verdict if any previous blocking finding is still open
-      if (structured.resolutions?.length && context?.previousFindings?.length) {
-        const hasOpenBlocking = context.previousFindings.some((pf) => {
+      if (structured.resolutions?.length && allPreviousFindings.length) {
+        const hasOpenBlocking = allPreviousFindings.some((pf) => {
           if (!pf.blocking) return false;
           const resolution = structured.resolutions?.find(
             (r) => r.path === pf.path && r.line === pf.line,
@@ -426,27 +616,24 @@ export class Reviewer {
       // Build top-level review body
       const body = formatReviewBody(structured, headSha, tag, orphanFindings, jiraLink);
 
+      // Map verdict to GitHub review event
+      const reviewEvent: ReviewEvent = verdict === "APPROVE" ? "APPROVE" : "COMMENT";
+
       if (this.config.review.dryRun) {
-        log.info("Dry run: skipping PR review post", { phase: "comment_post", inlineComments: inlineComments.length, orphans: orphanFindings.length, verdict });
+        log.info("Dry run: skipping PR review post", { phase: "comment_post", inlineComments: inlineComments.length, orphans: orphanFindings.length, verdict, event: reviewEvent });
       } else {
         try {
-          log.info("Posting PR review", { phase: "comment_post", inlineComments: inlineComments.length, orphans: orphanFindings.length });
-          reviewId = await postReview(owner, repo, prNumber, body, headSha, inlineComments);
+          log.info("Posting PR review", { phase: "comment_post", inlineComments: inlineComments.length, orphans: orphanFindings.length, verdict, event: reviewEvent });
+          reviewId = await postReview(owner, repo, prNumber, body, headSha, inlineComments, reviewEvent);
         } catch (err) {
-          this.recordError(state, headSha, err, "comment_post", log);
-          return;
+          this.recordError(owner, repo, prNumber, headSha, err, "comment_post", log);
+          return null;
         }
       }
 
-      // 10b. Resolve review threads for findings marked as resolved.
-      //
-      // A single conceptual issue may span multiple threads across review iterations
-      // (e.g. "matching logic is flawed" → "matching logic is still flawed" → fixed).
-      // Each iteration creates a new thread with slightly different body text.
-      // For each resolved finding, collect ALL previous findings at the same path:line
-      // (across all reviews) and resolve any thread whose body matches any of them.
+      // Resolve review threads for findings marked as resolved
       const resolvedResolutions = structured.resolutions?.filter((r) => r.resolution === "resolved") ?? [];
-      if (resolvedResolutions.length > 0 && context?.previousFindings?.length && !this.config.review.dryRun) {
+      if (resolvedResolutions.length > 0 && allPreviousFindings.length && !this.config.review.dryRun) {
         try {
           log.info("Fetching review threads to resolve findings", { resolvedCount: resolvedResolutions.length });
           const threads = await getReviewThreads(owner, repo, prNumber);
@@ -455,13 +642,11 @@ export class Reviewer {
           const resolvedIds = new Set<string>();
 
           for (const resolution of resolvedResolutions) {
-            // Find ALL previous findings at this path:line (across review iterations)
-            const relatedFindings = context.previousFindings.filter(
+            const relatedFindings = allPreviousFindings.filter(
               (pf) => pf.path === resolution.path && pf.line === resolution.line,
             );
             if (relatedFindings.length === 0) continue;
 
-            // Resolve any unresolved thread whose body matches any related finding
             for (const thread of unresolvedThreads) {
               if (resolvedIds.has(thread.id)) continue;
               if (thread.path !== resolution.path) continue;
@@ -477,7 +662,6 @@ export class Reviewer {
             log.info("Resolved review threads", { count: resolvedIds.size });
           }
         } catch (err) {
-          // Non-fatal — thread resolution is best-effort
           log.warn("Failed to resolve review threads", { error: err instanceof Error ? err.message : String(err) });
         }
       }
@@ -500,58 +684,29 @@ export class Reviewer {
             commentId = await postComment(owner, repo, prNumber, body);
           }
         } catch (err) {
-          this.recordError(state, headSha, err, "comment_post", log);
-          return;
+          this.recordError(owner, repo, prNumber, headSha, err, "comment_post", log);
+          return null;
         }
       }
     }
 
     timings.comment_post_ms = Date.now() - postT0;
+    return { verdict, reviewId, commentId };
+  }
 
-    // 10c. Auto-labeling (after review is posted)
-    const skipLabels = pr.overrides?.skipLabels ?? false;
-    if (this.config.features.autoLabel.enabled && result.structured && !this.config.review.dryRun && !skipLabels) {
-      const featureT0 = Date.now();
-      let labelsMutated = false;
-      let featureError: string | undefined;
-      try {
-        const currentLabels = await getPRLabels(owner, repo, prNumber);
-        const labelDecision = computeLabels(
-          verdict, result.structured.findings, diff,
-          this.config.features.autoLabel, currentLabels,
-        );
-        if (labelDecision.add.length > 0 || labelDecision.remove.length > 0) {
-          labelsMutated = true;
-          await applyLabels(owner, repo, prNumber, labelDecision);
-          log.info("Labels updated", { phase: "label_apply", add: labelDecision.add, remove: labelDecision.remove });
-        }
-      } catch (err) {
-        // Non-fatal: log and continue
-        log.warn("Auto-labeling failed", { phase: "label_apply", error: err instanceof Error ? err.message : String(err) });
-        this.metrics?.recordError("label_apply");
-        featureError = err instanceof Error ? err.message : String(err);
-      } finally {
-        // Always re-fetch from GitHub after any mutation attempt so state
-        // reflects reality even on partial failures (e.g. add succeeds, remove fails)
-        if (labelsMutated) {
-          try {
-            const actualLabels = await getPRLabels(owner, repo, prNumber);
-            this.store.update(owner, repo, prNumber, { labelsApplied: actualLabels });
-            Object.assign(state, { labelsApplied: actualLabels });
-          } catch {
-            // Best-effort — label state may be stale but review still proceeds
-          }
-        }
-        this.recordFeatureExecution(state, "auto_label", featureError ? "error" : "success", Date.now() - featureT0, featureError);
-      }
-    } else if (this.config.features.autoLabel.enabled && (skipLabels || !result.structured || this.config.review.dryRun)) {
-      const skipReason = skipLabels ? "override" : !result.structured ? "no_structured_review" : "dry_run";
-      this.recordFeatureExecution(state, "auto_label", "skipped", undefined, skipReason);
-    }
+  /**
+   * Phase 6: Record review and transition to reviewed state.
+   */
+  private finalizeReview(
+    phase: ReviewPhaseState,
+    result: ReviewResult,
+    postResult: { verdict: ReviewVerdict; reviewId: string | null; commentId: string | null },
+  ): void {
+    const { pr, state, log, timings, phaseStart } = phase;
+    const { owner, repo, number: prNumber, headSha } = pr;
+    const { verdict, reviewId, commentId } = postResult;
 
-    // 11. Record review and transition to reviewed.
-    //     Re-read state to check for concurrent lifecycle events (e.g. webhook closed/merged
-    //     the PR while the review was in progress — lifecycle events bypass the per-PR mutex).
+    // Re-read state to check for concurrent lifecycle events
     const current = this.store.get(owner, repo, prNumber);
     if (current && (current.status === "closed" || current.status === "merged")) {
       log.info("Review complete but PR is now terminal — not overwriting", { terminalStatus: current.status });
@@ -632,14 +787,10 @@ export class Reviewer {
 
     if (changed) {
       this.store.update(state.owner, state.repo, state.number, updates);
-      Object.assign(state, updates);
     }
   }
 
   private evaluateTransitions(state: PRState): void {
-    // Note: store.update() mutates the live state object via Object.assign,
-    // so the `state` reference is updated in-place — no manual sync needed.
-
     // reviewed + new SHA → changes_pushed
     if (state.status === "reviewed" && state.lastReviewedSha && state.headSha !== state.lastReviewedSha) {
       this.store.setStatus(state.owner, state.repo, state.number, "changes_pushed");
@@ -665,18 +816,22 @@ export class Reviewer {
     }
   }
 
-  private recordError(state: PRState, sha: string, err: unknown, phase: ErrorPhase, log: Logger): void {
+  private recordError(owner: string, repo: string, prNumber: number, sha: string, err: unknown, phase: ErrorPhase, log: Logger): void {
     const message = err instanceof Error ? err.message : String(err);
     const kind = classifyError(err, phase);
     this.metrics?.recordError(phase);
     log.error("Review phase error", { phase, error: message, kind });
 
+    // Re-read fresh state to get current consecutiveErrors
+    const freshState = this.store.get(owner, repo, prNumber);
+    const currentErrors = freshState?.consecutiveErrors ?? 0;
+
     // Permanent errors skip retries by immediately setting consecutiveErrors to maxRetries
     const consecutiveErrors = kind === "permanent"
       ? this.config.review.maxRetries
-      : state.consecutiveErrors + 1;
+      : currentErrors + 1;
 
-    this.store.update(state.owner, state.repo, state.number, {
+    this.store.update(owner, repo, prNumber, {
       status: "error",
       lastError: {
         occurredAt: new Date().toISOString(),
@@ -687,26 +842,5 @@ export class Reviewer {
       },
       consecutiveErrors,
     });
-  }
-
-  private recordFeatureExecution(
-    state: PRState,
-    feature: FeatureName,
-    status: FeatureStatus,
-    durationMs?: number,
-    error?: string,
-  ): void {
-    const execution: FeatureExecution = {
-      feature,
-      status,
-      timestamp: new Date().toISOString(),
-    };
-    if (durationMs != null) execution.durationMs = durationMs;
-    if (error) execution.error = error;
-
-    // Keep last 20 executions per PR to avoid unbounded growth
-    const executions = [...state.featureExecutions, execution].slice(-20);
-    this.store.update(state.owner, state.repo, state.number, { featureExecutions: executions });
-    Object.assign(state, { featureExecutions: executions });
   }
 }

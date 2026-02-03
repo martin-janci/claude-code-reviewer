@@ -74,6 +74,24 @@ export function validateConfig(config: AppConfig): ConfigError[] {
     }
   }
 
+  // Parallel reviews
+  if (config.review.maxConcurrentReviews < 1) {
+    errors.push({ field: "review.maxConcurrentReviews", message: "Must be >= 1", severity: "error" });
+  }
+  if (config.review.maxConcurrentReviews > 10) {
+    errors.push({ field: "review.maxConcurrentReviews", message: "Should be <= 10 to avoid rate limits", severity: "warning" });
+  }
+
+  // Confidence threshold
+  if (config.review.confidenceThreshold < 0 || config.review.confidenceThreshold > 100) {
+    errors.push({ field: "review.confidenceThreshold", message: "Must be between 0 and 100", severity: "error" });
+  }
+
+  // Slack config
+  if (config.features.slack.enabled && !config.features.slack.webhookUrl) {
+    errors.push({ field: "features.slack.webhookUrl", message: "Required when slack.enabled is true", severity: "error" });
+  }
+
   return errors;
 }
 
@@ -103,11 +121,15 @@ const DEFAULTS: AppConfig = {
     staleWorktreeMinutes: 60,
     excludePaths: [],
     dryRun: false,
+    maxConcurrentReviews: 3,
+    confidenceThreshold: 0, // 0 = show all findings, 80 = filter low-confidence
+    securityPaths: ["**/auth/**", "**/crypto/**", "**/security/**", "**/*.env*", "**/secrets/**"],
   },
   features: {
     jira: { enabled: false, baseUrl: "", token: "", email: "", projectKeys: [] },
     autoDescription: { enabled: false, overwriteExisting: false, timeoutMs: 120_000 },
     autoLabel: { enabled: false, verdictLabels: {}, severityLabels: {}, diffLabels: [] },
+    slack: { enabled: false, webhookUrl: "", notifyOn: ["error", "request_changes"] },
   },
 };
 
@@ -136,6 +158,7 @@ export function loadConfig(path: string = "config.yaml", allowEmptyRepos = false
       jira: { ...DEFAULTS.features.jira, ...fileFeatures?.jira },
       autoDescription: { ...DEFAULTS.features.autoDescription, ...fileFeatures?.autoDescription },
       autoLabel: { ...DEFAULTS.features.autoLabel, ...fileFeatures?.autoLabel },
+      slack: { ...DEFAULTS.features.slack, ...fileFeatures?.slack },
     },
   };
 
@@ -178,6 +201,10 @@ export function loadConfig(path: string = "config.yaml", allowEmptyRepos = false
   }
   if (process.env.DRY_RUN) {
     config.review.dryRun = process.env.DRY_RUN === "true" || process.env.DRY_RUN === "1";
+  }
+  if (process.env.SLACK_WEBHOOK_URL) {
+    config.features.slack.webhookUrl = process.env.SLACK_WEBHOOK_URL;
+    config.features.slack.enabled = true;
   }
 
   if (config.repos.length === 0 && !allowEmptyRepos) {

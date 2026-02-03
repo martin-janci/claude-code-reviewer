@@ -37,11 +37,15 @@ export function shouldReview(state: PRState, config: ReviewConfig, forceReview?:
   }
 
   // 6. Debounce — wait for pushes to settle
-  // Skip debounce when the last review requested changes — author is fixing comments
+  // Skip debounce when:
+  // - The last review requested changes (author is fixing comments)
+  // - The last review was APPROVE but new commits were pushed (author added more changes)
+  // - Force review was requested
   const lastReview = state.reviews.length > 0 ? state.reviews[state.reviews.length - 1] : null;
-  const isFixingComments = lastReview?.verdict === "REQUEST_CHANGES" && state.headSha !== lastReview.sha;
+  const hasNewCommitsSinceReview = lastReview && state.headSha !== lastReview.sha;
+  const skipDebounce = hasNewCommitsSinceReview || forceReview;
 
-  if (state.lastPushAt && !isFixingComments && !forceReview) {
+  if (state.lastPushAt && !skipDebounce) {
     const pushAge = Date.now() - new Date(state.lastPushAt).getTime();
     const debouncePeriodMs = config.debouncePeriodSeconds * 1000;
     if (pushAge < debouncePeriodMs) {

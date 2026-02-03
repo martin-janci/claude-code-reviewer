@@ -155,11 +155,15 @@ export class StateStore {
   }
 
   /**
-   * Returns a live reference to the internal state object.
-   * Callers must NOT mutate the returned object directly — use update() instead.
+   * Returns a frozen shallow copy of the state object.
+   * Callers cannot mutate the returned object — use update() instead.
+   * Re-read after update() to get fresh state.
    */
-  get(owner: string, repo: string, number: number): PRState | undefined {
-    return this.state.prs[StateStore.prKey(owner, repo, number)];
+  get(owner: string, repo: string, number: number): Readonly<PRState> | undefined {
+    const entry = this.state.prs[StateStore.prKey(owner, repo, number)];
+    if (!entry) return undefined;
+    // Return frozen shallow copy to enforce immutability
+    return Object.freeze({ ...entry });
   }
 
   getAll(): PRState[] {
@@ -169,11 +173,11 @@ export class StateStore {
   }
 
   /**
-   * Returns a live reference to the internal state object.
-   * The caller (Reviewer) holds a per-PR mutex while using this reference.
-   * Do not mutate directly outside of store.update().
+   * Returns a frozen shallow copy of the state object after creating if needed.
+   * Callers cannot mutate the returned object — use update() instead.
+   * Re-read after update() to get fresh state.
    */
-  getOrCreate(owner: string, repo: string, number: number, defaults: Partial<PRState> = {}): PRState {
+  getOrCreate(owner: string, repo: string, number: number, defaults: Partial<PRState> = {}): Readonly<PRState> {
     const key = StateStore.prKey(owner, repo, number);
     if (!this.state.prs[key]) {
       const now = new Date().toISOString();
@@ -211,10 +215,11 @@ export class StateStore {
       };
       this.save();
     }
-    return this.state.prs[key];
+    // Return frozen shallow copy to enforce immutability
+    return Object.freeze({ ...this.state.prs[key] });
   }
 
-  update(owner: string, repo: string, number: number, updates: Partial<PRState>): PRState {
+  update(owner: string, repo: string, number: number, updates: Partial<PRState>): Readonly<PRState> {
     const key = StateStore.prKey(owner, repo, number);
     const entry = this.state.prs[key];
     if (!entry) {
@@ -222,10 +227,11 @@ export class StateStore {
     }
     Object.assign(entry, updates, { updatedAt: new Date().toISOString() });
     this.save();
-    return entry;
+    // Return frozen shallow copy to enforce immutability
+    return Object.freeze({ ...entry });
   }
 
-  setStatus(owner: string, repo: string, number: number, status: PRStatus): PRState {
+  setStatus(owner: string, repo: string, number: number, status: PRStatus): Readonly<PRState> {
     return this.update(owner, repo, number, { status });
   }
 

@@ -1,7 +1,7 @@
 import { exec, execFile } from "node:child_process";
 import { existsSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { resolve, join } from "node:path";
-import type { ReviewResult, ReviewVerdict, StructuredReview, ConventionalLabel, ReviewFinding, FindingResolution, ResolutionEntry } from "../types.js";
+import type { ReviewResult, ReviewVerdict, StructuredReview, ConventionalLabel, ReviewFinding, FindingResolution, ResolutionEntry, PRSummary, RiskLevel } from "../types.js";
 import type { Logger } from "../logger.js";
 
 // Resolve skill path: check Docker location first, then project-relative
@@ -31,10 +31,12 @@ export interface ReviewOptions {
   maxTurns?: number;
   logger?: Logger;
   focusPaths?: string[];
+  securityPaths?: string[]; // Paths that touch security-sensitive areas
 }
 
 const VALID_VERDICTS = new Set<string>(["APPROVE", "REQUEST_CHANGES", "COMMENT"]);
 const VALID_LABELS = new Set<string>(["issue", "suggestion", "nitpick", "question", "praise"]);
+const VALID_RISK_LEVELS = new Set<string>(["low", "medium", "high", "critical"]);
 
 const JSON_SCHEMA = `{
   "verdict": "APPROVE | REQUEST_CHANGES | COMMENT",
@@ -76,6 +78,32 @@ function validateStructuredReview(obj: unknown): StructuredReview | null {
   if (typeof o.summary !== "string" || !o.summary.trim()) return null;
   const summary = o.summary.trim();
 
+  // PR Summary (optional)
+  let prSummary: PRSummary | undefined;
+  if (o.prSummary && typeof o.prSummary === "object") {
+    const ps = o.prSummary as Record<string, unknown>;
+    if (
+      typeof ps.tldr === "string" && ps.tldr.trim() &&
+      typeof ps.filesChanged === "number" &&
+      typeof ps.linesAdded === "number" &&
+      typeof ps.linesRemoved === "number" &&
+      Array.isArray(ps.areasAffected) &&
+      typeof ps.riskLevel === "string" && VALID_RISK_LEVELS.has(ps.riskLevel)
+    ) {
+      prSummary = {
+        tldr: ps.tldr.trim(),
+        filesChanged: ps.filesChanged,
+        linesAdded: ps.linesAdded,
+        linesRemoved: ps.linesRemoved,
+        areasAffected: ps.areasAffected.filter((a): a is string => typeof a === "string"),
+        riskLevel: ps.riskLevel as RiskLevel,
+        riskFactors: Array.isArray(ps.riskFactors)
+          ? ps.riskFactors.filter((r): r is string => typeof r === "string")
+          : undefined,
+      };
+    }
+  }
+
   // Findings
   if (!Array.isArray(o.findings)) return null;
   const findings: ReviewFinding[] = [];
@@ -86,13 +114,24 @@ function validateStructuredReview(obj: unknown): StructuredReview | null {
     if (typeof fi.path !== "string" || !fi.path) continue;
     if (typeof fi.line !== "number" || fi.line < 1) continue;
     if (typeof fi.body !== "string" || !fi.body) continue;
-    findings.push({
+    const finding: ReviewFinding = {
       severity: fi.severity as ConventionalLabel,
       blocking: fi.blocking === true,
       path: fi.path,
       line: fi.line,
       body: fi.body,
-    });
+    };
+    // Optional fields
+    if (typeof fi.confidence === "number" && fi.confidence >= 0 && fi.confidence <= 100) {
+      finding.confidence = fi.confidence;
+    }
+    if (typeof fi.securityRelated === "boolean") {
+      finding.securityRelated = fi.securityRelated;
+    }
+    if (typeof fi.isNew === "boolean") {
+      finding.isNew = fi.isNew;
+    }
+    findings.push(finding);
   }
 
   // Resolutions (optional — only present on re-reviews)
@@ -120,7 +159,7 @@ function validateStructuredReview(obj: unknown): StructuredReview | null {
   // Overall (optional)
   const overall = typeof o.overall === "string" && o.overall.trim() ? o.overall.trim() : undefined;
 
-  return { verdict, summary, findings, overall, resolutions };
+  return { verdict, summary, prSummary, findings, overall, resolutions };
 }
 
 /**
@@ -155,7 +194,7 @@ export function parseStructuredReview(stdout: string): StructuredReview | null {
 }
 
 export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
-  const { diff, prTitle, context, cwd, timeoutMs, maxTurns, logger: log, focusPaths } = options;
+  const { diff, prTitle, context, cwd, timeoutMs, maxTurns, logger: log, focusPaths, securityPaths } = options;
 
   let userPrompt = `## PR Title: ${prTitle}\n\n`;
 
@@ -181,6 +220,20 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
 
   if (focusPaths && focusPaths.length > 0) {
     userPrompt += `## Focus Paths\nFocus your review on changes in these paths: ${focusPaths.join(", ")}. Findings outside these paths should be deprioritized unless they represent critical issues.\n\n`;
+  }
+
+  if (securityPaths && securityPaths.length > 0) {
+    userPrompt += `## Security-Sensitive Files\n⚠️ This PR touches security-sensitive paths:\n`;
+    for (const p of securityPaths) {
+      userPrompt += `- \`${p}\`\n`;
+    }
+    userPrompt += `\nApply elevated scrutiny to these files. Look carefully for:\n`;
+    userPrompt += `- Authentication/authorization bypasses\n`;
+    userPrompt += `- Credential exposure or hardcoded secrets\n`;
+    userPrompt += `- Injection vulnerabilities (SQL, command, XSS)\n`;
+    userPrompt += `- Cryptographic weaknesses\n`;
+    userPrompt += `- Access control issues\n\n`;
+    userPrompt += `Mark security-related findings with \`"securityRelated": true\` in the JSON output.\n\n`;
   }
 
   userPrompt += `## Diff\n\`\`\`diff\n${diff}\n\`\`\`\n\n`;

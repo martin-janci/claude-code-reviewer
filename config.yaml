@@ -37,6 +37,14 @@ review:
   staleWorktreeMinutes: 60           # cleanup worktrees older than this
   excludePaths: []                   # glob patterns to exclude from diff (e.g. ["*.lock", "vendor/**", "dist/**"])
   dryRun: false                      # if true, run reviews but don't post to GitHub (env: DRY_RUN)
+  maxConcurrentReviews: 3            # max parallel reviews across all PRs (1-10 recommended)
+  confidenceThreshold: 0             # filter findings below this confidence (0-100, 0 = show all)
+  securityPaths:                     # paths requiring elevated security scrutiny
+    - "**/auth/**"
+    - "**/crypto/**"
+    - "**/security/**"
+    - "**/*.env*"
+    - "**/secrets/**"
 
 # --- Optional Features (all disabled by default) ---
 
@@ -61,3 +69,12 @@ features:
     verdictLabels: {}          # e.g. { APPROVE: ["approved"], REQUEST_CHANGES: ["changes-requested"] }
     severityLabels: {}         # e.g. { issue: ["has-issues"], suggestion: ["has-suggestions"] }
     diffLabels: []             # e.g. [{ pattern: "src/api/**", label: "api" }, { pattern: "*.css", label: "styles" }]
+
+  # Slack notifications for review events
+  slack:
+    enabled: false
+    webhookUrl: ""             # Slack incoming webhook URL — or SLACK_WEBHOOK_URL env var
+    notifyOn:                  # events to notify on: review_complete, error, request_changes, approve
+      - error
+      - request_changes
+    # channel: ""              # optional: override channel (default uses webhook's configured channel)
