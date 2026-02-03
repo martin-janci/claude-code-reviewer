@@ -98,6 +98,9 @@ async function runOneShot(target: OneShotTarget): Promise<void> {
 
   await reviewer.processPR(pr);
 
+  // Flush audit log before exit
+  auditLogger.stop();
+
   // Read final state to determine exit code
   const state = store.get(target.owner, target.repo, target.prNumber);
   if (!state) {
@@ -255,6 +258,10 @@ function main(): void {
         logger.warn("Exiting with in-flight reviews still running", { inflight: reviewer.inflight });
       }
     }
+
+    // Flush final audit entries before exit
+    auditLogger.stop();
+    logger.info("Audit log flushed");
 
     process.exit(0);
   };
