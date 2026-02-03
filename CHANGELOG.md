@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.15.0
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.14.0...v1.15.0)
+
+### 🚀 Enhancements
+
+- Add Kubernetes deployment manifests ([3ab2b2f](https://github.com/martin-janci/claude-code-reviewer/commit/3ab2b2f))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.14.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.13.0...v1.14.0)
