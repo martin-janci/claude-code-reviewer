@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.14.0
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.13.0...v1.14.0)
+
+### 🚀 Enhancements
+
+- Print version on startup ([c832443](https://github.com/martin-janci/claude-code-reviewer/commit/c832443))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.13.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.12.0...v1.13.0)
