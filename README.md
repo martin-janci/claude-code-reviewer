@@ -134,114 +134,89 @@ Set `codebaseAccess: false` to revert to diff-only reviews. Clone failures are t
 
 ## Setup
 
-### Prerequisites
+**For complete setup instructions, see [SETUP.md](SETUP.md)**
 
-- Docker (recommended) or Node.js 20+
-- GitHub token with repo access (`GITHUB_TOKEN`)
-- Claude Code CLI authenticated (mounted via Docker volume or available on PATH)
-- `gh` CLI installed and available
+The setup guide covers:
+- Prerequisites (GitHub token, Claude CLI, deployment environment)
+- GitHub Personal Access Token creation
+- Claude CLI installation and authentication
+- Three deployment options (Docker Compose, Kubernetes, Local)
+- Configuration for all features (Jira, Slack, autofix, audit logging)
+- GitHub webhook setup
+- Verification and health checks
+- Troubleshooting common issues
+- Security best practices
 
-### Configuration
+### Quick Start (Docker Compose)
 
-Create or edit `config.yaml`:
-
-```yaml
-mode: polling  # "polling" | "webhook" | "both"
-
-polling:
-  intervalSeconds: 300
-
-webhook:
-  port: 3000
-  secret: ""       # or WEBHOOK_SECRET env var
-  path: /webhook
-
-github:
-  token: ""        # or GITHUB_TOKEN env var
-
-repos:
-  - owner: your-org
-    repo: your-repo
-
-review:
-  maxDiffLines: 5000                 # skip diffs larger than this
-  skipDrafts: true                   # skip draft PRs
-  skipWip: true                      # skip PRs with "WIP" title prefix
-  commentTag: "<!-- claude-code-review -->"
-  maxRetries: 3                      # max consecutive errors before giving up
-  debouncePeriodSeconds: 60          # wait for pushes to settle before reviewing
-  staleClosedDays: 7                 # purge closed/merged PR state after N days
-  staleErrorDays: 30                 # purge max-retries error state after N days
-  commentVerifyIntervalMinutes: 60   # how often to check if review comment exists
-  maxReviewHistory: 20               # max review records to keep per PR
-  commentTrigger: "^\\s*/review\\s*$"  # regex to match PR comments that trigger a review
-  codebaseAccess: true                 # clone repos for full-context reviews
-  cloneDir: data/clones                # where repo clones are stored
-  cloneTimeoutMs: 120000               # timeout for git clone/fetch
-  reviewTimeoutMs: 600000              # timeout for claude review (10 min)
-  reviewMaxTurns: 15                   # max agentic turns for codebase exploration
-  staleWorktreeMinutes: 60             # cleanup worktrees older than this
+1. Clone the repository:
+```bash
+git clone https://github.com/martin-janci/claude-code-reviewer.git
+cd claude-code-reviewer
 ```
 
-### Environment Variables
-
-All config values can be overridden with environment variables:
-
-| Variable | Overrides | Description |
-|----------|-----------|-------------|
-| `GITHUB_TOKEN` | `github.token` | GitHub personal access token |
-| `WEBHOOK_SECRET` | `webhook.secret` | GitHub webhook signature secret |
-| `WEBHOOK_PORT` | `webhook.port` | HTTP server port |
-| `POLLING_INTERVAL` | `polling.intervalSeconds` | Polling interval in seconds |
-| `MODE` | `mode` | Operating mode: `polling`, `webhook`, or `both` |
-
-### Run with Docker Compose
-
+2. Create configuration:
 ```bash
-export GITHUB_TOKEN=ghp_xxx
+cp config.yaml.example config.yaml
+# Edit config.yaml with your repos and settings
+```
+
+3. Set credentials:
+```bash
+cat > .env << EOF
+GITHUB_TOKEN=ghp_your_token_here
+WEBHOOK_SECRET=$(openssl rand -hex 32)
+EOF
+```
+
+4. Copy Claude credentials:
+```bash
+mkdir -p .claude
+cp -r ~/.claude/* .claude/
+```
+
+5. Start the service:
+```bash
 docker compose up -d
 ```
 
-### Run with Docker
-
+6. Verify it's running:
 ```bash
-# Build
-docker build -t claude-code-reviewer .
-
-# Polling mode
-docker run -d \
-  -e GITHUB_TOKEN=ghp_xxx \
-  -v claude-auth:/home/node/.claude \
-  -v ./config.yaml:/app/config.yaml:ro \
-  -v reviewer-data:/app/data \
-  claude-code-reviewer
-
-# Webhook mode
-docker run -d \
-  -e GITHUB_TOKEN=ghp_xxx \
-  -e WEBHOOK_SECRET=your-secret \
-  -v claude-auth:/home/node/.claude \
-  -v ./config.yaml:/app/config.yaml:ro \
-  -v reviewer-data:/app/data \
-  -p 3000:3000 \
-  claude-code-reviewer
+curl http://localhost:3000/health
 ```
 
-### Run Locally (Development)
+For Kubernetes deployment, local development, and detailed configuration, see [SETUP.md](SETUP.md).
 
-```bash
-npm install
-npm run build
-GITHUB_TOKEN=ghp_xxx node dist/index.js
+## Features
 
-# Or with tsx for development
-GITHUB_TOKEN=ghp_xxx npm run dev
-```
+### Core Features
+- ✅ **Automatic PR Review** — Reviews new and updated PRs via polling or webhooks
+- ✅ **Full Codebase Access** — Claude can explore the entire repository, not just the diff
+- ✅ **Inline Comments** — Posts review comments directly on specific lines in the "Files changed" tab
+- ✅ **Conventional Comments** — Uses standard labels (`issue`, `suggestion`, `nitpick`, `question`, `praise`)
+- ✅ **State Machine** — Tracks full PR lifecycle with intelligent state transitions
+- ✅ **Manual Trigger** — Post `/review` comment to force re-review
+- ✅ **Review Verification** — Detects deleted/dismissed reviews and re-queues
+- ✅ **Graceful Error Handling** — Exponential backoff and retry logic
+
+### Optional Features
+- 🔧 **Autofix** — `/fix` command to automatically apply fixes to review findings
+- 🎯 **Jira Integration** — Extracts and validates Jira issue keys from PR titles/branches
+- 📝 **Auto-Description** — Generates PR descriptions from diffs using Claude
+- 🏷️ **Auto-Labeling** — Applies labels based on review verdict, severity, and file paths
+- 💬 **Slack Notifications** — Sends notifications for review events
+- 📊 **Audit Logging** — Comprehensive operational audit trail with structured logging
+
+### Deployment Options
+- 🐳 **Docker Compose** — Simple single-command deployment
+- ☸️ **Kubernetes** — Production-ready manifests with health checks, PVCs, and security contexts
+- 💻 **Local Development** — Native Node.js execution for development
 
 ## Webhook Setup
 
-To use webhook mode, configure a GitHub webhook on your repository:
+For webhook mode, configure a GitHub webhook on your repository. See [SETUP.md](SETUP.md#github-webhook-setup-webhook-mode) for detailed instructions.
 
+**Quick steps:**
 1. Go to **Settings** > **Webhooks** > **Add webhook**
 2. Set **Payload URL** to `https://your-host:3000/webhook`
 3. Set **Content type** to `application/json`

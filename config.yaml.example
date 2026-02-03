@@ -1,0 +1,96 @@
+mode: polling  # "polling" | "webhook" | "both"
+
+polling:
+  intervalSeconds: 300
+
+webhook:
+  port: 3000
+  secret: ""       # or WEBHOOK_SECRET env var
+  path: /webhook
+
+github:
+  token: ""        # or GITHUB_TOKEN env var
+
+repos:
+  - owner: martin-janci
+    repo: claude-code-reviewer
+  # - owner: martin-janci
+  #   repo: another-project
+
+review:
+  maxDiffLines: 5000
+  skipDrafts: true
+  skipWip: true
+  commentTag: "<!-- claude-code-review -->"
+  maxRetries: 3                      # max consecutive errors before giving up
+  debouncePeriodSeconds: 60          # wait for pushes to settle before reviewing
+  staleClosedDays: 7                 # purge closed/merged PR state after N days
+  staleErrorDays: 30                 # purge max-retries error state after N days
+  commentVerifyIntervalMinutes: 60   # how often to check if review comment still exists
+  maxReviewHistory: 20               # max review records to keep per PR
+  commentTrigger: "^\\s*/review\\s*$"  # regex to match PR comments that trigger a review
+  codebaseAccess: true               # clone repos for full-context reviews
+  cloneDir: data/clones              # where repo clones are stored
+  cloneTimeoutMs: 120000             # timeout for git clone/fetch (2 min)
+  reviewTimeoutMs: 600000            # timeout for claude review (10 min)
+  reviewMaxTurns: 30                 # max agentic turns for codebase exploration
+  staleWorktreeMinutes: 60           # cleanup worktrees older than this
+  excludePaths: []                   # glob patterns to exclude from diff (e.g. ["*.lock", "vendor/**", "dist/**"])
+  dryRun: false                      # if true, run reviews but don't post to GitHub (env: DRY_RUN)
+  maxConcurrentReviews: 3            # max parallel reviews across all PRs (1-10 recommended)
+  confidenceThreshold: 0             # filter findings below this confidence (0-100, 0 = show all)
+  securityPaths:                     # paths requiring elevated security scrutiny
+    - "**/auth/**"
+    - "**/crypto/**"
+    - "**/security/**"
+    - "**/*.env*"
+    - "**/secrets/**"
+
+# --- Optional Features (all disabled by default) ---
+
+features:
+  # Jira integration: extract issue keys from PR titles/branches and link in reviews
+  jira:
+    enabled: false
+    baseUrl: ""              # e.g. "https://company.atlassian.net" — or JIRA_BASE_URL env var
+    token: ""                # Jira API token — or JIRA_TOKEN env var
+    email: ""                # Jira user email — or JIRA_EMAIL env var
+    projectKeys: []          # e.g. ["PROJ", "ENG"] — empty = match any Jira key pattern
+
+  # Auto-generate PR descriptions from diffs using Claude
+  autoDescription:
+    enabled: false
+    overwriteExisting: false   # if true, replace existing body; if false, only fill empty bodies
+    timeoutMs: 120000          # timeout for Claude description generation
+
+  # Auto-label PRs based on review verdict, finding severity, and file paths in diff
+  autoLabel:
+    enabled: false
+    verdictLabels: {}          # e.g. { APPROVE: ["approved"], REQUEST_CHANGES: ["changes-requested"] }
+    severityLabels: {}         # e.g. { issue: ["has-issues"], suggestion: ["has-suggestions"] }
+    diffLabels: []             # e.g. [{ pattern: "src/api/**", label: "api" }, { pattern: "*.css", label: "styles" }]
+
+  # Slack notifications for review events
+  slack:
+    enabled: false
+    webhookUrl: ""             # Slack incoming webhook URL — or SLACK_WEBHOOK_URL env var
+    notifyOn:                  # events to notify on: review_complete, error, request_changes, approve
+      - error
+      - request_changes
+    # channel: ""              # optional: override channel (default uses webhook's configured channel)
+
+  # Audit logging for tracking important operations
+  audit:
+    enabled: false             # disabled by default (opt-in like other features)
+    maxEntries: 10000          # rolling window size (keep last N entries)
+    filePath: data/audit.json  # path to audit log file
+    includeMetadata: true      # include detailed metadata in entries
+    minSeverity: info          # minimum severity to log: info, warning, error
+
+  # Autofix: automatically apply fixes for review findings via /fix comment
+  autofix:
+    enabled: false                           # disabled by default
+    commandTrigger: "^\\s*/fix\\s*$"         # regex to match PR comments that trigger autofix
+    autoApply: false                         # if true, push to PR branch; if false, push to autofix/pr-N branch for review
+    maxTurns: 10                             # max Claude agentic turns for autofix session
+    timeoutMs: 300000                        # timeout for autofix session (5 min)
