@@ -229,6 +229,20 @@ export async function updateComment(
   console.log(`GitHub API: Comment ${commentId} updated`);
 }
 
+export async function deleteComment(
+  owner: string,
+  repo: string,
+  commentId: string,
+): Promise<void> {
+  console.log(`GitHub API: DELETE comment ${commentId} on ${owner}/${repo}`);
+  await gh([
+    "api",
+    "--method", "DELETE",
+    `repos/${owner}/${repo}/issues/comments/${commentId}`,
+  ]);
+  console.log(`GitHub API: Comment ${commentId} deleted`);
+}
+
 // --- PR Body and Labels ---
 
 export async function getPRBody(owner: string, repo: string, prNumber: number): Promise<string> {

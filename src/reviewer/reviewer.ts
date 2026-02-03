@@ -10,7 +10,7 @@ import { jiraPlugin } from "../features/jira-plugin.js";
 import { autoDescriptionPlugin } from "../features/auto-description-plugin.js";
 import { autoLabelPlugin } from "../features/auto-label-plugin.js";
 import { shouldReview } from "../state/decisions.js";
-import { getPRDiff, postReview, postComment, updateComment, findExistingComment, getReviewThreads, resolveReviewThread } from "./github.js";
+import { getPRDiff, postReview, postComment, updateComment, deleteComment, findExistingComment, getReviewThreads, resolveReviewThread } from "./github.js";
 import { reviewDiff } from "./claude.js";
 import { parseCommentableLines, findNearestCommentableLine, filterDiff } from "./diff-parser.js";
 import { formatReviewBody, formatInlineComment, type JiraLink } from "./formatter.js";
@@ -144,6 +144,27 @@ export class Reviewer {
     const phaseStart = Date.now();
     const timings: Partial<PhaseTimings> = { diff_fetch_ms: diffResult.diffFetchMs };
 
+    // Post "review started" comment
+    let statusCommentId: string | null = null;
+    if (!this.config.review.dryRun) {
+      try {
+        const startMessage = `🔍 **Review started** for commit \`${headSha.slice(0, 7)}\`\n\n_Claude is analyzing your changes..._`;
+        statusCommentId = await postComment(owner, repo, prNumber, startMessage);
+        log.info("Posted review-started comment", { commentId: statusCommentId });
+      } catch (err) {
+        log.warn("Failed to post review-started comment", { error: String(err) });
+      }
+    }
+
+    // Helper to delete status comment (fire-and-forget)
+    const deleteStatusComment = () => {
+      if (statusCommentId) {
+        deleteComment(owner, repo, statusCommentId).catch((err) => {
+          log.warn("Failed to delete status comment", { error: String(err) });
+        });
+      }
+    };
+
     // Update capacity metrics
     const queueDepth = (this.store.getStatusCounts().pending_review ?? 0) + (this.store.getStatusCounts().changes_pushed ?? 0);
     this.metrics?.updateCapacity(this.inflightCount, queueDepth);
@@ -159,9 +180,11 @@ export class Reviewer {
         skipDiffLines: lineCount,
         skippedAtSha: headSha,
       });
+      deleteStatusComment();
       return;
     }
 
+    try {
     // Build feature context for pre_review phase
     const featureCtx: FeatureContext = {
       pr,
@@ -236,6 +259,10 @@ export class Reviewer {
       reviewResult,
       postResult,
     );
+    } finally {
+      // Always delete the status comment when review finishes (success or error)
+      deleteStatusComment();
+    }
   }
 
   /**
