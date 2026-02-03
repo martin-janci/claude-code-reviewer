@@ -5,7 +5,7 @@ import type { AppConfig, PullRequest } from "../types.js";
 export interface AutofixResult {
   success: boolean;
   commitSha?: string;
-  filesChanged: number;
+  filesChanged: number; // Actual count from git diff
   fixBranch?: string; // Branch name where fixes were pushed (if not autoApply)
   error?: string;
 }
@@ -60,24 +60,21 @@ export async function executeAutofix(
 
         log.info("Autofix session completed", { stdout: stdout.slice(0, 500) });
 
-        // Parse output to count files changed
-        const filesChanged = countFilesChanged(stdout);
-
-        // Create a commit with the fixes
+        // Create a commit with the fixes (returns actual file count from git diff)
         createFixCommit(worktreePath, owner, repo, number, log)
-          .then((commitSha) => {
-            if (!commitSha) {
+          .then((result) => {
+            if (!result) {
               resolve({ success: false, filesChanged: 0, error: "No changes to commit" });
               return;
             }
 
             // Determine target branch based on autoApply setting
             const fixBranch = config.features.autofix.autoApply ? null : `autofix/pr-${number}`;
-            resolve({ success: true, commitSha, filesChanged, fixBranch: fixBranch ?? undefined });
+            resolve({ success: true, commitSha: result.sha, filesChanged: result.filesChanged, fixBranch: fixBranch ?? undefined });
           })
           .catch((commitErr) => {
             log.error("Failed to create fix commit", { error: String(commitErr) });
-            resolve({ success: false, filesChanged, error: String(commitErr) });
+            resolve({ success: false, filesChanged: 0, error: String(commitErr) });
           });
       },
     );
@@ -93,7 +90,7 @@ function buildAutofixPrompt(owner: string, repo: string, prNumber: number): stri
   return `You are helping fix issues identified in a code review for PR #${prNumber} in ${owner}/${repo}.
 
 TASK:
-1. Read the most recent review comment on this PR (use gh pr view ${prNumber} --json reviews)
+1. Read the most recent review comment on this PR (use gh pr view ${prNumber} --repo ${owner}/${repo} --json reviews)
 2. Identify all "issue" and "suggestion" findings with specific file paths and line numbers
 3. For each finding that can be automatically fixed:
    - Read the file
@@ -112,21 +109,13 @@ CONSTRAINTS:
 Begin by reading the review findings.`;
 }
 
-function countFilesChanged(output: string): number {
-  // Parse Claude output to estimate files changed
-  // This is best-effort; actual count will come from git diff
-  const editPattern = /Edit.*?file.*?:/gi;
-  const matches = output.match(editPattern);
-  return matches ? matches.length : 0;
-}
-
 async function createFixCommit(
   worktreePath: string,
   owner: string,
   repo: string,
   prNumber: number,
   logger: Logger,
-): Promise<string | null> {
+): Promise<{ sha: string; filesChanged: number } | null> {
   return new Promise((resolve) => {
     // Check for changes
     execFile("git", ["diff", "--name-only"], { cwd: worktreePath }, (err, stdout) => {
@@ -137,7 +126,8 @@ async function createFixCommit(
       }
 
       const changedFiles = stdout.trim().split("\n");
-      logger.info("Files modified by autofix", { files: changedFiles });
+      const filesChanged = changedFiles.length;
+      logger.info("Files modified by autofix", { files: changedFiles, count: filesChanged });
 
       // Stage all changes
       execFile("git", ["add", "-A"], { cwd: worktreePath }, (addErr) => {
@@ -174,8 +164,8 @@ Co-authored-by: Claude Code Reviewer <bot@claude.ai>`;
               }
 
               const sha = shaStdout.trim();
-              logger.info("Created autofix commit", { sha });
-              resolve(sha);
+              logger.info("Created autofix commit", { sha, filesChanged });
+              resolve({ sha, filesChanged });
             });
           },
         );

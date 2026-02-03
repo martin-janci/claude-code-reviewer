@@ -650,7 +650,37 @@ export class WebhookServer {
     }
   }
 
-  private pushFixBranch(
+  private async pushToPRBranch(
+    owner: string,
+    repo: string,
+    prNumber: number,
+    headBranch: string,
+    commitSha: string,
+    filesChanged: number,
+    worktreePath: string,
+  ): Promise<void> {
+    return new Promise((resolve) => {
+      // Use -c credential.helper= to disable credential helpers that might override token
+      execFile("git", ["-c", "credential.helper=", "push", "origin", headBranch], { cwd: worktreePath }, (pushErr) => {
+        if (pushErr) {
+          const pushErrorMsg = `⚠️ **Autofix completed** but push failed: ${String(pushErr)}\n\nCommit SHA: \`${commitSha}\``;
+          postComment(owner, repo, prNumber, pushErrorMsg).catch((commentErr) => {
+            this.logger.error("Failed to post push error comment", { pr: `${owner}/${repo}#${prNumber}`, error: String(commentErr) });
+          });
+          this.logger.error("Autofix push failed", { pr: `${owner}/${repo}#${prNumber}`, error: String(pushErr) });
+        } else {
+          const successMsg = `✅ **Autofix applied successfully**\n\n📦 Commit: [\`${commitSha.slice(0, 7)}\`](../../commit/${commitSha})\n📁 Files changed: ${filesChanged}\n\nFixes have been pushed to the PR branch.`;
+          postComment(owner, repo, prNumber, successMsg).catch((commentErr) => {
+            this.logger.error("Failed to post success comment", { pr: `${owner}/${repo}#${prNumber}`, error: String(commentErr) });
+          });
+          this.logger.info("Autofix completed and pushed", { pr: `${owner}/${repo}#${prNumber}`, sha: commitSha, filesChanged });
+        }
+        resolve();
+      });
+    });
+  }
+
+  private async createAndPushFixBranch(
     owner: string,
     repo: string,
     prNumber: number,
@@ -658,18 +688,74 @@ export class WebhookServer {
     commitSha: string,
     filesChanged: number,
     worktreePath: string,
-  ): void {
-    execFile("git", ["push", "-f", "origin", fixBranch], { cwd: worktreePath }, (pushErr) => {
-      if (pushErr) {
-        const pushErrorMsg = `⚠️ **Autofix completed** but push to \`${fixBranch}\` failed: ${String(pushErr)}\n\nCommit SHA: \`${commitSha}\``;
-        postComment(owner, repo, prNumber, pushErrorMsg);
-        this.logger.error("Fix branch push failed", { pr: `${owner}/${repo}#${prNumber}`, branch: fixBranch, error: String(pushErr) });
-      } else {
-        const compareUrl = `../../compare/${fixBranch}`;
-        const successMsg = `✅ **Autofix completed and pushed to separate branch**\n\n🌿 Branch: [\`${fixBranch}\`](../../tree/${fixBranch})\n📦 Commit: [\`${commitSha.slice(0, 7)}\`](../../commit/${commitSha})\n📁 Files changed: ${filesChanged}\n🔍 [View changes](${compareUrl})\n\n**Next steps:**\n1. Review the changes in the [\`${fixBranch}\`](../../tree/${fixBranch}) branch\n2. If satisfied, merge into this PR: \`git merge ${fixBranch}\`\n3. Or cherry-pick specific commits: \`git cherry-pick ${commitSha.slice(0, 7)}\``;
-        postComment(owner, repo, prNumber, successMsg);
-        this.logger.info("Autofix completed and pushed to fix branch", { pr: `${owner}/${repo}#${prNumber}`, branch: fixBranch, sha: commitSha, filesChanged });
-      }
+  ): Promise<void> {
+    this.logger.info("Creating fix branch", { pr: `${owner}/${repo}#${prNumber}`, branch: fixBranch });
+
+    return new Promise((resolve) => {
+      // Create new branch from current commit
+      execFile("git", ["checkout", "-b", fixBranch], { cwd: worktreePath }, (checkoutErr) => {
+        if (checkoutErr) {
+          // Branch might already exist, try to switch to it and reset
+          execFile("git", ["checkout", fixBranch], { cwd: worktreePath }, (switchErr) => {
+            if (switchErr) {
+              const branchErrorMsg = `⚠️ **Autofix completed** but failed to create branch \`${fixBranch}\`: ${String(checkoutErr)}`;
+              postComment(owner, repo, prNumber, branchErrorMsg).catch((commentErr) => {
+                this.logger.error("Failed to post branch error comment", { pr: `${owner}/${repo}#${prNumber}`, error: String(commentErr) });
+              });
+              this.logger.error("Failed to create fix branch", { pr: `${owner}/${repo}#${prNumber}`, error: String(checkoutErr) });
+              resolve();
+              return;
+            }
+            // Reset to the fix commit
+            execFile("git", ["reset", "--hard", commitSha], { cwd: worktreePath }, (resetErr) => {
+              if (resetErr) {
+                const resetErrorMsg = `⚠️ **Autofix completed** but failed to reset branch: ${String(resetErr)}`;
+                postComment(owner, repo, prNumber, resetErrorMsg).catch((commentErr) => {
+                  this.logger.error("Failed to post reset error comment", { pr: `${owner}/${repo}#${prNumber}`, error: String(commentErr) });
+                });
+                resolve();
+                return;
+              }
+              this.pushFixBranchToRemote(owner, repo, prNumber, fixBranch, commitSha, filesChanged, worktreePath).then(resolve);
+            });
+          });
+          return;
+        }
+
+        // Successfully created branch, now push it
+        this.pushFixBranchToRemote(owner, repo, prNumber, fixBranch, commitSha, filesChanged, worktreePath).then(resolve);
+      });
+    });
+  }
+
+  private async pushFixBranchToRemote(
+    owner: string,
+    repo: string,
+    prNumber: number,
+    fixBranch: string,
+    commitSha: string,
+    filesChanged: number,
+    worktreePath: string,
+  ): Promise<void> {
+    return new Promise((resolve) => {
+      // Use -c credential.helper= to disable credential helpers that might override token
+      execFile("git", ["-c", "credential.helper=", "push", "-f", "origin", fixBranch], { cwd: worktreePath }, (pushErr) => {
+        if (pushErr) {
+          const pushErrorMsg = `⚠️ **Autofix completed** but push to \`${fixBranch}\` failed: ${String(pushErr)}\n\nCommit SHA: \`${commitSha}\``;
+          postComment(owner, repo, prNumber, pushErrorMsg).catch((commentErr) => {
+            this.logger.error("Failed to post push error comment", { pr: `${owner}/${repo}#${prNumber}`, error: String(commentErr) });
+          });
+          this.logger.error("Fix branch push failed", { pr: `${owner}/${repo}#${prNumber}`, branch: fixBranch, error: String(pushErr) });
+        } else {
+          const compareUrl = `../../compare/${fixBranch}`;
+          const successMsg = `✅ **Autofix completed and pushed to separate branch**\n\n🌿 Branch: [\`${fixBranch}\`](../../tree/${fixBranch})\n📦 Commit: [\`${commitSha.slice(0, 7)}\`](../../commit/${commitSha})\n📁 Files changed: ${filesChanged}\n🔍 [View changes](${compareUrl})\n\n**Next steps:**\n1. Review the changes in the [\`${fixBranch}\`](../../tree/${fixBranch}) branch\n2. If satisfied, merge into this PR: \`git merge ${fixBranch}\`\n3. Or cherry-pick specific commits: \`git cherry-pick ${commitSha.slice(0, 7)}\``;
+          postComment(owner, repo, prNumber, successMsg).catch((commentErr) => {
+            this.logger.error("Failed to post success comment", { pr: `${owner}/${repo}#${prNumber}`, error: String(commentErr) });
+          });
+          this.logger.info("Autofix completed and pushed to fix branch", { pr: `${owner}/${repo}#${prNumber}`, branch: fixBranch, sha: commitSha, filesChanged });
+        }
+        resolve();
+      });
     });
   }
 
@@ -705,61 +791,10 @@ export class WebhookServer {
       // Handle pushing the fix commit
       if (this.config.features.autofix.autoApply && result.commitSha) {
         // autoApply enabled: push directly to PR branch
-        try {
-          execFile("git", ["push", "origin", pr.headBranch], { cwd: worktreePath }, (pushErr) => {
-            if (pushErr) {
-              const pushErrorMsg = `⚠️ **Autofix completed** but push failed: ${String(pushErr)}\n\nCommit SHA: \`${result.commitSha}\`\nPlease push manually from the worktree at: \`${worktreePath}\``;
-              postComment(owner, repo, prNumber, pushErrorMsg);
-              this.logger.error("Autofix push failed", { pr: `${owner}/${repo}#${prNumber}`, error: String(pushErr) });
-            } else {
-              const successMsg = `✅ **Autofix applied successfully**\n\n📦 Commit: [\`${result.commitSha?.slice(0, 7)}\`](../../commit/${result.commitSha})\n📁 Files changed: ${result.filesChanged}\n\nFixes have been pushed to the PR branch.`;
-              postComment(owner, repo, prNumber, successMsg);
-              this.logger.info("Autofix completed and pushed", { pr: `${owner}/${repo}#${prNumber}`, sha: result.commitSha, filesChanged: result.filesChanged });
-            }
-          });
-        } catch (pushErr) {
-          const pushErrorMsg = `⚠️ **Autofix completed** but push failed: ${String(pushErr)}`;
-          await postComment(owner, repo, prNumber, pushErrorMsg);
-          this.logger.error("Autofix push error", { pr: `${owner}/${repo}#${prNumber}`, error: String(pushErr) });
-        }
+        await this.pushToPRBranch(owner, repo, prNumber, pr.headBranch, result.commitSha, result.filesChanged, worktreePath);
       } else if (result.fixBranch && result.commitSha) {
         // autoApply disabled: create and push to separate fix branch
-        const fixBranch = result.fixBranch;
-        this.logger.info("Creating fix branch", { pr: `${owner}/${repo}#${prNumber}`, branch: fixBranch });
-
-        try {
-          // Create new branch from current commit
-          execFile("git", ["checkout", "-b", fixBranch], { cwd: worktreePath }, (checkoutErr) => {
-            if (checkoutErr) {
-              // Branch might already exist, try to switch to it and reset
-              execFile("git", ["checkout", fixBranch], { cwd: worktreePath }, (switchErr) => {
-                if (switchErr) {
-                  const branchErrorMsg = `⚠️ **Autofix completed** but failed to create branch \`${fixBranch}\`: ${String(checkoutErr)}`;
-                  postComment(owner, repo, prNumber, branchErrorMsg);
-                  this.logger.error("Failed to create fix branch", { pr: `${owner}/${repo}#${prNumber}`, error: String(checkoutErr) });
-                  return;
-                }
-                // Reset to the fix commit
-                execFile("git", ["reset", "--hard", result.commitSha!], { cwd: worktreePath }, (resetErr) => {
-                  if (resetErr) {
-                    const resetErrorMsg = `⚠️ **Autofix completed** but failed to reset branch: ${String(resetErr)}`;
-                    postComment(owner, repo, prNumber, resetErrorMsg);
-                    return;
-                  }
-                  this.pushFixBranch(owner, repo, prNumber, fixBranch, result.commitSha!, result.filesChanged, worktreePath);
-                });
-              });
-              return;
-            }
-
-            // Successfully created branch, now push it
-            this.pushFixBranch(owner, repo, prNumber, fixBranch, result.commitSha!, result.filesChanged, worktreePath);
-          });
-        } catch (branchErr) {
-          const branchErrorMsg = `⚠️ **Autofix completed** but branch creation failed: ${String(branchErr)}`;
-          await postComment(owner, repo, prNumber, branchErrorMsg);
-          this.logger.error("Fix branch creation error", { pr: `${owner}/${repo}#${prNumber}`, error: String(branchErr) });
-        }
+        await this.createAndPushFixBranch(owner, repo, prNumber, result.fixBranch, result.commitSha, result.filesChanged, worktreePath);
       } else {
         // No commit created or no fix branch specified
         const noChangesMsg = `ℹ️ **Autofix completed** but no changes were made.\n\nNo fixable issues were found in the review findings.`;
