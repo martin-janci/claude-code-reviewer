@@ -86,3 +86,11 @@ features:
     filePath: data/audit.json  # path to audit log file
     includeMetadata: true      # include detailed metadata in entries
     minSeverity: info          # minimum severity to log: info, warning, error
+
+  # Autofix: automatically apply fixes for review findings via /fix comment
+  autofix:
+    enabled: false                           # disabled by default
+    commandTrigger: "^\\s*/fix\\s*$"         # regex to match PR comments that trigger autofix
+    autoApply: false                         # if true, push to PR branch; if false, push to autofix/pr-N branch for review
+    maxTurns: 10                             # max Claude agentic turns for autofix session
+    timeoutMs: 300000                        # timeout for autofix session (5 min)

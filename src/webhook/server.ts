@@ -6,7 +6,9 @@ import type { Reviewer } from "../reviewer/reviewer.js";
 import type { StateStore } from "../state/store.js";
 import type { MetricsCollector } from "../metrics.js";
 import type { Logger } from "../logger.js";
+import type { CloneManager } from "../clone/manager.js";
 import { getPRDetails, postComment } from "../reviewer/github.js";
+import { executeAutofix } from "../features/autofix.js";
 
 // Note: execFile is used directly for CLI checks (checkClaudeAuth, checkGhAuth).
 // If more endpoints need CLI validation, consider extracting to a shared helper module.
@@ -209,6 +211,7 @@ export class WebhookServer {
     private reviewer: Reviewer,
     private store: StateStore,
     private logger: Logger,
+    private cloneManager?: CloneManager,
     private metrics?: MetricsCollector,
     private auditLogger?: import("../audit/logger.js").AuditLogger,
     private healthInfo?: { version: string; startTime: number },
@@ -586,16 +589,33 @@ export class WebhookServer {
       return;
     }
 
-    // Match comment body against the configured trigger pattern
+    // Match comment body against configured trigger patterns
     const commentBody = payload.comment?.body ?? "";
+    const prNumber = payload.issue.number;
+    const commenter = payload.comment?.user?.login ?? "unknown";
+
+    // Check for /fix trigger
+    if (this.config.features.autofix.enabled) {
+      const autofixRegex = new RegExp(this.config.features.autofix.commandTrigger);
+      if (autofixRegex.test(commentBody)) {
+        this.logger.info("Webhook: /fix trigger", { pr: `${owner}/${repo}#${prNumber}`, commenter });
+        res.writeHead(202);
+        res.end("Accepted");
+
+        this.triggerAutofix(owner, repo, prNumber, commenter).catch((err) => {
+          this.logger.error("Webhook autofix-trigger error", { pr: `${owner}/${repo}#${prNumber}`, error: String(err) });
+        });
+        return;
+      }
+    }
+
+    // Check for /review trigger
     if (!this.commentTriggerRegex.test(commentBody)) {
       res.writeHead(200);
       res.end("No trigger match");
       return;
     }
 
-    const prNumber = payload.issue.number;
-    const commenter = payload.comment?.user?.login ?? "unknown";
     const overrides = parseReviewOverrides(commentBody);
 
     this.logger.info("Webhook: /review trigger", {
@@ -627,6 +647,164 @@ export class WebhookServer {
       } catch (err) {
         this.logger.warn("Failed to post skip reason comment", { pr: `${owner}/${repo}#${prNumber}`, error: String(err) });
       }
+    }
+  }
+
+  private async pushToPRBranch(
+    owner: string,
+    repo: string,
+    prNumber: number,
+    headBranch: string,
+    commitSha: string,
+    filesChanged: number,
+    worktreePath: string,
+  ): Promise<void> {
+    return new Promise((resolve) => {
+      // Use -c credential.helper= to disable credential helpers that might override token
+      execFile("git", ["-c", "credential.helper=", "push", "origin", headBranch], { cwd: worktreePath }, (pushErr) => {
+        if (pushErr) {
+          const pushErrorMsg = `⚠️ **Autofix completed** but push failed: ${String(pushErr)}\n\nCommit SHA: \`${commitSha}\``;
+          postComment(owner, repo, prNumber, pushErrorMsg).catch((commentErr) => {
+            this.logger.error("Failed to post push error comment", { pr: `${owner}/${repo}#${prNumber}`, error: String(commentErr) });
+          });
+          this.logger.error("Autofix push failed", { pr: `${owner}/${repo}#${prNumber}`, error: String(pushErr) });
+        } else {
+          const successMsg = `✅ **Autofix applied successfully**\n\n📦 Commit: [\`${commitSha.slice(0, 7)}\`](../../commit/${commitSha})\n📁 Files changed: ${filesChanged}\n\nFixes have been pushed to the PR branch.`;
+          postComment(owner, repo, prNumber, successMsg).catch((commentErr) => {
+            this.logger.error("Failed to post success comment", { pr: `${owner}/${repo}#${prNumber}`, error: String(commentErr) });
+          });
+          this.logger.info("Autofix completed and pushed", { pr: `${owner}/${repo}#${prNumber}`, sha: commitSha, filesChanged });
+        }
+        resolve();
+      });
+    });
+  }
+
+  private async createAndPushFixBranch(
+    owner: string,
+    repo: string,
+    prNumber: number,
+    fixBranch: string,
+    commitSha: string,
+    filesChanged: number,
+    worktreePath: string,
+  ): Promise<void> {
+    this.logger.info("Creating fix branch", { pr: `${owner}/${repo}#${prNumber}`, branch: fixBranch });
+
+    return new Promise((resolve) => {
+      // Create new branch from current commit
+      execFile("git", ["checkout", "-b", fixBranch], { cwd: worktreePath }, (checkoutErr) => {
+        if (checkoutErr) {
+          // Branch might already exist, try to switch to it and reset
+          execFile("git", ["checkout", fixBranch], { cwd: worktreePath }, (switchErr) => {
+            if (switchErr) {
+              const branchErrorMsg = `⚠️ **Autofix completed** but failed to create branch \`${fixBranch}\`: ${String(checkoutErr)}`;
+              postComment(owner, repo, prNumber, branchErrorMsg).catch((commentErr) => {
+                this.logger.error("Failed to post branch error comment", { pr: `${owner}/${repo}#${prNumber}`, error: String(commentErr) });
+              });
+              this.logger.error("Failed to create fix branch", { pr: `${owner}/${repo}#${prNumber}`, error: String(checkoutErr) });
+              resolve();
+              return;
+            }
+            // Reset to the fix commit
+            execFile("git", ["reset", "--hard", commitSha], { cwd: worktreePath }, (resetErr) => {
+              if (resetErr) {
+                const resetErrorMsg = `⚠️ **Autofix completed** but failed to reset branch: ${String(resetErr)}`;
+                postComment(owner, repo, prNumber, resetErrorMsg).catch((commentErr) => {
+                  this.logger.error("Failed to post reset error comment", { pr: `${owner}/${repo}#${prNumber}`, error: String(commentErr) });
+                });
+                resolve();
+                return;
+              }
+              this.pushFixBranchToRemote(owner, repo, prNumber, fixBranch, commitSha, filesChanged, worktreePath).then(resolve);
+            });
+          });
+          return;
+        }
+
+        // Successfully created branch, now push it
+        this.pushFixBranchToRemote(owner, repo, prNumber, fixBranch, commitSha, filesChanged, worktreePath).then(resolve);
+      });
+    });
+  }
+
+  private async pushFixBranchToRemote(
+    owner: string,
+    repo: string,
+    prNumber: number,
+    fixBranch: string,
+    commitSha: string,
+    filesChanged: number,
+    worktreePath: string,
+  ): Promise<void> {
+    return new Promise((resolve) => {
+      // Use -c credential.helper= to disable credential helpers that might override token
+      execFile("git", ["-c", "credential.helper=", "push", "-f", "origin", fixBranch], { cwd: worktreePath }, (pushErr) => {
+        if (pushErr) {
+          const pushErrorMsg = `⚠️ **Autofix completed** but push to \`${fixBranch}\` failed: ${String(pushErr)}\n\nCommit SHA: \`${commitSha}\``;
+          postComment(owner, repo, prNumber, pushErrorMsg).catch((commentErr) => {
+            this.logger.error("Failed to post push error comment", { pr: `${owner}/${repo}#${prNumber}`, error: String(commentErr) });
+          });
+          this.logger.error("Fix branch push failed", { pr: `${owner}/${repo}#${prNumber}`, branch: fixBranch, error: String(pushErr) });
+        } else {
+          const compareUrl = `../../compare/${fixBranch}`;
+          const successMsg = `✅ **Autofix completed and pushed to separate branch**\n\n🌿 Branch: [\`${fixBranch}\`](../../tree/${fixBranch})\n📦 Commit: [\`${commitSha.slice(0, 7)}\`](../../commit/${commitSha})\n📁 Files changed: ${filesChanged}\n🔍 [View changes](${compareUrl})\n\n**Next steps:**\n1. Review the changes in the [\`${fixBranch}\`](../../tree/${fixBranch}) branch\n2. If satisfied, merge into this PR: \`git merge ${fixBranch}\`\n3. Or cherry-pick specific commits: \`git cherry-pick ${commitSha.slice(0, 7)}\``;
+          postComment(owner, repo, prNumber, successMsg).catch((commentErr) => {
+            this.logger.error("Failed to post success comment", { pr: `${owner}/${repo}#${prNumber}`, error: String(commentErr) });
+          });
+          this.logger.info("Autofix completed and pushed to fix branch", { pr: `${owner}/${repo}#${prNumber}`, branch: fixBranch, sha: commitSha, filesChanged });
+        }
+        resolve();
+      });
+    });
+  }
+
+  private async triggerAutofix(owner: string, repo: string, prNumber: number, commenter: string): Promise<void> {
+    if (!this.cloneManager) {
+      const errorMsg = "🚫 **Autofix unavailable**: Codebase access is disabled. Enable `review.codebaseAccess` in config.yaml.";
+      await postComment(owner, repo, prNumber, errorMsg);
+      this.logger.warn("Autofix requires codebaseAccess", { pr: `${owner}/${repo}#${prNumber}` });
+      return;
+    }
+
+    try {
+      // Post "working on it" comment
+      const workingMsg = `🔧 **Autofix started** by @${commenter}\n\nAnalyzing review findings and applying fixes...`;
+      await postComment(owner, repo, prNumber, workingMsg);
+
+      // Fetch PR details
+      const pr = await getPRDetails(owner, repo, prNumber);
+
+      // Prepare worktree for this PR
+      const worktreePath = await this.cloneManager.prepareForPR(owner, repo, prNumber, pr.headSha);
+
+      // Execute autofix
+      const result = await executeAutofix(this.config, pr, worktreePath, this.logger);
+
+      if (!result.success) {
+        const errorMsg = `❌ **Autofix failed**: ${result.error ?? "Unknown error"}`;
+        await postComment(owner, repo, prNumber, errorMsg);
+        this.logger.error("Autofix failed", { pr: `${owner}/${repo}#${prNumber}`, error: result.error });
+        return;
+      }
+
+      // Handle pushing the fix commit
+      if (this.config.features.autofix.autoApply && result.commitSha) {
+        // autoApply enabled: push directly to PR branch
+        await this.pushToPRBranch(owner, repo, prNumber, pr.headBranch, result.commitSha, result.filesChanged, worktreePath);
+      } else if (result.fixBranch && result.commitSha) {
+        // autoApply disabled: create and push to separate fix branch
+        await this.createAndPushFixBranch(owner, repo, prNumber, result.fixBranch, result.commitSha, result.filesChanged, worktreePath);
+      } else {
+        // No commit created or no fix branch specified
+        const noChangesMsg = `ℹ️ **Autofix completed** but no changes were made.\n\nNo fixable issues were found in the review findings.`;
+        await postComment(owner, repo, prNumber, noChangesMsg);
+        this.logger.info("Autofix completed with no changes", { pr: `${owner}/${repo}#${prNumber}` });
+      }
+    } catch (err) {
+      const errorMsg = `❌ **Autofix error**: ${err instanceof Error ? err.message : String(err)}`;
+      await postComment(owner, repo, prNumber, errorMsg);
+      this.logger.error("Autofix execution error", { pr: `${owner}/${repo}#${prNumber}`, error: String(err) });
     }
   }
 
