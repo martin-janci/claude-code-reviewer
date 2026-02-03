@@ -14,12 +14,16 @@ export const jiraPlugin: Feature = {
     // Only run if Jira feature is enabled
     if (!ctx.config.features.jira.enabled) return false;
 
-    // Extract key if not already present
+    // Extract key from title/branch
     const currentKey = extractJiraKey(
       ctx.state.title,
       ctx.state.headBranch,
       ctx.config.features.jira.projectKeys,
     );
+
+    // Track effective jiraKey (may differ from ctx.state if title/branch changed)
+    let effectiveKey = ctx.state.jiraKey;
+    let needsValidation = !ctx.state.jiraValidated;
 
     // Update state with extracted key if changed
     if (currentKey !== ctx.state.jiraKey) {
@@ -27,13 +31,15 @@ export const jiraPlugin: Feature = {
         jiraKey: currentKey,
         jiraValidated: false,
       });
+      effectiveKey = currentKey;
+      needsValidation = true;
     }
 
     // Only run validation if we have a key, credentials, and haven't validated yet
+    if (!effectiveKey) return false;
+    if (!needsValidation) return false;
+
     const jiraConfig = ctx.config.features.jira;
-    const state = ctx.store.get(ctx.state.owner, ctx.state.repo, ctx.state.number);
-    if (!state?.jiraKey) return false;
-    if (state.jiraValidated) return false;
     if (!jiraConfig.baseUrl || !jiraConfig.email || !jiraConfig.token) return false;
 
     return true;
@@ -41,21 +47,25 @@ export const jiraPlugin: Feature = {
 
   async execute(ctx: FeatureContext): Promise<FeatureResult> {
     const jiraConfig = ctx.config.features.jira;
-    const state = ctx.store.get(ctx.state.owner, ctx.state.repo, ctx.state.number);
-    if (!state?.jiraKey) {
+    const { owner, repo, number: prNumber } = ctx.state;
+
+    // Re-read fresh state to get current jiraKey (may have been updated in shouldRun)
+    const freshState = ctx.store.get(owner, repo, prNumber);
+    const jiraKey = freshState?.jiraKey;
+    if (!jiraKey) {
       return { success: true, data: { skipped: true, reason: "no_jira_key" } };
     }
 
-    ctx.logger.info("Validating Jira issue", { jiraKey: state.jiraKey });
+    ctx.logger.info("Validating Jira issue", { jiraKey });
 
     const validation = await validateJiraIssue(
       jiraConfig.baseUrl,
       jiraConfig.email,
       jiraConfig.token,
-      state.jiraKey,
+      jiraKey,
     );
 
-    ctx.store.update(ctx.state.owner, ctx.state.repo, ctx.state.number, {
+    ctx.store.update(owner, repo, prNumber, {
       jiraValidated: validation.valid,
     });
 
@@ -64,7 +74,7 @@ export const jiraPlugin: Feature = {
       success: true,
       data: {
         jiraLink: {
-          key: state.jiraKey,
+          key: jiraKey,
           url: validation.url,
           summary: validation.summary,
           valid: validation.valid,

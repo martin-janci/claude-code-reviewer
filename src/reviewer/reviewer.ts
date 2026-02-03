@@ -135,7 +135,7 @@ export class Reviewer {
     if (!state) return;
 
     // Phase 2: Fetch and filter diff
-    const diffResult = await this.fetchDiff(pr, state, log);
+    const diffResult = await this.fetchDiff(pr, log);
     if (!diffResult) return;
 
     // Set status to reviewing (lock)
@@ -188,7 +188,7 @@ export class Reviewer {
         timings.clone_prepare_ms = Date.now() - t0;
         log.info("Worktree ready", { phase: "clone_prepare", cwd, durationMs: timings.clone_prepare_ms });
       } catch (err) {
-        this.recordError(currentState, headSha, err, "clone_prepare", log);
+        this.recordError(owner, repo, prNumber, headSha, err, "clone_prepare", log);
         return;
       }
     }
@@ -316,7 +316,6 @@ export class Reviewer {
    */
   private async fetchDiff(
     pr: PullRequest,
-    state: PRState,
     log: Logger,
   ): Promise<{ diff: string; diffFetchMs: number } | null> {
     const { owner, repo, number: prNumber, headSha } = pr;
@@ -328,7 +327,7 @@ export class Reviewer {
       diff = await getPRDiff(owner, repo, prNumber);
       diffFetchMs = Date.now() - t0;
     } catch (err) {
-      this.recordError(state, headSha, err, "diff_fetch", log);
+      this.recordError(owner, repo, prNumber, headSha, err, "diff_fetch", log);
       return null;
     }
 
@@ -350,13 +349,13 @@ export class Reviewer {
    */
   private async runReview(
     pr: PullRequest,
-    state: PRState,
+    state: Readonly<PRState>,
     diff: string,
     cwd: string | undefined,
     timings: Partial<PhaseTimings>,
     log: Logger,
   ): Promise<ReviewResult | null> {
-    const { headSha, title } = pr;
+    const { owner, repo, number: prNumber, headSha, title } = pr;
 
     // Build re-review context if applicable
     const lastReview = state.reviews.length > 0 ? state.reviews[state.reviews.length - 1] : null;
@@ -401,7 +400,7 @@ export class Reviewer {
 
     if (!result.success) {
       log.error("Claude review failed", { phase: "claude_review" });
-      this.recordError(state, headSha, new Error(result.body || "Claude review returned unsuccessful"), "claude_review", log);
+      this.recordError(owner, repo, prNumber, headSha, new Error(result.body || "Claude review returned unsuccessful"), "claude_review", log);
       return null;
     }
 
@@ -500,7 +499,7 @@ export class Reviewer {
           log.info("Posting PR review", { phase: "comment_post", inlineComments: inlineComments.length, orphans: orphanFindings.length });
           reviewId = await postReview(owner, repo, prNumber, body, headSha, inlineComments);
         } catch (err) {
-          this.recordError(state, headSha, err, "comment_post", log);
+          this.recordError(owner, repo, prNumber, headSha, err, "comment_post", log);
           return null;
         }
       }
@@ -558,7 +557,7 @@ export class Reviewer {
             commentId = await postComment(owner, repo, prNumber, body);
           }
         } catch (err) {
-          this.recordError(state, headSha, err, "comment_post", log);
+          this.recordError(owner, repo, prNumber, headSha, err, "comment_post", log);
           return null;
         }
       }
@@ -690,18 +689,22 @@ export class Reviewer {
     }
   }
 
-  private recordError(state: PRState, sha: string, err: unknown, phase: ErrorPhase, log: Logger): void {
+  private recordError(owner: string, repo: string, prNumber: number, sha: string, err: unknown, phase: ErrorPhase, log: Logger): void {
     const message = err instanceof Error ? err.message : String(err);
     const kind = classifyError(err, phase);
     this.metrics?.recordError(phase);
     log.error("Review phase error", { phase, error: message, kind });
 
+    // Re-read fresh state to get current consecutiveErrors
+    const freshState = this.store.get(owner, repo, prNumber);
+    const currentErrors = freshState?.consecutiveErrors ?? 0;
+
     // Permanent errors skip retries by immediately setting consecutiveErrors to maxRetries
     const consecutiveErrors = kind === "permanent"
       ? this.config.review.maxRetries
-      : state.consecutiveErrors + 1;
+      : currentErrors + 1;
 
-    this.store.update(state.owner, state.repo, state.number, {
+    this.store.update(owner, repo, prNumber, {
       status: "error",
       lastError: {
         occurredAt: new Date().toISOString(),

@@ -1,4 +1,4 @@
-import type { AppConfig, PullRequest, PRState, StructuredReview, FeatureExecution, FeatureName, FeatureStatus } from "../types.js";
+import type { AppConfig, PullRequest, PRState, StructuredReview, FeatureExecution, FeatureName, FeatureStatus, ReviewVerdict } from "../types.js";
 import type { Logger } from "../logger.js";
 import type { StateStore } from "../state/store.js";
 
@@ -15,7 +15,7 @@ export interface FeatureContext {
   diff?: string;
   // Available in post_review phase
   reviewResult?: StructuredReview;
-  verdict?: string;
+  verdict?: ReviewVerdict;
 }
 
 export interface FeatureResult {
@@ -104,7 +104,11 @@ function recordFeatureExecution(
   };
   if (error) execution.error = error;
 
-  const executions = [...state.featureExecutions, execution].slice(-20);
+  // Keep last 20 executions. Slice first to avoid unbounded intermediate array.
+  const maxHistory = 20;
+  const existing = state.featureExecutions;
+  const startIdx = Math.max(0, existing.length - maxHistory + 1);
+  const executions = [...existing.slice(startIdx), execution];
   store.update(state.owner, state.repo, state.number, { featureExecutions: executions });
   // Note: caller should re-read state after this if needed
 }

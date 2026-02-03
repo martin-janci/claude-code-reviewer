@@ -20,8 +20,8 @@ export const autoLabelPlugin: Feature = {
     // Skip if override flag is set
     if (ctx.pr.overrides?.skipLabels) return false;
 
-    // Need structured review result to determine labels
-    if (!ctx.reviewResult) return false;
+    // Need structured review result and verdict to determine labels
+    if (!ctx.reviewResult || !ctx.verdict) return false;
 
     return true;
   },
@@ -29,13 +29,17 @@ export const autoLabelPlugin: Feature = {
   async execute(ctx: FeatureContext): Promise<FeatureResult> {
     const { owner, repo, number: prNumber } = ctx.state;
 
+    // shouldRun guarantees these are present
+    const verdict = ctx.verdict!;
+    const findings = ctx.reviewResult!.findings;
+
     // Fetch current labels
     const currentLabels = await getPRLabels(owner, repo, prNumber);
 
     // Compute label changes
     const labelDecision = computeLabels(
-      ctx.verdict as any, // ReviewVerdict
-      ctx.reviewResult!.findings,
+      verdict,
+      findings,
       ctx.diff ?? "",
       ctx.config.features.autoLabel,
       currentLabels,
