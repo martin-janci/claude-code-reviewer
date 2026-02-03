@@ -2,6 +2,7 @@ import { exec, execFile } from "node:child_process";
 import { existsSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { resolve, join } from "node:path";
 import type { ReviewResult, ReviewVerdict, StructuredReview, ConventionalLabel, ReviewFinding, FindingResolution, ResolutionEntry } from "../types.js";
+import type { Logger } from "../logger.js";
 
 // Resolve skill path: check Docker location first, then project-relative
 function resolveSkillPath(): string | null {
@@ -28,6 +29,8 @@ export interface ReviewOptions {
   cwd?: string;
   timeoutMs?: number;
   maxTurns?: number;
+  logger?: Logger;
+  focusPaths?: string[];
 }
 
 const VALID_VERDICTS = new Set<string>(["APPROVE", "REQUEST_CHANGES", "COMMENT"]);
@@ -152,7 +155,7 @@ export function parseStructuredReview(stdout: string): StructuredReview | null {
 }
 
 export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
-  const { diff, prTitle, context, cwd, timeoutMs, maxTurns } = options;
+  const { diff, prTitle, context, cwd, timeoutMs, maxTurns, logger: log, focusPaths } = options;
 
   let userPrompt = `## PR Title: ${prTitle}\n\n`;
 
@@ -174,6 +177,10 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
 
   if (cwd) {
     userPrompt += `## Codebase Access\nYou have read-only access to the full repository in your working directory. Use Read, Grep, and Glob tools to explore the codebase when the diff raises questions about contracts, callers, patterns, or architectural impact. Do NOT read every file — only explore when the diff context is insufficient.\n\n`;
+  }
+
+  if (focusPaths && focusPaths.length > 0) {
+    userPrompt += `## Focus Paths\nFocus your review on changes in these paths: ${focusPaths.join(", ")}. Findings outside these paths should be deprioritized unless they represent critical issues.\n\n`;
   }
 
   userPrompt += `## Diff\n\`\`\`diff\n${diff}\n\`\`\`\n\n`;
@@ -203,7 +210,11 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
 
   const shellCmd = `claude ${args.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(" ")} < '${promptFile}'`;
 
-  console.log(`Invoking claude CLI: args=[${args.join(" ")}], timeout=${timeoutMs ?? 300_000}ms, cwd=${cwd ?? "none"}, prompt=${Buffer.byteLength(userPrompt)} bytes`);
+  if (log) {
+    log.info("Invoking claude CLI", { args: args.join(" "), timeoutMs: timeoutMs ?? 300_000, cwd: cwd ?? "none", promptBytes: Buffer.byteLength(userPrompt) });
+  } else {
+    console.log(`Invoking claude CLI: args=[${args.join(" ")}], timeout=${timeoutMs ?? 300_000}ms, cwd=${cwd ?? "none"}, prompt=${Buffer.byteLength(userPrompt)} bytes`);
+  }
   const startTime = Date.now();
 
   return new Promise((resolve) => {
@@ -219,26 +230,31 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       if (err) {
         const message = err instanceof Error ? err.message : String(err);
-        console.error(`Claude CLI failed after ${elapsed}s: ${message}`);
-        if (stderr?.trim()) {
-          console.error("Claude stderr:", stderr.trim());
+        const errLog = log ?? console;
+        if (log) {
+          log.error("Claude CLI failed", { elapsedS: elapsed, error: message, stderr: stderr?.trim().slice(0, 500), stdout: stdout?.trim().slice(0, 500) });
+        } else {
+          console.error(`Claude CLI failed after ${elapsed}s: ${message}`);
+          if (stderr?.trim()) console.error("Claude stderr:", stderr.trim());
+          if (stdout?.trim()) console.error("Claude stdout:", stdout.trim().slice(0, 2000));
+          console.error("Prompt preview:", userPrompt.slice(0, 200));
         }
-        if (stdout?.trim()) {
-          console.error("Claude stdout:", stdout.trim().slice(0, 2000));
-        }
-        console.error("Prompt preview:", userPrompt.slice(0, 200));
         resolve({ body: message, success: false });
         return;
       }
 
       const body = stdout.trim();
-      console.log(`Claude CLI completed in ${elapsed}s (${body.length} bytes output)`);
       const structured = parseStructuredReview(body);
 
-      if (structured) {
-        console.log(`Parsed structured review: verdict=${structured.verdict}, ${structured.findings.length} finding(s)`);
+      if (log) {
+        log.info("Claude CLI completed", { elapsedS: elapsed, outputBytes: body.length, structured: !!structured, verdict: structured?.verdict, findings: structured?.findings.length });
       } else {
-        console.warn("Claude output was not valid structured JSON — using freeform fallback");
+        console.log(`Claude CLI completed in ${elapsed}s (${body.length} bytes output)`);
+        if (structured) {
+          console.log(`Parsed structured review: verdict=${structured.verdict}, ${structured.findings.length} finding(s)`);
+        } else {
+          console.warn("Claude output was not valid structured JSON — using freeform fallback");
+        }
       }
 
       resolve({ body, success: true, structured: structured ?? undefined });

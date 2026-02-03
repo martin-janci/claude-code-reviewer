@@ -8,6 +8,7 @@ import { Poller } from "./polling/poller.js";
 import { WebhookServer } from "./webhook/server.js";
 import { CloneManager } from "./clone/manager.js";
 import { MetricsCollector } from "./metrics.js";
+import { createRootLogger } from "./logger.js";
 import { setGhToken, getPRDetails } from "./reviewer/github.js";
 
 let VERSION = "unknown";
@@ -48,6 +49,7 @@ function parseOneShotArg(): OneShotTarget | null {
 }
 
 async function runOneShot(target: OneShotTarget): Promise<void> {
+  const logger = createRootLogger();
   const config = loadConfig("config.yaml", true);
 
   // Inject the target repo if not already configured
@@ -74,7 +76,7 @@ async function runOneShot(target: OneShotTarget): Promise<void> {
   }
 
   const metrics = new MetricsCollector();
-  const reviewer = new Reviewer(config, store, cloneManager, metrics);
+  const reviewer = new Reviewer(config, store, logger, cloneManager, metrics);
 
   const key = `${target.owner}/${target.repo}#${target.prNumber}`;
   console.log(`One-shot review: ${key}`);
@@ -159,6 +161,7 @@ function main(): void {
     return;
   }
 
+  const logger = createRootLogger();
   const config = loadConfig();
   const store = new StateStore();
 
@@ -169,20 +172,20 @@ function main(): void {
       config.github.token || undefined,
       config.review.cloneTimeoutMs,
     );
-    console.log(`Codebase access enabled (clones at ${config.review.cloneDir})`);
+    logger.info("Codebase access enabled", { cloneDir: config.review.cloneDir });
 
     // Pre-warm clones so the first review doesn't block on a full clone
     for (const { owner, repo } of config.repos) {
       cloneManager.ensureClone(owner, repo).then(() => {
-        console.log(`Pre-warmed clone for ${owner}/${repo}`);
+        logger.info("Pre-warmed clone", { repo: `${owner}/${repo}` });
       }).catch((err) => {
-        console.warn(`Pre-warm clone failed for ${owner}/${repo}:`, err);
+        logger.warn("Pre-warm clone failed", { repo: `${owner}/${repo}`, error: String(err) });
       });
     }
   }
 
   const metrics = new MetricsCollector();
-  const reviewer = new Reviewer(config, store, cloneManager, metrics);
+  const reviewer = new Reviewer(config, store, logger, cloneManager, metrics);
 
   // Pass GitHub token to gh CLI wrapper
   if (config.github.token) {
@@ -193,16 +196,18 @@ function main(): void {
   let webhook: WebhookServer | null = null;
   let healthServer: Server | null = null;
 
-  console.log(`Claude Code PR Reviewer starting in "${config.mode}" mode`);
-  console.log(`Watching ${config.repos.length} repo(s): ${config.repos.map((r) => `${r.owner}/${r.repo}`).join(", ")}`);
+  logger.info("Claude Code PR Reviewer starting", { mode: config.mode, repos: config.repos.map((r) => `${r.owner}/${r.repo}`), dryRun: config.review.dryRun });
+  if (config.review.dryRun) {
+    logger.warn("DRY RUN MODE — reviews will run but results will NOT be posted to GitHub");
+  }
 
   if (config.mode === "polling" || config.mode === "both") {
-    poller = new Poller(config, reviewer, store, cloneManager);
+    poller = new Poller(config, reviewer, store, logger, cloneManager);
     poller.start();
   }
 
   if (config.mode === "webhook" || config.mode === "both") {
-    webhook = new WebhookServer(config, reviewer, store, metrics, { version: VERSION, startTime: START_TIME });
+    webhook = new WebhookServer(config, reviewer, store, logger, metrics, { version: VERSION, startTime: START_TIME });
     webhook.start();
   } else {
     // In polling-only mode, start a minimal health server so Docker health checks pass
@@ -214,7 +219,7 @@ function main(): void {
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.log("\nShutting down...");
+    logger.info("Shutting down...");
     await poller?.stop();
     await webhook?.stop();
     if (healthServer) {
@@ -225,13 +230,13 @@ function main(): void {
 
     // Wait for in-flight reviews to complete (up to 60s)
     if (reviewer.inflight > 0) {
-      console.log(`Waiting for ${reviewer.inflight} in-flight review(s) to complete...`);
+      logger.info("Waiting for in-flight reviews to complete", { inflight: reviewer.inflight });
       const deadline = Date.now() + 60_000;
       while (reviewer.inflight > 0 && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 1000));
       }
       if (reviewer.inflight > 0) {
-        console.warn(`Exiting with ${reviewer.inflight} in-flight review(s) still running`);
+        logger.warn("Exiting with in-flight reviews still running", { inflight: reviewer.inflight });
       }
     }
 

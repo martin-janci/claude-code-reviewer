@@ -35,6 +35,8 @@ review:
   reviewTimeoutMs: 600000            # timeout for claude review (10 min)
   reviewMaxTurns: 30                 # max agentic turns for codebase exploration
   staleWorktreeMinutes: 60           # cleanup worktrees older than this
+  excludePaths: []                   # glob patterns to exclude from diff (e.g. ["*.lock", "vendor/**", "dist/**"])
+  dryRun: false                      # if true, run reviews but don't post to GitHub (env: DRY_RUN)
 
 # --- Optional Features (all disabled by default) ---
 

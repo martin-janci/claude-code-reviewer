@@ -6,6 +6,60 @@
 export type CommentableLines = Map<string, Set<number>>;
 
 /**
+ * Simple glob matching: supports * (any chars in segment) and ** (any path segments).
+ */
+function globMatch(pattern: string, path: string): boolean {
+  let regex = pattern
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*\*/g, "\0")
+    .replace(/\*/g, "[^/]*")
+    .replace(/\0/g, ".*");
+  return new RegExp(`^${regex}$`).test(path);
+}
+
+/**
+ * Filter a unified diff to exclude files matching any of the given glob patterns.
+ * Returns the filtered diff and a count of excluded files.
+ */
+export function filterDiff(
+  diff: string,
+  excludePatterns: string[],
+): { filtered: string; excludedCount: number } {
+  if (excludePatterns.length === 0) return { filtered: diff, excludedCount: 0 };
+
+  const lines = diff.split("\n");
+  const outputLines: string[] = [];
+  let excludedCount = 0;
+  let excluding = false;
+  let currentPath: string | null = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Detect start of a new file diff
+    if (line.startsWith("diff --git ")) {
+      // Check the next lines for the file path
+      const pathLine = lines.slice(i, i + 5).find((l) => l.startsWith("+++ b/"));
+      if (pathLine) {
+        currentPath = pathLine.slice(6);
+        excluding = excludePatterns.some((p) => globMatch(p, currentPath!));
+        if (excluding) {
+          excludedCount++;
+        }
+      } else {
+        excluding = false;
+      }
+    }
+
+    if (!excluding) {
+      outputLines.push(line);
+    }
+  }
+
+  return { filtered: outputLines.join("\n"), excludedCount };
+}
+
+/**
  * Parse a unified diff and return a map of file path → set of commentable line numbers.
  * Commentable lines are those on the RIGHT side (new file): context lines (` `) and additions (`+`).
  */

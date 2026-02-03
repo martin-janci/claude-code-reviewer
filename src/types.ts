@@ -35,6 +35,8 @@ export interface ReviewConfig {
   reviewTimeoutMs: number;
   reviewMaxTurns: number;
   staleWorktreeMinutes: number;
+  excludePaths: string[];
+  dryRun: boolean;
 }
 
 export interface JiraConfig {
@@ -126,6 +128,8 @@ export type SkipReason = "draft" | "wip_title" | "diff_too_large";
 
 export type ErrorPhase = "diff_fetch" | "clone_prepare" | "claude_review" | "comment_post" | "jira_validate" | "description_generate" | "label_apply";
 
+export type ErrorKind = "transient" | "permanent";
+
 export interface ReviewRecord {
   sha: string;
   reviewedAt: string;
@@ -141,6 +145,18 @@ export interface ErrorRecord {
   sha: string;
   message: string;
   phase: ErrorPhase;
+  kind: ErrorKind;
+}
+
+export type FeatureName = "jira" | "auto_description" | "auto_label";
+export type FeatureStatus = "success" | "skipped" | "error";
+
+export interface FeatureExecution {
+  feature: FeatureName;
+  status: FeatureStatus;
+  durationMs?: number;
+  error?: string;
+  timestamp: string;
 }
 
 export interface PRState {
@@ -194,6 +210,7 @@ export interface PRState {
   jiraValidated: boolean;
   descriptionGenerated: boolean;
   labelsApplied: string[];
+  featureExecutions: FeatureExecution[];
 }
 
 export interface ReviewDecision {
@@ -211,6 +228,13 @@ export interface StateFileV1 {
   [key: string]: string; // "owner/repo#number" -> last reviewed SHA
 }
 
+export interface ReviewOverrides {
+  maxTurns?: number;
+  skipDescription?: boolean;
+  skipLabels?: boolean;
+  focusPaths?: string[];
+}
+
 export interface PullRequest {
   number: number;
   title: string;
@@ -221,6 +245,7 @@ export interface PullRequest {
   owner: string;
   repo: string;
   forceReview?: boolean;
+  overrides?: ReviewOverrides;
 }
 
 export interface ReviewResult {

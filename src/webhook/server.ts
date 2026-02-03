@@ -1,15 +1,81 @@
 import { createServer, type Server } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
-import type { AppConfig, PullRequest } from "../types.js";
+import type { AppConfig, PullRequest, ReviewOverrides } from "../types.js";
 import type { Reviewer } from "../reviewer/reviewer.js";
 import type { StateStore } from "../state/store.js";
 import type { MetricsCollector } from "../metrics.js";
+import type { Logger } from "../logger.js";
 import { getPRDetails } from "../reviewer/github.js";
 
 function verifySignature(secret: string, payload: Buffer, signature: string): boolean {
   const expected = "sha256=" + createHmac("sha256", secret).update(payload).digest("hex");
   if (expected.length !== signature.length) return false;
   return timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
+}
+
+/**
+ * Parse /review comment arguments.
+ * Supported: --max-turns=N, --skip-description, --skip-labels, --focus=path1,path2
+ */
+function parseReviewOverrides(commentBody: string): ReviewOverrides | undefined {
+  const overrides: ReviewOverrides = {};
+  let hasOverrides = false;
+
+  // --max-turns=N
+  const maxTurnsMatch = commentBody.match(/--max-turns=(\d+)/);
+  if (maxTurnsMatch) {
+    overrides.maxTurns = parseInt(maxTurnsMatch[1], 10);
+    hasOverrides = true;
+  }
+
+  // --skip-description
+  if (/--skip-description\b/.test(commentBody)) {
+    overrides.skipDescription = true;
+    hasOverrides = true;
+  }
+
+  // --skip-labels
+  if (/--skip-labels\b/.test(commentBody)) {
+    overrides.skipLabels = true;
+    hasOverrides = true;
+  }
+
+  // --focus=path1,path2,path3
+  const focusMatch = commentBody.match(/--focus=([^\s]+)/);
+  if (focusMatch) {
+    overrides.focusPaths = focusMatch[1].split(",").map((p) => p.trim()).filter(Boolean);
+    if (overrides.focusPaths.length > 0) hasOverrides = true;
+  }
+
+  return hasOverrides ? overrides : undefined;
+}
+
+function sanitizeConfig(config: AppConfig): Record<string, unknown> {
+  return {
+    mode: config.mode,
+    polling: config.polling,
+    webhook: {
+      port: config.webhook.port,
+      path: config.webhook.path,
+      secret: config.webhook.secret ? "[REDACTED]" : "(not set)",
+    },
+    github: {
+      token: config.github.token ? "[REDACTED]" : "(not set)",
+    },
+    repos: config.repos,
+    review: {
+      ...config.review,
+    },
+    features: {
+      jira: {
+        ...config.features.jira,
+        token: config.features.jira.token ? "[REDACTED]" : "(not set)",
+        email: config.features.jira.email ? "[REDACTED]" : "(not set)",
+      },
+      autoDescription: config.features.autoDescription,
+      autoLabel: config.features.autoLabel,
+    },
+  };
 }
 
 // Actions that trigger a full review cycle via processPR
@@ -29,6 +95,7 @@ export class WebhookServer {
     private config: AppConfig,
     private reviewer: Reviewer,
     private store: StateStore,
+    private logger: Logger,
     private metrics?: MetricsCollector,
     private healthInfo?: { version: string; startTime: number },
   ) {
@@ -64,6 +131,55 @@ export class WebhookServer {
           res.writeHead(404, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: "Metrics not configured" }));
         }
+        return;
+      }
+
+      // Debug/state inspection endpoint
+      if (req.method === "GET" && req.url === "/debug") {
+        const allPRs = this.store.getAll();
+        const statusCounts = this.store.getStatusCounts();
+        const uptime = this.healthInfo ? Math.floor((Date.now() - this.healthInfo.startTime) / 1000) : 0;
+
+        const debugInfo = {
+          version: this.healthInfo?.version ?? "unknown",
+          uptime,
+          config: sanitizeConfig(this.config),
+          state: {
+            totalPRs: allPRs.length,
+            byStatus: statusCounts,
+            entries: allPRs.map((pr) => ({
+              key: `${pr.owner}/${pr.repo}#${pr.number}`,
+              status: pr.status,
+              headSha: pr.headSha.slice(0, 7),
+              lastReviewedSha: pr.lastReviewedSha?.slice(0, 7) ?? null,
+              consecutiveErrors: pr.consecutiveErrors,
+              lastError: pr.lastError ? {
+                phase: pr.lastError.phase,
+                kind: pr.lastError.kind,
+                message: pr.lastError.message.slice(0, 100),
+                occurredAt: pr.lastError.occurredAt,
+              } : null,
+              reviewCount: pr.reviews.length,
+              updatedAt: pr.updatedAt,
+              recentFeatures: pr.featureExecutions?.slice(-5).map((fe) => ({
+                feature: fe.feature,
+                status: fe.status,
+                durationMs: fe.durationMs,
+                error: fe.error?.slice(0, 50),
+              })) ?? [],
+            })),
+          },
+          capacity: {
+            inflightReviews: this.reviewer.inflight,
+            lockedPRs: this.reviewer.lockKeys,
+          },
+          metrics: this.metrics && this.healthInfo
+            ? this.metrics.snapshot(uptime, statusCounts)
+            : null,
+        };
+
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(debugInfo, null, 2));
         return;
       }
 
@@ -105,7 +221,7 @@ export class WebhookServer {
 
           const event = req.headers["x-github-event"] as string;
           if (event !== "pull_request" && event !== "issue_comment" && event !== "push") {
-            console.log(`Webhook: ignored event type "${event}"`);
+            this.logger.info("Webhook: ignored event type", { event });
             res.writeHead(200);
             res.end("Ignored event");
             return;
@@ -163,7 +279,7 @@ export class WebhookServer {
             return;
           }
 
-          console.log(`Webhook: PR #${prData.number} ${action} in ${owner}/${repo}`);
+          this.logger.info("Webhook: PR event", { pr: `${owner}/${repo}#${prData.number}`, action });
           res.writeHead(202);
           res.end("Accepted");
 
@@ -172,7 +288,7 @@ export class WebhookServer {
             try {
               this.handleLifecycleEvent(action, owner, repo, prData);
             } catch (err) {
-              console.error(`Webhook lifecycle error for ${owner}/${repo}#${prData.number}:`, err);
+              this.logger.error("Webhook lifecycle error", { pr: `${owner}/${repo}#${prData.number}`, error: String(err) });
             }
             return;
           }
@@ -187,7 +303,7 @@ export class WebhookServer {
 
           // Validate nested payload fields before accessing
           if (!prData.head?.sha || !prData.base?.ref) {
-            console.error(`Webhook: malformed PR payload for ${owner}/${repo}#${prData.number} — missing head.sha or base.ref`);
+            this.logger.error("Webhook: malformed PR payload — missing head.sha or base.ref", { pr: `${owner}/${repo}#${prData.number}` });
             return;
           }
 
@@ -204,7 +320,7 @@ export class WebhookServer {
           };
 
           this.reviewer.processPR(pr).catch((err) => {
-            console.error(`Webhook review error for ${owner}/${repo}#${pr.number}:`, err);
+            this.logger.error("Webhook review error", { pr: `${owner}/${repo}#${pr.number}`, error: String(err) });
           });
         });
         return;
@@ -219,7 +335,7 @@ export class WebhookServer {
     this.server.keepAliveTimeout = 5_000;
 
     this.server.listen(port, () => {
-      console.log(`Webhook server listening on port ${port} at ${path}`);
+      this.logger.info("Webhook server listening", { port, path });
     });
   }
 
@@ -242,7 +358,7 @@ export class WebhookServer {
     if (action === "closed") {
       const isMerged = prData.merged === true;
       const now = new Date().toISOString();
-      console.log(`Webhook: ${label} ${isMerged ? "merged" : "closed"}`);
+      this.logger.info("Webhook: PR lifecycle", { pr: label, status: isMerged ? "merged" : "closed" });
       this.store.update(owner, repo, prNumber, {
         status: isMerged ? "merged" : "closed",
         closedAt: now,
@@ -250,7 +366,7 @@ export class WebhookServer {
     }
 
     if (action === "converted_to_draft") {
-      console.log(`Webhook: ${label} converted to draft`);
+      this.logger.info("Webhook: PR converted to draft", { pr: label });
       if (this.config.review.skipDrafts) {
         this.store.update(owner, repo, prNumber, {
           status: "skipped",
@@ -315,19 +431,26 @@ export class WebhookServer {
 
     const prNumber = payload.issue.number;
     const commenter = payload.comment?.user?.login ?? "unknown";
-    console.log(`Webhook: /review trigger by ${commenter} on ${owner}/${repo}#${prNumber}`);
+    const overrides = parseReviewOverrides(commentBody);
+
+    this.logger.info("Webhook: /review trigger", {
+      pr: `${owner}/${repo}#${prNumber}`,
+      commenter,
+      overrides: overrides ?? "none",
+    });
 
     res.writeHead(202);
     res.end("Accepted");
 
-    this.triggerCommentReview(owner, repo, prNumber).catch((err) => {
-      console.error(`Webhook comment-trigger error for ${owner}/${repo}#${prNumber}:`, err);
+    this.triggerCommentReview(owner, repo, prNumber, overrides).catch((err) => {
+      this.logger.error("Webhook comment-trigger error", { pr: `${owner}/${repo}#${prNumber}`, error: String(err) });
     });
   }
 
-  private async triggerCommentReview(owner: string, repo: string, prNumber: number): Promise<void> {
+  private async triggerCommentReview(owner: string, repo: string, prNumber: number, overrides?: ReviewOverrides): Promise<void> {
     const pr = await getPRDetails(owner, repo, prNumber);
     pr.forceReview = true;
+    pr.overrides = overrides;
     await this.reviewer.processPR(pr);
   }
 
@@ -335,7 +458,7 @@ export class WebhookServer {
     return new Promise((resolve) => {
       if (this.server) {
         this.server.close(() => {
-          console.log("Webhook server stopped");
+          this.logger.info("Webhook server stopped");
           resolve();
         });
         // Drain idle keep-alive connections so close() resolves promptly

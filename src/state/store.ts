@@ -54,6 +54,12 @@ export class StateStore {
           : typeof rev.reviewId === "number" ? String(rev.reviewId) : null;
         rev.findings ??= [];
       }
+      // Backfill error kind (added in Phase 2)
+      if (entry.lastError && !entry.lastError.kind) {
+        (entry.lastError as any).kind = "transient";
+      }
+      // Backfill feature executions (added in Phase 2)
+      entry.featureExecutions = Array.isArray(entry.featureExecutions) ? entry.featureExecutions : [];
     }
 
     // Reset any "reviewing" entries to "pending_review" (crash recovery)
@@ -127,6 +133,7 @@ export class StateStore {
         jiraValidated: false,
         descriptionGenerated: false,
         labelsApplied: [],
+        featureExecutions: [],
       };
     }
 
@@ -200,6 +207,7 @@ export class StateStore {
         jiraValidated: false,
         descriptionGenerated: false,
         labelsApplied: [],
+        featureExecutions: [],
       };
       this.save();
     }

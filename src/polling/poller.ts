@@ -2,6 +2,7 @@ import type { AppConfig } from "../types.js";
 import type { Reviewer } from "../reviewer/reviewer.js";
 import type { StateStore } from "../state/store.js";
 import type { CloneManager } from "../clone/manager.js";
+import type { Logger } from "../logger.js";
 import { listOpenPRs, getPRState } from "../reviewer/github.js";
 import { verifyReviews } from "../reviewer/comment-verifier.js";
 import { cleanupStaleEntries } from "../state/cleanup.js";
@@ -18,11 +19,12 @@ export class Poller {
     private config: AppConfig,
     private reviewer: Reviewer,
     private store: StateStore,
+    private logger: Logger,
     private cloneManager?: CloneManager,
   ) {}
 
   start(): void {
-    console.log(`Polling started (every ${this.config.polling.intervalSeconds}s)`);
+    this.logger.info("Polling started", { intervalSeconds: this.config.polling.intervalSeconds });
     this.running = true;
     this.stopRequested = false;
     this.loopPromise = this.loop();
@@ -46,7 +48,7 @@ export class Poller {
         await this.loopPromise;
         this.loopPromise = null;
       }
-      console.log("Polling stopped");
+      this.logger.info("Polling stopped");
     }
   }
 
@@ -70,7 +72,7 @@ export class Poller {
   }
 
   private async poll(): Promise<void> {
-    console.log(`Polling ${this.config.repos.length} repo(s)...`);
+    this.logger.info("Polling repos", { count: this.config.repos.length });
 
     // Collect all open PR keys for reconciliation
     const openPRKeys = new Set<string>();
@@ -78,14 +80,14 @@ export class Poller {
     for (const { owner, repo } of this.config.repos) {
       try {
         const prs = await listOpenPRs(owner, repo);
-        console.log(`Found ${prs.length} open PR(s) in ${owner}/${repo}`);
+        this.logger.info("Found open PRs", { repo: `${owner}/${repo}`, count: prs.length });
 
         for (const pr of prs) {
           openPRKeys.add(StoreClass.prKey(pr.owner, pr.repo, pr.number));
           await this.reviewer.processPR(pr);
         }
       } catch (err) {
-        console.error(`Error polling ${owner}/${repo}:`, err);
+        this.logger.error("Error polling repo", { repo: `${owner}/${repo}`, error: String(err) });
       }
     }
 
@@ -96,20 +98,20 @@ export class Poller {
     try {
       const requeued = await verifyReviews(this.store, this.config.review);
       if (requeued > 0) {
-        console.log(`Comment verification: ${requeued} PR(s) requeued for re-review`);
+        this.logger.info("Comment verification", { requeued });
       }
     } catch (err) {
-      console.error("Error during comment verification:", err);
+      this.logger.error("Error during comment verification", { error: String(err) });
     }
 
     // Cleanup stale entries
     try {
       const removed = cleanupStaleEntries(this.store, this.config.review);
       if (removed > 0) {
-        console.log(`Cleanup: removed ${removed} stale state entries`);
+        this.logger.info("Cleanup: removed stale state entries", { removed });
       }
     } catch (err) {
-      console.error("Error during cleanup:", err);
+      this.logger.error("Error during cleanup", { error: String(err) });
     }
 
     // Prune stale worktrees and untracked clones
@@ -117,19 +119,19 @@ export class Poller {
       try {
         const pruned = await this.cloneManager.pruneStaleWorktrees(this.config.review.staleWorktreeMinutes);
         if (pruned > 0) {
-          console.log(`Worktree cleanup: pruned ${pruned} stale worktree(s)`);
+          this.logger.info("Worktree cleanup: pruned stale worktrees", { pruned });
         }
       } catch (err) {
-        console.error("Error pruning stale worktrees:", err);
+        this.logger.error("Error pruning stale worktrees", { error: String(err) });
       }
 
       try {
         const pruned = await this.cloneManager.pruneUntracked(this.config.repos);
         if (pruned > 0) {
-          console.log(`Clone cleanup: pruned ${pruned} untracked clone(s)`);
+          this.logger.info("Clone cleanup: pruned untracked clones", { pruned });
         }
       } catch (err) {
-        console.error("Error pruning untracked clones:", err);
+        this.logger.error("Error pruning untracked clones", { error: String(err) });
       }
     }
   }
@@ -164,13 +166,13 @@ export class Poller {
         if (!this.store.get(entry.owner, entry.repo, entry.number)) continue;
 
         if (prState.state === "MERGED") {
-          console.log(`Reconciled: ${key} is merged`);
+          this.logger.info("Reconciled: PR is merged", { pr: key });
           this.store.update(entry.owner, entry.repo, entry.number, {
             status: "merged",
             closedAt: prState.mergedAt ?? new Date().toISOString(),
           });
         } else if (prState.state === "CLOSED") {
-          console.log(`Reconciled: ${key} is closed`);
+          this.logger.info("Reconciled: PR is closed", { pr: key });
           this.store.update(entry.owner, entry.repo, entry.number, {
             status: "closed",
             closedAt: new Date().toISOString(),
@@ -178,7 +180,7 @@ export class Poller {
         }
       } catch (err) {
         reconciled++; // Count failed attempts to avoid infinite retries on persistent errors
-        console.error(`Failed to reconcile ${key}:`, err);
+        this.logger.error("Failed to reconcile", { pr: key, error: String(err) });
       }
     }
   }

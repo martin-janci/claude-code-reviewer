@@ -2,6 +2,81 @@ import { readFileSync } from "node:fs";
 import { parse } from "yaml";
 import type { AppConfig } from "./types.js";
 
+export interface ConfigError {
+  field: string;
+  message: string;
+  severity: "error" | "warning";
+}
+
+export function validateConfig(config: AppConfig): ConfigError[] {
+  const errors: ConfigError[] = [];
+
+  // Numeric range checks
+  if (config.review.maxDiffLines < 1) {
+    errors.push({ field: "review.maxDiffLines", message: "Must be >= 1", severity: "error" });
+  }
+  if (config.review.reviewTimeoutMs < 10_000) {
+    errors.push({ field: "review.reviewTimeoutMs", message: "Must be >= 10000 (10s)", severity: "error" });
+  }
+  if (config.review.cloneTimeoutMs < 5_000) {
+    errors.push({ field: "review.cloneTimeoutMs", message: "Must be >= 5000 (5s)", severity: "error" });
+  }
+  if (config.review.maxRetries < 0) {
+    errors.push({ field: "review.maxRetries", message: "Must be >= 0", severity: "error" });
+  }
+  if (config.review.debouncePeriodSeconds < 0) {
+    errors.push({ field: "review.debouncePeriodSeconds", message: "Must be >= 0", severity: "error" });
+  }
+  if (config.review.reviewMaxTurns < 1) {
+    errors.push({ field: "review.reviewMaxTurns", message: "Must be >= 1", severity: "error" });
+  }
+  if (config.review.maxReviewHistory < 1) {
+    errors.push({ field: "review.maxReviewHistory", message: "Must be >= 1", severity: "error" });
+  }
+  if (config.review.staleClosedDays < 1) {
+    errors.push({ field: "review.staleClosedDays", message: "Must be >= 1", severity: "warning" });
+  }
+  if (config.review.staleErrorDays < 1) {
+    errors.push({ field: "review.staleErrorDays", message: "Must be >= 1", severity: "warning" });
+  }
+  if (config.review.commentVerifyIntervalMinutes < 1) {
+    errors.push({ field: "review.commentVerifyIntervalMinutes", message: "Must be >= 1", severity: "warning" });
+  }
+  if (config.polling.intervalSeconds < 1) {
+    errors.push({ field: "polling.intervalSeconds", message: "Must be >= 1", severity: "error" });
+  }
+
+  // Feature coherence
+  if (config.features.jira.enabled) {
+    if (!config.features.jira.baseUrl) {
+      errors.push({ field: "features.jira.baseUrl", message: "Required when jira.enabled is true", severity: "error" });
+    }
+  }
+  if (config.features.autoDescription.enabled) {
+    if (config.features.autoDescription.timeoutMs < 5_000) {
+      errors.push({ field: "features.autoDescription.timeoutMs", message: "Must be >= 5000 (5s)", severity: "warning" });
+    }
+  }
+
+  // Regex validity
+  try {
+    new RegExp(config.review.commentTrigger);
+  } catch {
+    errors.push({ field: "review.commentTrigger", message: `Invalid regex: "${config.review.commentTrigger}"`, severity: "error" });
+  }
+
+  // Exclude path patterns — warn on suspicious patterns
+  if (config.review.excludePaths) {
+    for (const p of config.review.excludePaths) {
+      if (!p.trim()) {
+        errors.push({ field: "review.excludePaths", message: `Empty pattern in excludePaths`, severity: "warning" });
+      }
+    }
+  }
+
+  return errors;
+}
+
 const DEFAULTS: AppConfig = {
   mode: "polling",
   polling: { intervalSeconds: 300 },
@@ -26,6 +101,8 @@ const DEFAULTS: AppConfig = {
     reviewTimeoutMs: 600_000,
     reviewMaxTurns: 15,
     staleWorktreeMinutes: 60,
+    excludePaths: [],
+    dryRun: false,
   },
   features: {
     jira: { enabled: false, baseUrl: "", token: "", email: "", projectKeys: [] },
@@ -99,6 +176,9 @@ export function loadConfig(path: string = "config.yaml", allowEmptyRepos = false
   if (process.env.JIRA_BASE_URL) {
     config.features.jira.baseUrl = process.env.JIRA_BASE_URL;
   }
+  if (process.env.DRY_RUN) {
+    config.review.dryRun = process.env.DRY_RUN === "true" || process.env.DRY_RUN === "1";
+  }
 
   if (config.repos.length === 0 && !allowEmptyRepos) {
     throw new Error("No repos configured. Add repos to config.yaml. If running in Docker, ensure config.yaml is mounted to /app/config.yaml.");
@@ -110,6 +190,19 @@ export function loadConfig(path: string = "config.yaml", allowEmptyRepos = false
 
   if ((config.mode === "webhook" || config.mode === "both") && !config.webhook.secret) {
     console.warn("WARNING: No webhook secret configured. Webhook signature verification is disabled — any request will be accepted. Set webhook.secret in config.yaml or WEBHOOK_SECRET env var.");
+  }
+
+  // Validate config
+  const validationErrors = validateConfig(config);
+  const fatalErrors = validationErrors.filter((e) => e.severity === "error");
+  const warnings = validationErrors.filter((e) => e.severity === "warning");
+
+  for (const w of warnings) {
+    console.warn(`Config warning: ${w.field} — ${w.message}`);
+  }
+  if (fatalErrors.length > 0) {
+    const details = fatalErrors.map((e) => `  ${e.field}: ${e.message}`).join("\n");
+    throw new Error(`Invalid configuration:\n${details}`);
   }
 
   return config;

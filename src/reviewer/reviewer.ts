@@ -1,12 +1,13 @@
-import type { AppConfig, PullRequest, ReviewVerdict, ReviewFinding, ErrorPhase, PRState } from "../types.js";
+import type { AppConfig, PullRequest, ReviewVerdict, ReviewFinding, ErrorPhase, ErrorKind, PRState, FeatureExecution, FeatureName, FeatureStatus } from "../types.js";
 import type { StateStore } from "../state/store.js";
 import type { CloneManager } from "../clone/manager.js";
-import type { MetricsCollector } from "../metrics.js";
+import type { MetricsCollector, PhaseTimings } from "../metrics.js";
+import type { Logger } from "../logger.js";
 import type { ReviewComment } from "./github.js";
 import { shouldReview } from "../state/decisions.js";
 import { getPRDiff, getPRBody, updatePRBody, getPRLabels, postReview, postComment, updateComment, findExistingComment, getReviewThreads, resolveReviewThread } from "./github.js";
 import { reviewDiff } from "./claude.js";
-import { parseCommentableLines, findNearestCommentableLine } from "./diff-parser.js";
+import { parseCommentableLines, findNearestCommentableLine, filterDiff } from "./diff-parser.js";
 import { formatReviewBody, formatInlineComment, type JiraLink } from "./formatter.js";
 import { extractJiraKey, validateJiraIssue } from "../features/jira.js";
 import { generateDescription } from "../features/auto-description.js";
@@ -25,6 +26,34 @@ function parseLegacyVerdict(body: string): ReviewVerdict {
   return "unknown";
 }
 
+/**
+ * Classify an error as transient (retryable) or permanent (skip retries).
+ * Permanent errors: 404 Not Found, 403 Blocked, 422 Validation, explicit auth failures.
+ * Everything else is transient.
+ */
+function classifyError(err: unknown, phase: ErrorPhase): ErrorKind {
+  const message = err instanceof Error ? err.message : String(err);
+  const msgLower = message.toLowerCase();
+
+  // Permanent: resource not found or deleted
+  if (/404|not found/i.test(message)) return "permanent";
+
+  // Permanent: blocked, forbidden, or access denied
+  if (/403|blocked|forbidden|access denied/i.test(message)) return "permanent";
+
+  // Permanent: validation errors (malformed request, invalid parameters)
+  if (/422|validation|invalid/i.test(message)) return "permanent";
+
+  // Permanent: authentication failures
+  if (/401|unauthorized|authentication/i.test(message)) return "permanent";
+
+  // Permanent: rate limit exceeded (often requires manual intervention)
+  if (/rate limit/i.test(message)) return "permanent";
+
+  // Default: transient (timeout, network issues, temporary service errors)
+  return "transient";
+}
+
 export class Reviewer {
   private locks = new Map<string, Promise<void>>();
   private inflightCount = 0;
@@ -32,9 +61,14 @@ export class Reviewer {
   constructor(
     private config: AppConfig,
     private store: StateStore,
+    private logger: Logger,
     private cloneManager?: CloneManager,
     private metrics?: MetricsCollector,
   ) {}
+
+  get lockKeys(): string[] {
+    return [...this.locks.keys()];
+  }
 
   get inflight(): number {
     return this.inflightCount;
@@ -42,12 +76,14 @@ export class Reviewer {
 
   async processPR(pr: PullRequest): Promise<void> {
     const key = `${pr.owner}/${pr.repo}#${pr.number}`;
+    const traceId = Math.random().toString(36).slice(2, 10);
+    const log = this.logger.child({ pr: key, traceId });
 
     // Per-PR mutex: wait in a loop until no lock exists for this key.
     // Loop handles 3+ concurrent callers correctly — after waking,
     // re-check in case another waiter acquired the lock first.
     if (this.locks.has(key)) {
-      console.log(`Waiting for mutex on ${key} (another review in progress)`);
+      log.info("Waiting for mutex (another review in progress)");
     }
     while (this.locks.has(key)) {
       await this.locks.get(key);
@@ -57,19 +93,19 @@ export class Reviewer {
     const lock = new Promise<void>((resolve) => { unlock = resolve; });
     this.locks.set(key, lock);
     this.inflightCount++;
-    console.log(`Processing ${key} (sha: ${pr.headSha.slice(0, 7)}, inflight: ${this.inflightCount})`);
+    log.info("Processing PR", { sha: pr.headSha.slice(0, 7), inflight: this.inflightCount });
 
     try {
-      await this.doProcessPR(pr);
+      await this.doProcessPR(pr, log);
     } finally {
       this.inflightCount--;
       this.locks.delete(key);
       unlock!();
-      console.log(`Finished processing ${key}`);
+      log.info("Finished processing PR");
     }
   }
 
-  private async doProcessPR(pr: PullRequest): Promise<void> {
+  private async doProcessPR(pr: PullRequest, log: Logger): Promise<void> {
     const { owner, repo, number: prNumber, title, headSha, isDraft, baseBranch, headBranch } = pr;
     const label = `${owner}/${repo}#${prNumber}`;
 
@@ -103,13 +139,13 @@ export class Reviewer {
 
     // 3. Evaluate transitions
     this.evaluateTransitions(state);
-    console.log(`State for ${label}: status=${state.status}, headSha=${state.headSha.slice(0, 7)}, lastReviewedSha=${state.lastReviewedSha?.slice(0, 7) ?? "none"}, errors=${state.consecutiveErrors}`);
+    log.info("PR state", { status: state.status, headSha: state.headSha.slice(0, 7), lastReviewedSha: state.lastReviewedSha?.slice(0, 7) ?? "none", errors: state.consecutiveErrors });
 
     // 4. Persist skip status for draft/WIP so we don't re-evaluate every cycle.
     //    Also update skip reason if already skipped for a different reason (e.g. diff_too_large → draft).
     if (this.config.review.skipDrafts && state.isDraft) {
       if (pr.forceReview) {
-        console.log(`Ignoring /review trigger on ${label}: PR is a draft (skipDrafts is enabled)`);
+        log.info("Ignoring /review trigger: PR is a draft (skipDrafts is enabled)");
       }
       if (state.status !== "skipped" || state.skipReason !== "draft") {
         this.store.update(owner, repo, prNumber, { status: "skipped", skipReason: "draft", skippedAtSha: null });
@@ -120,7 +156,7 @@ export class Reviewer {
     }
     if (this.config.review.skipWip && state.title.toLowerCase().startsWith("wip")) {
       if (pr.forceReview) {
-        console.log(`Ignoring /review trigger on ${label}: PR title starts with WIP (skipWip is enabled)`);
+        log.info("Ignoring /review trigger: PR title starts with WIP (skipWip is enabled)");
       }
       if (state.status !== "skipped" || state.skipReason !== "wip_title") {
         this.store.update(owner, repo, prNumber, { status: "skipped", skipReason: "wip_title", skippedAtSha: null });
@@ -133,28 +169,46 @@ export class Reviewer {
     // 5. Check if we should review
     const decision = shouldReview(state, this.config.review, pr.forceReview);
     if (!decision.shouldReview) {
-      console.log(`Skipping ${label}: ${decision.reason} (status: ${state.status})`);
+      log.info("Skipping PR", { reason: decision.reason, status: state.status });
       return;
     }
 
-    console.log(`Reviewing ${label} (${headSha.slice(0, 7)}) — reason: ${decision.reason}`);
+    log.info("Reviewing PR", { sha: headSha.slice(0, 7), reason: decision.reason });
 
     // 5. Set status to reviewing (lock)
     this.store.setStatus(owner, repo, prNumber, "reviewing");
 
+    const phaseStart = Date.now();
+    const timings: Partial<PhaseTimings> = {};
+
+    // Update capacity metrics
+    const queueDepth = (this.store.getStatusCounts().pending_review ?? 0) + (this.store.getStatusCounts().changes_pushed ?? 0);
+    this.metrics?.updateCapacity(this.inflightCount, queueDepth);
+
     // 6. Fetch diff
     let diff: string;
     try {
+      const t0 = Date.now();
       diff = await getPRDiff(owner, repo, prNumber);
+      timings.diff_fetch_ms = Date.now() - t0;
     } catch (err) {
-      this.recordError(state, headSha, err, "diff_fetch");
+      this.recordError(state, headSha, err, "diff_fetch", log);
       return;
+    }
+
+    // 6b. Filter excluded paths from diff
+    if (this.config.review.excludePaths.length > 0) {
+      const { filtered, excludedCount } = filterDiff(diff, this.config.review.excludePaths);
+      if (excludedCount > 0) {
+        log.info("Filtered excluded paths from diff", { excludedCount, patterns: this.config.review.excludePaths });
+        diff = filtered;
+      }
     }
 
     // 7. Check diff size
     const lineCount = diff.split("\n").length;
     if (lineCount > this.config.review.maxDiffLines) {
-      console.log(`Skipping ${label}: diff too large (${lineCount} lines > ${this.config.review.maxDiffLines} max)`);
+      log.info("Skipping: diff too large", { lineCount, maxDiffLines: this.config.review.maxDiffLines });
       this.metrics?.recordSkip("diff_too_large");
       this.store.update(owner, repo, prNumber, {
         status: "skipped",
@@ -166,27 +220,37 @@ export class Reviewer {
     }
 
     // 7b. Auto-generate PR description if enabled and body is empty
-    if (this.config.features.autoDescription.enabled && !state.descriptionGenerated) {
+    const skipDescription = pr.overrides?.skipDescription ?? false;
+    if (this.config.features.autoDescription.enabled && !state.descriptionGenerated && !skipDescription) {
+      const featureT0 = Date.now();
       try {
         const currentBody = await getPRBody(owner, repo, prNumber);
         const hasBody = currentBody.trim().length > 0;
         if (!hasBody || this.config.features.autoDescription.overwriteExisting) {
-          console.log(`Generating PR description for ${label}`);
+          log.info("Generating PR description", { phase: "description_generate" });
           const description = await generateDescription(
             diff, title, this.config.features.autoDescription.timeoutMs,
           );
           if (description) {
-            await updatePRBody(owner, repo, prNumber, description);
-            console.log(`PR description posted for ${label}`);
+            if (this.config.review.dryRun) {
+              log.info("Dry run: skipping PR description update");
+            } else {
+              await updatePRBody(owner, repo, prNumber, description);
+              log.info("PR description posted");
+            }
           }
         }
         this.store.update(owner, repo, prNumber, { descriptionGenerated: true });
         Object.assign(state, { descriptionGenerated: true });
+        this.recordFeatureExecution(state, "auto_description", "success", Date.now() - featureT0);
       } catch (err) {
         // Non-fatal: log and continue with review
-        console.warn(`Auto-description failed for ${label}:`, err instanceof Error ? err.message : err);
+        log.warn("Auto-description failed", { phase: "description_generate", error: err instanceof Error ? err.message : String(err) });
         this.metrics?.recordError("description_generate");
+        this.recordFeatureExecution(state, "auto_description", "error", Date.now() - featureT0, err instanceof Error ? err.message : String(err));
       }
+    } else if (this.config.features.autoDescription.enabled && (state.descriptionGenerated || skipDescription)) {
+      this.recordFeatureExecution(state, "auto_description", "skipped", undefined, skipDescription ? "override" : "already_done");
     }
 
     // 8. Build re-review context if applicable
@@ -220,44 +284,53 @@ export class Reviewer {
     let cwd: string | undefined;
     if (this.cloneManager) {
       try {
+        const t0 = Date.now();
         cwd = await this.cloneManager.prepareForPR(owner, repo, prNumber, headSha);
-        console.log(`Worktree ready for ${label} at ${cwd}`);
+        timings.clone_prepare_ms = Date.now() - t0;
+        log.info("Worktree ready", { phase: "clone_prepare", cwd, durationMs: timings.clone_prepare_ms });
       } catch (err) {
-        this.recordError(state, headSha, err, "clone_prepare");
+        this.recordError(state, headSha, err, "clone_prepare", log);
         return;
       }
     }
 
     // 9. Run Claude review
-    console.log(`Starting Claude review for ${label} (timeout: ${this.config.review.reviewTimeoutMs}ms, maxTurns: ${cwd ? this.config.review.reviewMaxTurns : "n/a"}, codebase: ${cwd ? "yes" : "no"})`);
+    const effectiveMaxTurns = pr.overrides?.maxTurns ?? (cwd ? this.config.review.reviewMaxTurns : undefined);
+    log.info("Starting Claude review", { phase: "claude_review", timeoutMs: this.config.review.reviewTimeoutMs, maxTurns: effectiveMaxTurns, codebase: !!cwd, focusPaths: pr.overrides?.focusPaths });
+    const claudeT0 = Date.now();
     const result = await reviewDiff({
       diff,
       prTitle: title,
       context,
       cwd,
       timeoutMs: this.config.review.reviewTimeoutMs,
-      maxTurns: cwd ? this.config.review.reviewMaxTurns : undefined,
+      maxTurns: effectiveMaxTurns,
+      logger: log,
+      focusPaths: pr.overrides?.focusPaths,
     });
+
+    timings.claude_review_ms = Date.now() - claudeT0;
 
     // 9b. Cleanup worktree (fire-and-forget)
     if (this.cloneManager) {
       this.cloneManager.cleanupPR(owner, repo, prNumber).catch((err) => {
-        console.error(`Worktree cleanup failed for ${label}:`, err);
+        log.error("Worktree cleanup failed", { error: String(err) });
       });
     }
 
     if (!result.success) {
-      console.error(`Claude review failed for ${label}`);
-      this.recordError(state, headSha, new Error(result.body || "Claude review returned unsuccessful"), "claude_review");
+      log.error("Claude review failed", { phase: "claude_review" });
+      this.recordError(state, headSha, new Error(result.body || "Claude review returned unsuccessful"), "claude_review", log);
       return;
     }
-    console.log(`Claude review succeeded for ${label} (structured: ${result.structured ? "yes" : "no"})`);
+    log.info("Claude review succeeded", { structured: !!result.structured });
 
 
     // 9c. Jira validation (after Claude review, before posting)
     let jiraLink: JiraLink | undefined;
     if (this.config.features.jira.enabled && state.jiraKey) {
       const jiraConfig = this.config.features.jira;
+      const featureT0 = Date.now();
       if (jiraConfig.baseUrl && jiraConfig.email && jiraConfig.token && !state.jiraValidated) {
         try {
           const validation = await validateJiraIssue(
@@ -271,15 +344,17 @@ export class Reviewer {
           };
           this.store.update(owner, repo, prNumber, { jiraValidated: validation.valid });
           Object.assign(state, { jiraValidated: validation.valid });
+          this.recordFeatureExecution(state, "jira", "success", Date.now() - featureT0);
         } catch (err) {
           // Non-fatal: skip Jira link if validation fails
-          console.warn(`Jira validation failed for ${state.jiraKey} on ${label}:`, err instanceof Error ? err.message : err);
+          log.warn("Jira validation failed", { phase: "jira_validate", jiraKey: state.jiraKey, error: err instanceof Error ? err.message : String(err) });
           this.metrics?.recordError("jira_validate");
           jiraLink = {
             key: state.jiraKey,
             url: `${jiraConfig.baseUrl}/browse/${state.jiraKey}`,
             valid: false,
           };
+          this.recordFeatureExecution(state, "jira", "error", Date.now() - featureT0, err instanceof Error ? err.message : String(err));
         }
       } else if (jiraConfig.baseUrl) {
         // Already validated or missing credentials — link without summary
@@ -288,10 +363,12 @@ export class Reviewer {
           url: `${jiraConfig.baseUrl}/browse/${state.jiraKey}`,
           valid: state.jiraValidated,
         };
+        this.recordFeatureExecution(state, "jira", "skipped", undefined, state.jiraValidated ? "already_validated" : "missing_credentials");
       }
     }
 
     // 10. Post review — structured (PR Reviews API) or legacy (issue comment)
+    const postT0 = Date.now();
     const tag = this.config.review.commentTag;
     let verdict: ReviewVerdict;
     let reviewId: string | null = null;
@@ -312,7 +389,7 @@ export class Reviewer {
           return !resolution || resolution.resolution === "open";
         });
         if (hasOpenBlocking && verdict !== "REQUEST_CHANGES") {
-          console.log(`Escalating verdict to REQUEST_CHANGES — unresolved blocking finding(s) on ${label}`);
+          log.info("Escalating verdict to REQUEST_CHANGES — unresolved blocking finding(s)");
           verdict = "REQUEST_CHANGES";
         }
       }
@@ -343,18 +420,22 @@ export class Reviewer {
       }
 
       if (orphanFindings.length > 0) {
-        console.log(`${orphanFindings.length} finding(s) could not be placed inline — promoted to review body on ${label}`);
+        log.info("Findings promoted to review body", { orphanCount: orphanFindings.length });
       }
 
       // Build top-level review body
       const body = formatReviewBody(structured, headSha, tag, orphanFindings, jiraLink);
 
-      try {
-        console.log(`Posting PR review on ${label} (${inlineComments.length} inline comment(s), ${orphanFindings.length} orphan(s))`);
-        reviewId = await postReview(owner, repo, prNumber, body, headSha, inlineComments);
-      } catch (err) {
-        this.recordError(state, headSha, err, "comment_post");
-        return;
+      if (this.config.review.dryRun) {
+        log.info("Dry run: skipping PR review post", { phase: "comment_post", inlineComments: inlineComments.length, orphans: orphanFindings.length, verdict });
+      } else {
+        try {
+          log.info("Posting PR review", { phase: "comment_post", inlineComments: inlineComments.length, orphans: orphanFindings.length });
+          reviewId = await postReview(owner, repo, prNumber, body, headSha, inlineComments);
+        } catch (err) {
+          this.recordError(state, headSha, err, "comment_post", log);
+          return;
+        }
       }
 
       // 10b. Resolve review threads for findings marked as resolved.
@@ -365,11 +446,11 @@ export class Reviewer {
       // For each resolved finding, collect ALL previous findings at the same path:line
       // (across all reviews) and resolve any thread whose body matches any of them.
       const resolvedResolutions = structured.resolutions?.filter((r) => r.resolution === "resolved") ?? [];
-      if (resolvedResolutions.length > 0 && context?.previousFindings?.length) {
+      if (resolvedResolutions.length > 0 && context?.previousFindings?.length && !this.config.review.dryRun) {
         try {
-          console.log(`Fetching review threads for ${label} to resolve ${resolvedResolutions.length} resolved finding(s)`);
+          log.info("Fetching review threads to resolve findings", { resolvedCount: resolvedResolutions.length });
           const threads = await getReviewThreads(owner, repo, prNumber);
-          console.log(`Found ${threads.length} thread(s) (${threads.filter(t => !t.isResolved).length} unresolved) on ${label}`);
+          log.info("Found review threads", { total: threads.length, unresolved: threads.filter(t => !t.isResolved).length });
           const unresolvedThreads = threads.filter((t) => !t.isResolved);
           const resolvedIds = new Set<string>();
 
@@ -393,11 +474,11 @@ export class Reviewer {
           }
 
           if (resolvedIds.size > 0) {
-            console.log(`Resolved ${resolvedIds.size} review thread(s) on ${label}`);
+            log.info("Resolved review threads", { count: resolvedIds.size });
           }
         } catch (err) {
           // Non-fatal — thread resolution is best-effort
-          console.warn(`Failed to resolve review threads on ${label}:`, err instanceof Error ? err.message : err);
+          log.warn("Failed to resolve review threads", { error: err instanceof Error ? err.message : String(err) });
         }
       }
     } else {
@@ -405,25 +486,34 @@ export class Reviewer {
       verdict = parseLegacyVerdict(result.body);
       const body = `${tag}\n\n${result.body}\n\n---\n*Reviewed by Claude Code at commit ${headSha.slice(0, 7)}*`;
 
-      try {
-        const existingId = state.commentId ?? await findExistingComment(owner, repo, prNumber, tag);
-        if (existingId) {
-          console.log(`Updating existing comment on ${label}`);
-          await updateComment(owner, repo, existingId, body);
-          commentId = existingId;
-        } else {
-          console.log(`Posting new comment on ${label}`);
-          commentId = await postComment(owner, repo, prNumber, body);
+      if (this.config.review.dryRun) {
+        log.info("Dry run: skipping legacy comment post", { phase: "comment_post", verdict });
+      } else {
+        try {
+          const existingId = state.commentId ?? await findExistingComment(owner, repo, prNumber, tag);
+          if (existingId) {
+            log.info("Updating existing comment", { phase: "comment_post" });
+            await updateComment(owner, repo, existingId, body);
+            commentId = existingId;
+          } else {
+            log.info("Posting new comment", { phase: "comment_post" });
+            commentId = await postComment(owner, repo, prNumber, body);
+          }
+        } catch (err) {
+          this.recordError(state, headSha, err, "comment_post", log);
+          return;
         }
-      } catch (err) {
-        this.recordError(state, headSha, err, "comment_post");
-        return;
       }
     }
 
+    timings.comment_post_ms = Date.now() - postT0;
+
     // 10c. Auto-labeling (after review is posted)
-    if (this.config.features.autoLabel.enabled && result.structured) {
+    const skipLabels = pr.overrides?.skipLabels ?? false;
+    if (this.config.features.autoLabel.enabled && result.structured && !this.config.review.dryRun && !skipLabels) {
+      const featureT0 = Date.now();
       let labelsMutated = false;
+      let featureError: string | undefined;
       try {
         const currentLabels = await getPRLabels(owner, repo, prNumber);
         const labelDecision = computeLabels(
@@ -433,12 +523,13 @@ export class Reviewer {
         if (labelDecision.add.length > 0 || labelDecision.remove.length > 0) {
           labelsMutated = true;
           await applyLabels(owner, repo, prNumber, labelDecision);
-          console.log(`Labels updated on ${label}: +[${labelDecision.add.join(",")}] -[${labelDecision.remove.join(",")}]`);
+          log.info("Labels updated", { phase: "label_apply", add: labelDecision.add, remove: labelDecision.remove });
         }
       } catch (err) {
         // Non-fatal: log and continue
-        console.warn(`Auto-labeling failed for ${label}:`, err instanceof Error ? err.message : err);
+        log.warn("Auto-labeling failed", { phase: "label_apply", error: err instanceof Error ? err.message : String(err) });
         this.metrics?.recordError("label_apply");
+        featureError = err instanceof Error ? err.message : String(err);
       } finally {
         // Always re-fetch from GitHub after any mutation attempt so state
         // reflects reality even on partial failures (e.g. add succeeds, remove fails)
@@ -451,7 +542,11 @@ export class Reviewer {
             // Best-effort — label state may be stale but review still proceeds
           }
         }
+        this.recordFeatureExecution(state, "auto_label", featureError ? "error" : "success", Date.now() - featureT0, featureError);
       }
+    } else if (this.config.features.autoLabel.enabled && (skipLabels || !result.structured || this.config.review.dryRun)) {
+      const skipReason = skipLabels ? "override" : !result.structured ? "no_structured_review" : "dry_run";
+      this.recordFeatureExecution(state, "auto_label", "skipped", undefined, skipReason);
     }
 
     // 11. Record review and transition to reviewed.
@@ -459,21 +554,34 @@ export class Reviewer {
     //     the PR while the review was in progress — lifecycle events bypass the per-PR mutex).
     const current = this.store.get(owner, repo, prNumber);
     if (current && (current.status === "closed" || current.status === "merged")) {
-      console.log(`Review complete for ${label} but PR is now ${current.status} — not overwriting terminal state`);
+      log.info("Review complete but PR is now terminal — not overwriting", { terminalStatus: current.status });
       return;
     }
 
     this.metrics?.recordReview(verdict);
 
+    // Record phase timings
+    const totalMs = Date.now() - phaseStart;
+    const fullTimings: PhaseTimings = {
+      diff_fetch_ms: timings.diff_fetch_ms ?? 0,
+      clone_prepare_ms: timings.clone_prepare_ms ?? 0,
+      claude_review_ms: timings.claude_review_ms ?? 0,
+      comment_post_ms: timings.comment_post_ms ?? 0,
+      total_ms: totalMs,
+    };
+    this.metrics?.recordReviewTiming(fullTimings);
+    log.info("Review timings", fullTimings as unknown as Record<string, unknown>);
+
     const now = new Date().toISOString();
     const maxHistory = this.config.review.maxReviewHistory;
+    const posted = !this.config.review.dryRun;
     const reviews = [...state.reviews, {
       sha: headSha,
       reviewedAt: now,
       commentId,
       reviewId,
       verdict,
-      posted: true,
+      posted,
       findings: result.structured?.findings ?? [],
     }].slice(-maxHistory);
 
@@ -493,7 +601,7 @@ export class Reviewer {
       skippedAtSha: null,
     });
 
-    console.log(`Review complete for ${label} — verdict: ${verdict}`);
+    log.info("Review complete", { verdict });
   }
 
   private syncMetadata(state: PRState, pr: PullRequest): void {
@@ -557,10 +665,16 @@ export class Reviewer {
     }
   }
 
-  private recordError(state: PRState, sha: string, err: unknown, phase: ErrorPhase): void {
+  private recordError(state: PRState, sha: string, err: unknown, phase: ErrorPhase, log: Logger): void {
     const message = err instanceof Error ? err.message : String(err);
+    const kind = classifyError(err, phase);
     this.metrics?.recordError(phase);
-    console.error(`Error in ${phase} for ${state.owner}/${state.repo}#${state.number}:`, message);
+    log.error("Review phase error", { phase, error: message, kind });
+
+    // Permanent errors skip retries by immediately setting consecutiveErrors to maxRetries
+    const consecutiveErrors = kind === "permanent"
+      ? this.config.review.maxRetries
+      : state.consecutiveErrors + 1;
 
     this.store.update(state.owner, state.repo, state.number, {
       status: "error",
@@ -569,8 +683,30 @@ export class Reviewer {
         sha,
         message,
         phase,
+        kind,
       },
-      consecutiveErrors: state.consecutiveErrors + 1,
+      consecutiveErrors,
     });
+  }
+
+  private recordFeatureExecution(
+    state: PRState,
+    feature: FeatureName,
+    status: FeatureStatus,
+    durationMs?: number,
+    error?: string,
+  ): void {
+    const execution: FeatureExecution = {
+      feature,
+      status,
+      timestamp: new Date().toISOString(),
+    };
+    if (durationMs != null) execution.durationMs = durationMs;
+    if (error) execution.error = error;
+
+    // Keep last 20 executions per PR to avoid unbounded growth
+    const executions = [...state.featureExecutions, execution].slice(-20);
+    this.store.update(state.owner, state.repo, state.number, { featureExecutions: executions });
+    Object.assign(state, { featureExecutions: executions });
   }
 }
