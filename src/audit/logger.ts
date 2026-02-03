@@ -1,14 +1,65 @@
-import { writeFileSync, readFileSync, existsSync } from "node:fs";
-import { dirname } from "node:path";
-import { mkdirSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync, mkdirSync, renameSync, unlinkSync, statSync, rmdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { AuditEntry, AuditEventType, AuditSeverity, AuditMetadata, AuditLogConfig } from "./types.js";
+
+/**
+ * Simple file-based lock using mkdir (atomic on all platforms).
+ * Reused from StateStore pattern.
+ */
+class FileLock {
+  private lockPath: string;
+  private acquired = false;
+  private readonly staleMs = 60_000;
+
+  constructor(filePath: string) {
+    this.lockPath = `${filePath}.lock`;
+  }
+
+  acquire(timeoutMs: number = 5000): boolean {
+    const deadline = Date.now() + timeoutMs;
+    const spinMs = 50;
+
+    while (Date.now() < deadline) {
+      if (existsSync(this.lockPath)) {
+        try {
+          const stat = statSync(this.lockPath);
+          if (Date.now() - stat.mtimeMs > this.staleMs) {
+            try { rmdirSync(this.lockPath); } catch {}
+          }
+        } catch {}
+      }
+
+      try {
+        mkdirSync(this.lockPath);
+        this.acquired = true;
+        return true;
+      } catch {
+        const waitUntil = Date.now() + spinMs;
+        while (Date.now() < waitUntil) {}
+      }
+    }
+    return false;
+  }
+
+  release(): void {
+    if (this.acquired) {
+      try { rmdirSync(this.lockPath); } catch {}
+      this.acquired = false;
+    }
+  }
+}
 
 /**
  * Audit logger for tracking important operations.
  * Maintains a rolling log of events with automatic rotation.
+ * Uses file locking and atomic writes for data integrity.
  */
 export class AuditLogger {
   private entries: AuditEntry[] = [];
+  private pendingWrites: AuditEntry[] = [];
+  private flushTimer: NodeJS.Timeout | null = null;
+  private readonly FLUSH_INTERVAL_MS = 5000; // Batch writes every 5 seconds
+  private readonly FLUSH_BATCH_SIZE = 100; // Or when 100 entries pending
   private readonly severityRank: Record<AuditSeverity, number> = {
     info: 0,
     warning: 1,
@@ -18,7 +69,29 @@ export class AuditLogger {
   constructor(private config: AuditLogConfig) {
     if (config.enabled) {
       this.loadExisting();
+      this.startFlushTimer();
     }
+  }
+
+  /**
+   * Start periodic flush timer
+   */
+  private startFlushTimer(): void {
+    this.flushTimer = setInterval(() => {
+      this.flushPending();
+    }, this.FLUSH_INTERVAL_MS);
+  }
+
+  /**
+   * Stop flush timer (for graceful shutdown)
+   */
+  stop(): void {
+    if (this.flushTimer) {
+      clearInterval(this.flushTimer);
+      this.flushTimer = null;
+    }
+    // Final flush
+    this.flushPending();
   }
 
   /**
@@ -40,20 +113,30 @@ export class AuditLogger {
   }
 
   /**
-   * Persist audit log to disk
+   * Flush pending entries to disk with atomic writes and file locking
    */
-  private persist(): void {
-    if (!this.config.enabled) return;
+  private flushPending(): void {
+    if (!this.config.enabled || this.pendingWrites.length === 0) return;
+
+    const lock = new FileLock(this.config.filePath);
+    if (!lock.acquire()) {
+      console.warn("Failed to acquire audit log lock — deferring flush");
+      return;
+    }
 
     try {
-      // Ensure directory exists
+      // Merge pending writes into main entries
+      this.entries.push(...this.pendingWrites);
+      this.pendingWrites = [];
+
+      // Keep only maxEntries most recent entries
+      const toSave = this.entries.slice(-this.config.maxEntries);
+      this.entries = toSave;
+
       const dir = dirname(this.config.filePath);
       if (!existsSync(dir)) {
         mkdirSync(dir, { recursive: true });
       }
-
-      // Keep only maxEntries most recent entries
-      const toSave = this.entries.slice(-this.config.maxEntries);
 
       const data = {
         version: 1,
@@ -61,15 +144,19 @@ export class AuditLogger {
         entries: toSave,
       };
 
-      writeFileSync(this.config.filePath, JSON.stringify(data, null, 2), "utf-8");
-      this.entries = toSave;
+      // Atomic write: temp file + rename (like StateStore)
+      const tmpPath = `${this.config.filePath}.tmp.${Date.now()}`;
+      writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf-8");
+      renameSync(tmpPath, this.config.filePath);
     } catch (err) {
-      console.error("Failed to persist audit log", { error: String(err) });
+      console.error("Failed to flush audit log", { error: String(err) });
+    } finally {
+      lock.release();
     }
   }
 
   /**
-   * Log an audit event
+   * Log an audit event (non-blocking, batched writes)
    */
   log(
     eventType: AuditEventType,
@@ -94,8 +181,12 @@ export class AuditLogger {
       actor,
     };
 
-    this.entries.push(entry);
-    this.persist();
+    this.pendingWrites.push(entry);
+
+    // Immediate flush if batch size reached
+    if (this.pendingWrites.length >= this.FLUSH_BATCH_SIZE) {
+      this.flushPending();
+    }
   }
 
   /**
@@ -177,7 +268,7 @@ export class AuditLogger {
       "comment_posted",
       "info",
       `Comment posted for PR #${prNumber}`,
-      { owner, repo, prNumber, commentId, reviewId: reviewId ?? undefined },
+      { owner, repo, prNumber, commentId, ...(reviewId && { reviewId }) },
       actor,
     );
   }

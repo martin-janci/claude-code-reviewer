@@ -143,7 +143,7 @@ const DEFAULTS: AppConfig = {
     autoDescription: { enabled: false, overwriteExisting: false, timeoutMs: 120_000 },
     autoLabel: { enabled: false, verdictLabels: {}, severityLabels: {}, diffLabels: [] },
     slack: { enabled: false, webhookUrl: "", notifyOn: ["error", "request_changes"] },
-    audit: { enabled: true, maxEntries: 10000, filePath: "data/audit.json", includeMetadata: true, minSeverity: "info" },
+    audit: { enabled: false, maxEntries: 10000, filePath: "data/audit.json", includeMetadata: true, minSeverity: "info" },
   },
 };
 

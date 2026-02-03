@@ -8,7 +8,6 @@ export type AuditEventType =
   | "review_failed"
   | "review_skipped"
   | "comment_posted"
-  | "comment_updated"
   | "state_changed"
   | "feature_executed"
   | "config_loaded"

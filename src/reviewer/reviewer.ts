@@ -199,13 +199,19 @@ export class Reviewer {
 
   private async doProcessPR(pr: PullRequest, log: Logger): Promise<ProcessPRResult> {
     const { owner, repo, number: prNumber, headSha } = pr;
+    const reviewStartTime = Date.now();
 
     log.info("Phase 1: Initializing state", { phase: "init" });
+
+    // Audit: review started
+    this.auditLogger?.reviewStarted(owner, repo, prNumber, headSha, "reviewer");
 
     // Phase 1: Initialize state and check gating conditions
     const initResult = this.initializeState(pr, log);
     if (!initResult.state) {
       log.info("Phase 1: Gating check failed, skipping review", { phase: "init", reason: initResult.skipReason });
+      // Audit: review skipped
+      this.auditLogger?.reviewSkipped(owner, repo, prNumber, initResult.skipReason ?? "gating check failed", "reviewer");
       return { outcome: "skipped", skipReason: initResult.skipReason };
     }
     const state = initResult.state;
@@ -216,6 +222,8 @@ export class Reviewer {
     const diffResult = await this.fetchDiff(pr, log);
     if (!diffResult) {
       log.info("Phase 2: Diff fetch failed", { phase: "diff_fetch" });
+      // Audit: review failed
+      this.auditLogger?.reviewFailed(owner, repo, prNumber, headSha, "Failed to fetch diff", "diff_fetch", "reviewer");
       return { outcome: "error", error: "Failed to fetch diff" };
     }
 
@@ -265,6 +273,8 @@ export class Reviewer {
         skippedAtSha: headSha,
       });
       deleteStatusComment();
+      // Audit: review skipped
+      this.auditLogger?.reviewSkipped(owner, repo, prNumber, `Diff too large (${lineCount} lines)`, "reviewer");
       return { outcome: "skipped", skipReason: `Diff too large (${lineCount} lines, max ${this.config.review.maxDiffLines})` };
     }
 
@@ -300,7 +310,10 @@ export class Reviewer {
       } catch (err) {
         log.error("Phase 3: Worktree preparation failed", { phase: "clone_prepare", error: String(err) });
         this.recordError(owner, repo, prNumber, headSha, err, "clone_prepare", log);
-        return { outcome: "error", error: `Worktree preparation failed: ${err instanceof Error ? err.message : String(err)}` };
+        // Audit: review failed
+        const errMsg = err instanceof Error ? err.message : String(err);
+        this.auditLogger?.reviewFailed(owner, repo, prNumber, headSha, errMsg, "clone_prepare", "reviewer");
+        return { outcome: "error", error: `Worktree preparation failed: ${errMsg}` };
       }
     }
 
@@ -309,6 +322,8 @@ export class Reviewer {
     const reviewResult = await this.runReview(pr, currentState, diffResult.diff, cwd, timings, log);
     if (!reviewResult) {
       log.info("Phase 4: Claude review failed", { phase: "claude_review" });
+      // Audit: review failed
+      this.auditLogger?.reviewFailed(owner, repo, prNumber, headSha, "Claude review execution failed", "claude_review", "reviewer");
       return { outcome: "error", error: "Claude review failed" };
     }
     log.info("Phase 4: Claude review completed", { phase: "claude_review", structured: !!reviewResult.structured, durationMs: timings.claude_review_ms });
@@ -340,9 +355,14 @@ export class Reviewer {
     );
     if (!postResult) {
       log.info("Phase 5: Failed to post review", { phase: "comment_post" });
+      // Audit: review failed
+      this.auditLogger?.reviewFailed(owner, repo, prNumber, headSha, "Failed to post review results", "comment_post", "reviewer");
       return { outcome: "error", error: "Failed to post review" };
     }
     log.info("Phase 5: Review posted", { phase: "comment_post", verdict: postResult.verdict, reviewId: postResult.reviewId, durationMs: timings.comment_post_ms });
+
+    // Audit: comment posted
+    this.auditLogger?.commentPosted(owner, repo, prNumber, postResult.commentId ?? "", postResult.reviewId, "reviewer");
 
     // Run post_review features (auto-labeling)
     log.info("Running post_review features", { phase: "post_review_features" });
@@ -363,6 +383,11 @@ export class Reviewer {
       postResult,
     );
     log.info("Phase 6: Review finalized", { phase: "finalize" });
+
+    // Audit: review completed
+    const reviewDuration = Date.now() - reviewStartTime;
+    const findingsCount = reviewResult.structured?.findings?.length ?? 0;
+    this.auditLogger?.reviewCompleted(owner, repo, prNumber, headSha, postResult.verdict, findingsCount, reviewDuration, "reviewer");
 
     return { outcome: "reviewed", verdict: postResult.verdict };
     } finally {

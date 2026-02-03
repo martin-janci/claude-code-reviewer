@@ -81,7 +81,7 @@ features:
 
   # Audit logging for tracking important operations
   audit:
-    enabled: true
+    enabled: false             # disabled by default (opt-in like other features)
     maxEntries: 10000          # rolling window size (keep last N entries)
     filePath: data/audit.json  # path to audit log file
     includeMetadata: true      # include detailed metadata in entries
