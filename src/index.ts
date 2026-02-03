@@ -82,6 +82,7 @@ async function runOneShot(target: OneShotTarget): Promise<void> {
   const reviewer = new Reviewer(config, store, logger, cloneManager, metrics, auditLogger);
 
   const key = `${target.owner}/${target.repo}#${target.prNumber}`;
+  console.log(`Claude Code PR Reviewer v${VERSION}`);
   console.log(`One-shot review: ${key}`);
 
   // Fetch PR details
@@ -206,7 +207,7 @@ function main(): void {
   let webhook: WebhookServer | null = null;
   let healthServer: Server | null = null;
 
-  logger.info("Claude Code PR Reviewer starting", { mode: config.mode, repos: config.repos.map((r) => `${r.owner}/${r.repo}`), dryRun: config.review.dryRun });
+  logger.info(`Claude Code PR Reviewer v${VERSION} starting`, { mode: config.mode, repos: config.repos.map((r) => `${r.owner}/${r.repo}`), dryRun: config.review.dryRun });
   if (config.review.dryRun) {
     logger.warn("DRY RUN MODE — reviews will run but results will NOT be posted to GitHub");
   }
