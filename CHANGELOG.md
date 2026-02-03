@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.13.0
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.12.0...v1.13.0)
+
+### 🚀 Enhancements
+
+- Add autofix command for automatic issue resolution ([#11](https://github.com/martin-janci/claude-code-reviewer/pull/11))
+
+### ❤️ Contributors
+
+- Martin Janči
+
 ## v1.12.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.11.0...v1.12.0)
