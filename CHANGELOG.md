@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.11.0
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.10.0...v1.11.0)
+
+### 🚀 Enhancements
+
+- Add audit logging for operational tracking ([#9](https://github.com/martin-janci/claude-code-reviewer/pull/9))
+
+### ❤️ Contributors
+
+- Martin Janči ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.10.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.9.1...v1.10.0)
