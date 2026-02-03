@@ -58,8 +58,10 @@ export class AuditLogger {
   private entries: AuditEntry[] = [];
   private pendingWrites: AuditEntry[] = [];
   private flushTimer: NodeJS.Timeout | null = null;
+  private consecutiveFlushFailures = 0;
   private readonly FLUSH_INTERVAL_MS = 5000; // Batch writes every 5 seconds
   private readonly FLUSH_BATCH_SIZE = 100; // Or when 100 entries pending
+  private readonly MAX_FLUSH_FAILURES = 3; // Warn after this many failures
   private readonly severityRank: Record<AuditSeverity, number> = {
     info: 0,
     warning: 1,
@@ -120,7 +122,13 @@ export class AuditLogger {
 
     const lock = new FileLock(this.config.filePath);
     if (!lock.acquire()) {
-      console.warn("Failed to acquire audit log lock — deferring flush");
+      this.consecutiveFlushFailures++;
+      if (this.consecutiveFlushFailures >= this.MAX_FLUSH_FAILURES) {
+        console.warn(
+          `Failed to acquire audit log lock ${this.consecutiveFlushFailures} times — ` +
+          `${this.pendingWrites.length} entries pending. Lock may be held by another process or stale.`
+        );
+      }
       return;
     }
 
@@ -131,6 +139,8 @@ export class AuditLogger {
 
       // Keep only maxEntries most recent entries
       const toSave = this.entries.slice(-this.config.maxEntries);
+
+      // Atomic reassignment - copy before mutation to avoid race with getEntries()
       this.entries = toSave;
 
       const dir = dirname(this.config.filePath);
@@ -148,8 +158,12 @@ export class AuditLogger {
       const tmpPath = `${this.config.filePath}.tmp.${Date.now()}`;
       writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf-8");
       renameSync(tmpPath, this.config.filePath);
+
+      // Reset failure counter on success
+      this.consecutiveFlushFailures = 0;
     } catch (err) {
       console.error("Failed to flush audit log", { error: String(err) });
+      this.consecutiveFlushFailures++;
     } finally {
       lock.release();
     }
@@ -383,13 +397,17 @@ export class AuditLogger {
 
   /**
    * Get all entries (for /debug endpoint)
+   * Returns a snapshot to avoid race conditions with flushPending()
    */
   getEntries(): AuditEntry[] {
-    return [...this.entries];
+    // Snapshot prevents race if flush mutates this.entries during iteration
+    const snapshot = this.entries;
+    return [...snapshot];
   }
 
   /**
    * Get entries filtered by criteria
+   * Returns a snapshot to avoid race conditions with flushPending()
    */
   getFiltered(filter: {
     eventType?: AuditEventType;
@@ -398,7 +416,9 @@ export class AuditLogger {
     since?: string;
     limit?: number;
   }): AuditEntry[] {
-    let filtered = [...this.entries];
+    // Snapshot prevents race if flush mutates this.entries during iteration
+    const snapshot = this.entries;
+    let filtered = [...snapshot];
 
     if (filter.eventType) {
       filtered = filtered.filter(e => e.eventType === filter.eventType);
@@ -427,6 +447,7 @@ export class AuditLogger {
 
   /**
    * Get statistics about audit log
+   * Uses a snapshot to avoid race conditions with flushPending()
    */
   getStats(): {
     totalEntries: number;
@@ -436,11 +457,13 @@ export class AuditLogger {
     oldestEntry: string | null;
     newestEntry: string | null;
   } {
+    // Snapshot prevents race if flush mutates this.entries during iteration
+    const snapshot = this.entries;
     const bySeverity: Record<AuditSeverity, number> = { info: 0, warning: 0, error: 0 };
     const byEventType: Record<string, number> = {};
     const byActor: Record<string, number> = {};
 
-    for (const entry of this.entries) {
+    for (const entry of snapshot) {
       bySeverity[entry.severity]++;
       byEventType[entry.eventType] = (byEventType[entry.eventType] || 0) + 1;
       if (entry.actor) {
@@ -449,12 +472,12 @@ export class AuditLogger {
     }
 
     return {
-      totalEntries: this.entries.length,
+      totalEntries: snapshot.length,
       bySeverity,
       byEventType,
       byActor,
-      oldestEntry: this.entries[0]?.timestamp ?? null,
-      newestEntry: this.entries[this.entries.length - 1]?.timestamp ?? null,
+      oldestEntry: snapshot[0]?.timestamp ?? null,
+      newestEntry: snapshot[snapshot.length - 1]?.timestamp ?? null,
     };
   }
 }
