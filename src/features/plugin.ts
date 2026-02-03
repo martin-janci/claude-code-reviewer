@@ -60,21 +60,22 @@ export async function runFeatures(
       if (!feature.shouldRun(featureCtx)) {
         result = { success: true };
         status = "skipped";
-        featureLog.debug("Feature skipped");
+        featureLog.info("Feature skipped");
       } else {
-        featureLog.debug("Feature starting");
+        featureLog.info("Feature starting");
         result = await feature.execute(featureCtx);
         status = result.success ? "success" : "error";
-        featureLog.debug("Feature completed", { success: result.success });
+        featureLog.info("Feature completed", { success: result.success, data: result.data });
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       result = { success: false, error: message };
       status = "error";
-      featureLog.warn("Feature threw exception", { error: message });
+      featureLog.error("Feature threw exception", { error: message });
     }
 
     const durationMs = Date.now() - t0;
+    featureLog.info("Feature execution recorded", { status, durationMs });
     results.set(feature.name, result);
 
     // Record execution in state

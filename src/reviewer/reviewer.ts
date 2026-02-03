@@ -130,16 +130,29 @@ export class Reviewer {
   private async doProcessPR(pr: PullRequest, log: Logger): Promise<void> {
     const { owner, repo, number: prNumber, headSha } = pr;
 
+    log.info("Phase 1: Initializing state", { phase: "init" });
+
     // Phase 1: Initialize state and check gating conditions
     const state = this.initializeState(pr, log);
-    if (!state) return;
+    if (!state) {
+      log.info("Phase 1: Gating check failed, skipping review", { phase: "init" });
+      return;
+    }
+
+    log.info("Phase 2: Fetching diff", { phase: "diff_fetch" });
 
     // Phase 2: Fetch and filter diff
     const diffResult = await this.fetchDiff(pr, log);
-    if (!diffResult) return;
+    if (!diffResult) {
+      log.info("Phase 2: Diff fetch failed", { phase: "diff_fetch" });
+      return;
+    }
+
+    log.info("Phase 2: Diff fetched", { phase: "diff_fetch", lines: diffResult.diff.split("\n").length, durationMs: diffResult.diffFetchMs });
 
     // Set status to reviewing (lock)
     this.store.setStatus(owner, repo, prNumber, "reviewing");
+    log.info("Status set to reviewing", { phase: "reviewing" });
 
     const phaseStart = Date.now();
     const timings: Partial<PhaseTimings> = { diff_fetch_ms: diffResult.diffFetchMs };
@@ -197,7 +210,9 @@ export class Reviewer {
     };
 
     // Run pre_review features (jira extraction, auto-description)
+    log.info("Running pre_review features", { phase: "pre_review_features" });
     await runFeatures(this.features, "pre_review", featureCtx);
+    log.info("Completed pre_review features", { phase: "pre_review_features" });
 
     // Re-read state after features may have modified it
     const currentState = this.store.get(owner, repo, prNumber)!;
@@ -205,25 +220,33 @@ export class Reviewer {
     // Phase 3: Prepare codebase worktree if enabled
     let cwd: string | undefined;
     if (this.cloneManager) {
+      log.info("Phase 3: Preparing worktree", { phase: "clone_prepare" });
       try {
         const t0 = Date.now();
         cwd = await this.cloneManager.prepareForPR(owner, repo, prNumber, headSha);
         timings.clone_prepare_ms = Date.now() - t0;
-        log.info("Worktree ready", { phase: "clone_prepare", cwd, durationMs: timings.clone_prepare_ms });
+        log.info("Phase 3: Worktree ready", { phase: "clone_prepare", cwd, durationMs: timings.clone_prepare_ms });
       } catch (err) {
+        log.error("Phase 3: Worktree preparation failed", { phase: "clone_prepare", error: String(err) });
         this.recordError(owner, repo, prNumber, headSha, err, "clone_prepare", log);
         return;
       }
     }
 
     // Phase 4: Run Claude review
+    log.info("Phase 4: Starting Claude review", { phase: "claude_review", codebaseAccess: !!cwd });
     const reviewResult = await this.runReview(pr, currentState, diffResult.diff, cwd, timings, log);
-    if (!reviewResult) return;
+    if (!reviewResult) {
+      log.info("Phase 4: Claude review failed", { phase: "claude_review" });
+      return;
+    }
+    log.info("Phase 4: Claude review completed", { phase: "claude_review", structured: !!reviewResult.structured, durationMs: timings.claude_review_ms });
 
     // Cleanup worktree (fire-and-forget)
     if (this.cloneManager) {
+      log.debug("Cleaning up worktree", { phase: "worktree_cleanup" });
       this.cloneManager.cleanupPR(owner, repo, prNumber).catch((err) => {
-        log.error("Worktree cleanup failed", { error: String(err) });
+        log.error("Worktree cleanup failed", { phase: "worktree_cleanup", error: String(err) });
       });
     }
 
@@ -235,16 +258,23 @@ export class Reviewer {
         url: `${this.config.features.jira.baseUrl}/browse/${currentState.jiraKey}`,
         valid: currentState.jiraValidated,
       };
+      log.debug("Jira link built", { jiraKey: currentState.jiraKey, valid: currentState.jiraValidated });
     }
 
     // Phase 5: Post review results
+    log.info("Phase 5: Posting review results", { phase: "comment_post" });
     const postResult = await this.postResults(
       { pr, state: currentState, log, diff: diffResult.diff, cwd, timings, phaseStart, jiraLink },
       reviewResult,
     );
-    if (!postResult) return;
+    if (!postResult) {
+      log.info("Phase 5: Failed to post review", { phase: "comment_post" });
+      return;
+    }
+    log.info("Phase 5: Review posted", { phase: "comment_post", verdict: postResult.verdict, reviewId: postResult.reviewId, durationMs: timings.comment_post_ms });
 
     // Run post_review features (auto-labeling)
+    log.info("Running post_review features", { phase: "post_review_features" });
     const postFeatureCtx: FeatureContext = {
       ...featureCtx,
       state: this.store.get(owner, repo, prNumber)!,
@@ -252,13 +282,16 @@ export class Reviewer {
       verdict: postResult.verdict,
     };
     await runFeatures(this.features, "post_review", postFeatureCtx);
+    log.info("Completed post_review features", { phase: "post_review_features" });
 
     // Phase 6: Finalize review
+    log.info("Phase 6: Finalizing review", { phase: "finalize" });
     this.finalizeReview(
       { pr, state: this.store.get(owner, repo, prNumber)!, log, diff: diffResult.diff, timings, phaseStart },
       reviewResult,
       postResult,
     );
+    log.info("Phase 6: Review finalized", { phase: "finalize" });
     } finally {
       // Always delete the status comment when review finishes (success or error)
       deleteStatusComment();

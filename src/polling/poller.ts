@@ -84,6 +84,7 @@ export class Poller {
 
         for (const pr of prs) {
           openPRKeys.add(StoreClass.prKey(pr.owner, pr.repo, pr.number));
+          this.logger.info("Processing PR from poll", { pr: `${pr.owner}/${pr.repo}#${pr.number}`, sha: pr.headSha.slice(0, 7), title: pr.title.slice(0, 50) });
           await this.reviewer.processPR(pr);
         }
       } catch (err) {

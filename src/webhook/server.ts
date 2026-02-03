@@ -319,6 +319,7 @@ export class WebhookServer {
             repo,
           };
 
+          this.logger.info("Webhook: Triggering review", { pr: `${owner}/${repo}#${pr.number}`, sha: pr.headSha.slice(0, 7), action });
           this.reviewer.processPR(pr).catch((err) => {
             this.logger.error("Webhook review error", { pr: `${owner}/${repo}#${pr.number}`, error: String(err) });
           });
