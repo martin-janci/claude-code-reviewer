@@ -8,6 +8,9 @@ import type { MetricsCollector } from "../metrics.js";
 import type { Logger } from "../logger.js";
 import { getPRDetails, postComment } from "../reviewer/github.js";
 
+// Note: execFile is used directly for CLI checks (checkClaudeAuth, checkGhAuth).
+// If more endpoints need CLI validation, consider extracting to a shared helper module.
+
 interface AuthStatus {
   available: boolean;
   authenticated: boolean;
@@ -112,8 +115,16 @@ function checkClaudeAuth(): Promise<Omit<AuthStatus, "lastChecked">> {
         resolve({ available: false, authenticated: false, error: errMsg.slice(0, 100) });
         return;
       }
-      // If --version succeeds, CLI is available. Auth status is best-effort unknown.
-      // We assume authenticated unless proven otherwise by actual usage.
+
+      // Check stderr for warnings that might indicate broken/incompatible installation
+      if (stderr && stderr.trim()) {
+        const warning = stderr.slice(0, 100);
+        resolve({ available: true, authenticated: true, error: `Warning: ${warning}` });
+        return;
+      }
+
+      // If --version succeeds without warnings, CLI is available.
+      // Auth status is best-effort - we assume authenticated unless proven otherwise.
       resolve({ available: true, authenticated: true });
     });
   });
