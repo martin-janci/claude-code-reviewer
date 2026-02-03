@@ -78,11 +78,20 @@ export interface SlackConfig {
   channel?: string;
 }
 
+export interface AuditConfig {
+  enabled: boolean;
+  maxEntries: number;
+  filePath: string;
+  includeMetadata: boolean;
+  minSeverity: "info" | "warning" | "error";
+}
+
 export interface FeaturesConfig {
   jira: JiraConfig;
   autoDescription: AutoDescriptionConfig;
   autoLabel: AutoLabelConfig;
   slack: SlackConfig;
+  audit: AuditConfig;
 }
 
 export interface AppConfig {

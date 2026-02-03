@@ -84,6 +84,7 @@ export class Reviewer {
     private logger: Logger,
     private cloneManager?: CloneManager,
     private metrics?: MetricsCollector,
+    private auditLogger?: import("../audit/logger.js").AuditLogger,
   ) {
     // Register feature plugins
     this.features = [

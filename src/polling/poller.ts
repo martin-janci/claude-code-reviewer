@@ -21,6 +21,7 @@ export class Poller {
     private store: StateStore,
     private logger: Logger,
     private cloneManager?: CloneManager,
+    private auditLogger?: import("../audit/logger.js").AuditLogger,
   ) {}
 
   start(): void {
@@ -72,15 +73,18 @@ export class Poller {
   }
 
   private async poll(): Promise<void> {
+    const pollStartTime = Date.now();
     this.logger.info("Polling repos", { count: this.config.repos.length });
 
     // Collect all open PR keys for reconciliation
     const openPRKeys = new Set<string>();
+    let totalPRs = 0;
 
     for (const { owner, repo } of this.config.repos) {
       try {
         const prs = await listOpenPRs(owner, repo);
         this.logger.info("Found open PRs", { repo: `${owner}/${repo}`, count: prs.length });
+        totalPRs += prs.length;
 
         for (const pr of prs) {
           openPRKeys.add(StoreClass.prKey(pr.owner, pr.repo, pr.number));
@@ -91,6 +95,10 @@ export class Poller {
         this.logger.error("Error polling repo", { repo: `${owner}/${repo}`, error: String(err) });
       }
     }
+
+    // Log poll completion
+    const pollDuration = Date.now() - pollStartTime;
+    this.auditLogger?.pollCompleted(this.config.repos.length, totalPRs, pollDuration);
 
     // Reconcile closed PRs — any state entry not in open PR list
     await this.reconcileClosedPRs(openPRKeys);
@@ -110,6 +118,7 @@ export class Poller {
       const removed = cleanupStaleEntries(this.store, this.config.review);
       if (removed > 0) {
         this.logger.info("Cleanup: removed stale state entries", { removed });
+        this.auditLogger?.cleanupExecuted(removed, "stale entries");
       }
     } catch (err) {
       this.logger.error("Error during cleanup", { error: String(err) });

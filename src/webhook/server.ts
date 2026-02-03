@@ -210,6 +210,7 @@ export class WebhookServer {
     private store: StateStore,
     private logger: Logger,
     private metrics?: MetricsCollector,
+    private auditLogger?: import("../audit/logger.js").AuditLogger,
     private healthInfo?: { version: string; startTime: number },
   ) {
     try {
@@ -226,6 +227,10 @@ export class WebhookServer {
       claude: { ...claudeStatus, lastChecked: now },
       github: { ...ghStatus, lastChecked: now },
     };
+
+    // Audit auth status
+    this.auditLogger?.authCheck("claude", claudeStatus.available, claudeStatus.authenticated, claudeStatus.error);
+    this.auditLogger?.authCheck("github", ghStatus.available, ghStatus.authenticated, ghStatus.error);
   }
 
   start(): void {
@@ -424,6 +429,7 @@ export class WebhookServer {
           }
 
           this.logger.info("Webhook: PR event", { pr: `${owner}/${repo}#${prData.number}`, action });
+          this.auditLogger?.webhookReceived(action, owner, repo, prData.number);
           res.writeHead(202);
           res.end("Accepted");
 
