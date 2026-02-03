@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.9.1
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.9.0...v1.9.1)
+
+### 🩹 Fixes
+
+- Improve reliability and observability ([743f4e0](https://github.com/martin-janci/claude-code-reviewer/commit/743f4e0))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.9.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.8.0...v1.9.0)
