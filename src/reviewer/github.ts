@@ -301,9 +301,11 @@ export interface ReviewComment {
   body: string;
 }
 
+export type ReviewEvent = "COMMENT" | "APPROVE" | "REQUEST_CHANGES";
+
 /**
  * Post a PR review using the Pull Request Reviews API.
- * Always uses event: "COMMENT" — the bot should never approve or block.
+ * Supports COMMENT (default), APPROVE, or REQUEST_CHANGES events.
  * Returns the review ID.
  */
 export async function postReview(
@@ -313,11 +315,12 @@ export async function postReview(
   body: string,
   commitId: string,
   comments: ReviewComment[],
+  event: ReviewEvent = "COMMENT",
 ): Promise<string> {
-  console.log(`GitHub API: POST PR review on ${owner}/${repo}#${prNumber} (${comments.length} inline comment(s), ${body.length} chars body, commit=${commitId.slice(0, 7)})`);
+  console.log(`GitHub API: POST PR review on ${owner}/${repo}#${prNumber} (event=${event}, ${comments.length} inline comment(s), ${body.length} chars body, commit=${commitId.slice(0, 7)})`);
   const payload = {
     body,
-    event: "COMMENT",
+    event,
     commit_id: commitId,
     comments: comments.map((c) => ({
       path: c.path,

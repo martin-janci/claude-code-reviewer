@@ -10,7 +10,7 @@ import { jiraPlugin } from "../features/jira-plugin.js";
 import { autoDescriptionPlugin } from "../features/auto-description-plugin.js";
 import { autoLabelPlugin } from "../features/auto-label-plugin.js";
 import { shouldReview } from "../state/decisions.js";
-import { getPRDiff, postReview, postComment, updateComment, deleteComment, findExistingComment, getReviewThreads, resolveReviewThread } from "./github.js";
+import { getPRDiff, postReview, postComment, updateComment, deleteComment, findExistingComment, getReviewThreads, resolveReviewThread, type ReviewEvent } from "./github.js";
 import { reviewDiff } from "./claude.js";
 import { parseCommentableLines, findNearestCommentableLine, filterDiff } from "./diff-parser.js";
 import { formatReviewBody, formatInlineComment, type JiraLink } from "./formatter.js";
@@ -519,12 +519,15 @@ export class Reviewer {
       // Build top-level review body
       const body = formatReviewBody(structured, headSha, tag, orphanFindings, jiraLink);
 
+      // Map verdict to GitHub review event
+      const reviewEvent: ReviewEvent = verdict === "APPROVE" ? "APPROVE" : "COMMENT";
+
       if (this.config.review.dryRun) {
-        log.info("Dry run: skipping PR review post", { phase: "comment_post", inlineComments: inlineComments.length, orphans: orphanFindings.length, verdict });
+        log.info("Dry run: skipping PR review post", { phase: "comment_post", inlineComments: inlineComments.length, orphans: orphanFindings.length, verdict, event: reviewEvent });
       } else {
         try {
-          log.info("Posting PR review", { phase: "comment_post", inlineComments: inlineComments.length, orphans: orphanFindings.length });
-          reviewId = await postReview(owner, repo, prNumber, body, headSha, inlineComments);
+          log.info("Posting PR review", { phase: "comment_post", inlineComments: inlineComments.length, orphans: orphanFindings.length, verdict, event: reviewEvent });
+          reviewId = await postReview(owner, repo, prNumber, body, headSha, inlineComments, reviewEvent);
         } catch (err) {
           this.recordError(owner, repo, prNumber, headSha, err, "comment_post", log);
           return null;
