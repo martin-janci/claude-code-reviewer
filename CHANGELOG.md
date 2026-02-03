@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.12.0
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.11.0...v1.12.0)
+
+### 🚀 Enhancements
+
+- Enhance review formatting with icons and better structure ([#10](https://github.com/martin-janci/claude-code-reviewer/pull/10))
+
+### ❤️ Contributors
+
+- Martin Janči ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.11.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.10.0...v1.11.0)
