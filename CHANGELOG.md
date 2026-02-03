@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.10.0
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.9.1...v1.10.0)
+
+### 🚀 Enhancements
+
+- Enhance /health endpoint with settings and auth status ([#8](https://github.com/martin-janci/claude-code-reviewer/pull/8))
+
+### ❤️ Contributors
+
+- Martin Janči ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.9.1
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.9.0...v1.9.1)
