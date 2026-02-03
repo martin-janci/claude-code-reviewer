@@ -6,6 +6,7 @@ export interface AutofixResult {
   success: boolean;
   commitSha?: string;
   filesChanged: number;
+  fixBranch?: string; // Branch name where fixes were pushed (if not autoApply)
   error?: string;
 }
 
@@ -69,7 +70,10 @@ export async function executeAutofix(
               resolve({ success: false, filesChanged: 0, error: "No changes to commit" });
               return;
             }
-            resolve({ success: true, commitSha, filesChanged });
+
+            // Determine target branch based on autoApply setting
+            const fixBranch = config.features.autofix.autoApply ? null : `autofix/pr-${number}`;
+            resolve({ success: true, commitSha, filesChanged, fixBranch: fixBranch ?? undefined });
           })
           .catch((commitErr) => {
             log.error("Failed to create fix commit", { error: String(commitErr) });
