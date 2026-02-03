@@ -218,7 +218,7 @@ function main(): void {
   }
 
   if (config.mode === "webhook" || config.mode === "both") {
-    webhook = new WebhookServer(config, reviewer, store, logger, metrics, auditLogger, { version: VERSION, startTime: START_TIME });
+    webhook = new WebhookServer(config, reviewer, store, logger, cloneManager, metrics, auditLogger, { version: VERSION, startTime: START_TIME });
     webhook.start();
     auditLogger.serverStarted("WebhookServer", config.webhook.port);
   } else {

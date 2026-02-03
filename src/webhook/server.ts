@@ -6,7 +6,9 @@ import type { Reviewer } from "../reviewer/reviewer.js";
 import type { StateStore } from "../state/store.js";
 import type { MetricsCollector } from "../metrics.js";
 import type { Logger } from "../logger.js";
+import type { CloneManager } from "../clone/manager.js";
 import { getPRDetails, postComment } from "../reviewer/github.js";
+import { executeAutofix } from "../features/autofix.js";
 
 // Note: execFile is used directly for CLI checks (checkClaudeAuth, checkGhAuth).
 // If more endpoints need CLI validation, consider extracting to a shared helper module.
@@ -209,6 +211,7 @@ export class WebhookServer {
     private reviewer: Reviewer,
     private store: StateStore,
     private logger: Logger,
+    private cloneManager?: CloneManager,
     private metrics?: MetricsCollector,
     private auditLogger?: import("../audit/logger.js").AuditLogger,
     private healthInfo?: { version: string; startTime: number },
@@ -586,16 +589,33 @@ export class WebhookServer {
       return;
     }
 
-    // Match comment body against the configured trigger pattern
+    // Match comment body against configured trigger patterns
     const commentBody = payload.comment?.body ?? "";
+    const prNumber = payload.issue.number;
+    const commenter = payload.comment?.user?.login ?? "unknown";
+
+    // Check for /fix trigger
+    if (this.config.features.autofix.enabled) {
+      const autofixRegex = new RegExp(this.config.features.autofix.commandTrigger);
+      if (autofixRegex.test(commentBody)) {
+        this.logger.info("Webhook: /fix trigger", { pr: `${owner}/${repo}#${prNumber}`, commenter });
+        res.writeHead(202);
+        res.end("Accepted");
+
+        this.triggerAutofix(owner, repo, prNumber, commenter).catch((err) => {
+          this.logger.error("Webhook autofix-trigger error", { pr: `${owner}/${repo}#${prNumber}`, error: String(err) });
+        });
+        return;
+      }
+    }
+
+    // Check for /review trigger
     if (!this.commentTriggerRegex.test(commentBody)) {
       res.writeHead(200);
       res.end("No trigger match");
       return;
     }
 
-    const prNumber = payload.issue.number;
-    const commenter = payload.comment?.user?.login ?? "unknown";
     const overrides = parseReviewOverrides(commentBody);
 
     this.logger.info("Webhook: /review trigger", {
@@ -627,6 +647,67 @@ export class WebhookServer {
       } catch (err) {
         this.logger.warn("Failed to post skip reason comment", { pr: `${owner}/${repo}#${prNumber}`, error: String(err) });
       }
+    }
+  }
+
+  private async triggerAutofix(owner: string, repo: string, prNumber: number, commenter: string): Promise<void> {
+    if (!this.cloneManager) {
+      const errorMsg = "🚫 **Autofix unavailable**: Codebase access is disabled. Enable `review.codebaseAccess` in config.yaml.";
+      await postComment(owner, repo, prNumber, errorMsg);
+      this.logger.warn("Autofix requires codebaseAccess", { pr: `${owner}/${repo}#${prNumber}` });
+      return;
+    }
+
+    try {
+      // Post "working on it" comment
+      const workingMsg = `🔧 **Autofix started** by @${commenter}\n\nAnalyzing review findings and applying fixes...`;
+      await postComment(owner, repo, prNumber, workingMsg);
+
+      // Fetch PR details
+      const pr = await getPRDetails(owner, repo, prNumber);
+
+      // Prepare worktree for this PR
+      const worktreePath = await this.cloneManager.prepareForPR(owner, repo, prNumber, pr.headSha);
+
+      // Execute autofix
+      const result = await executeAutofix(this.config, pr, worktreePath, this.logger);
+
+      if (!result.success) {
+        const errorMsg = `❌ **Autofix failed**: ${result.error ?? "Unknown error"}`;
+        await postComment(owner, repo, prNumber, errorMsg);
+        this.logger.error("Autofix failed", { pr: `${owner}/${repo}#${prNumber}`, error: result.error });
+        return;
+      }
+
+      // Push the fix commit if autoApply is enabled
+      if (this.config.features.autofix.autoApply && result.commitSha) {
+        try {
+          execFile("git", ["push", "origin", pr.headBranch], { cwd: worktreePath }, (pushErr) => {
+            if (pushErr) {
+              const pushErrorMsg = `⚠️ **Autofix completed** but push failed: ${String(pushErr)}\n\nCommit SHA: \`${result.commitSha}\`\nPlease push manually from the worktree at: \`${worktreePath}\``;
+              postComment(owner, repo, prNumber, pushErrorMsg);
+              this.logger.error("Autofix push failed", { pr: `${owner}/${repo}#${prNumber}`, error: String(pushErr) });
+            } else {
+              const successMsg = `✅ **Autofix applied successfully**\n\n📦 Commit: [\`${result.commitSha?.slice(0, 7)}\`](../../commit/${result.commitSha})\n📁 Files changed: ${result.filesChanged}\n\nFixes have been pushed to the PR branch.`;
+              postComment(owner, repo, prNumber, successMsg);
+              this.logger.info("Autofix completed and pushed", { pr: `${owner}/${repo}#${prNumber}`, sha: result.commitSha, filesChanged: result.filesChanged });
+            }
+          });
+        } catch (pushErr) {
+          const pushErrorMsg = `⚠️ **Autofix completed** but push failed: ${String(pushErr)}`;
+          await postComment(owner, repo, prNumber, pushErrorMsg);
+          this.logger.error("Autofix push error", { pr: `${owner}/${repo}#${prNumber}`, error: String(pushErr) });
+        }
+      } else {
+        // autoApply is disabled — just report success without pushing
+        const successMsg = `✅ **Autofix completed**\n\n📦 Commit: \`${result.commitSha?.slice(0, 7)}\`\n📁 Files changed: ${result.filesChanged}\n\n⚠️ Auto-apply is disabled. Review the commit in the worktree and push manually if you want to apply these fixes.`;
+        await postComment(owner, repo, prNumber, successMsg);
+        this.logger.info("Autofix completed (not pushed)", { pr: `${owner}/${repo}#${prNumber}`, sha: result.commitSha, filesChanged: result.filesChanged });
+      }
+    } catch (err) {
+      const errorMsg = `❌ **Autofix error**: ${err instanceof Error ? err.message : String(err)}`;
+      await postComment(owner, repo, prNumber, errorMsg);
+      this.logger.error("Autofix execution error", { pr: `${owner}/${repo}#${prNumber}`, error: String(err) });
     }
   }
 

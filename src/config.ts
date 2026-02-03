@@ -105,6 +105,21 @@ export function validateConfig(config: AppConfig): ConfigError[] {
     }
   }
 
+  // Autofix config
+  if (config.features.autofix.enabled) {
+    if (config.features.autofix.maxTurns < 1) {
+      errors.push({ field: "features.autofix.maxTurns", message: "Must be >= 1", severity: "error" });
+    }
+    if (config.features.autofix.timeoutMs < 10_000) {
+      errors.push({ field: "features.autofix.timeoutMs", message: "Must be >= 10000 (10s)", severity: "error" });
+    }
+    try {
+      new RegExp(config.features.autofix.commandTrigger);
+    } catch {
+      errors.push({ field: "features.autofix.commandTrigger", message: `Invalid regex: "${config.features.autofix.commandTrigger}"`, severity: "error" });
+    }
+  }
+
   return errors;
 }
 
@@ -144,6 +159,7 @@ const DEFAULTS: AppConfig = {
     autoLabel: { enabled: false, verdictLabels: {}, severityLabels: {}, diffLabels: [] },
     slack: { enabled: false, webhookUrl: "", notifyOn: ["error", "request_changes"] },
     audit: { enabled: false, maxEntries: 10000, filePath: "data/audit.json", includeMetadata: true, minSeverity: "info" },
+    autofix: { enabled: false, commandTrigger: "^\\s*/fix\\s*$", autoApply: false, maxTurns: 10, timeoutMs: 300_000 },
   },
 };
 
@@ -174,6 +190,7 @@ export function loadConfig(path: string = "config.yaml", allowEmptyRepos = false
       autoLabel: { ...DEFAULTS.features.autoLabel, ...fileFeatures?.autoLabel },
       slack: { ...DEFAULTS.features.slack, ...fileFeatures?.slack },
       audit: { ...DEFAULTS.features.audit, ...fileFeatures?.audit },
+      autofix: { ...DEFAULTS.features.autofix, ...fileFeatures?.autofix },
     },
   };
 

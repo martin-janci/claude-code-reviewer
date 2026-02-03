@@ -86,12 +86,21 @@ export interface AuditConfig {
   minSeverity: "info" | "warning" | "error";
 }
 
+export interface AutofixConfig {
+  enabled: boolean;
+  commandTrigger: string; // Regex for comment that triggers autofix (default: "^\s*/fix\s*$")
+  autoApply: boolean; // If true, push fixes directly; if false, create suggestion commits
+  maxTurns: number; // Max Claude turns for autofix session
+  timeoutMs: number;
+}
+
 export interface FeaturesConfig {
   jira: JiraConfig;
   autoDescription: AutoDescriptionConfig;
   autoLabel: AutoLabelConfig;
   slack: SlackConfig;
   audit: AuditConfig;
+  autofix: AutofixConfig;
 }
 
 export interface AppConfig {
