@@ -84,6 +84,7 @@ export class Reviewer {
     private logger: Logger,
     private cloneManager?: CloneManager,
     private metrics?: MetricsCollector,
+    private auditLogger?: import("../audit/logger.js").AuditLogger,
   ) {
     // Register feature plugins
     this.features = [
@@ -198,13 +199,19 @@ export class Reviewer {
 
   private async doProcessPR(pr: PullRequest, log: Logger): Promise<ProcessPRResult> {
     const { owner, repo, number: prNumber, headSha } = pr;
+    const reviewStartTime = Date.now();
 
     log.info("Phase 1: Initializing state", { phase: "init" });
+
+    // Audit: review started
+    this.auditLogger?.reviewStarted(owner, repo, prNumber, headSha, "reviewer");
 
     // Phase 1: Initialize state and check gating conditions
     const initResult = this.initializeState(pr, log);
     if (!initResult.state) {
       log.info("Phase 1: Gating check failed, skipping review", { phase: "init", reason: initResult.skipReason });
+      // Audit: review skipped
+      this.auditLogger?.reviewSkipped(owner, repo, prNumber, initResult.skipReason ?? "gating check failed", "reviewer");
       return { outcome: "skipped", skipReason: initResult.skipReason };
     }
     const state = initResult.state;
@@ -215,14 +222,19 @@ export class Reviewer {
     const diffResult = await this.fetchDiff(pr, log);
     if (!diffResult) {
       log.info("Phase 2: Diff fetch failed", { phase: "diff_fetch" });
+      // Audit: review failed
+      this.auditLogger?.reviewFailed(owner, repo, prNumber, headSha, "Failed to fetch diff", "diff_fetch", "reviewer");
       return { outcome: "error", error: "Failed to fetch diff" };
     }
 
     log.info("Phase 2: Diff fetched", { phase: "diff_fetch", lines: diffResult.diff.split("\n").length, durationMs: diffResult.diffFetchMs });
 
     // Set status to reviewing (lock)
+    const oldStatus = state.status;
     this.store.setStatus(owner, repo, prNumber, "reviewing");
     log.info("Status set to reviewing", { phase: "reviewing" });
+    // Audit: state changed
+    this.auditLogger?.stateChanged(owner, repo, prNumber, oldStatus, "reviewing", "reviewer");
 
     const phaseStart = Date.now();
     const timings: Partial<PhaseTimings> = { diff_fetch_ms: diffResult.diffFetchMs };
@@ -264,6 +276,8 @@ export class Reviewer {
         skippedAtSha: headSha,
       });
       deleteStatusComment();
+      // Audit: review skipped
+      this.auditLogger?.reviewSkipped(owner, repo, prNumber, `Diff too large (${lineCount} lines)`, "reviewer");
       return { outcome: "skipped", skipReason: `Diff too large (${lineCount} lines, max ${this.config.review.maxDiffLines})` };
     }
 
@@ -299,7 +313,10 @@ export class Reviewer {
       } catch (err) {
         log.error("Phase 3: Worktree preparation failed", { phase: "clone_prepare", error: String(err) });
         this.recordError(owner, repo, prNumber, headSha, err, "clone_prepare", log);
-        return { outcome: "error", error: `Worktree preparation failed: ${err instanceof Error ? err.message : String(err)}` };
+        // Audit: review failed
+        const errMsg = err instanceof Error ? err.message : String(err);
+        this.auditLogger?.reviewFailed(owner, repo, prNumber, headSha, errMsg, "clone_prepare", "reviewer");
+        return { outcome: "error", error: `Worktree preparation failed: ${errMsg}` };
       }
     }
 
@@ -308,6 +325,8 @@ export class Reviewer {
     const reviewResult = await this.runReview(pr, currentState, diffResult.diff, cwd, timings, log);
     if (!reviewResult) {
       log.info("Phase 4: Claude review failed", { phase: "claude_review" });
+      // Audit: review failed
+      this.auditLogger?.reviewFailed(owner, repo, prNumber, headSha, "Claude review execution failed", "claude_review", "reviewer");
       return { outcome: "error", error: "Claude review failed" };
     }
     log.info("Phase 4: Claude review completed", { phase: "claude_review", structured: !!reviewResult.structured, durationMs: timings.claude_review_ms });
@@ -339,9 +358,14 @@ export class Reviewer {
     );
     if (!postResult) {
       log.info("Phase 5: Failed to post review", { phase: "comment_post" });
+      // Audit: review failed
+      this.auditLogger?.reviewFailed(owner, repo, prNumber, headSha, "Failed to post review results", "comment_post", "reviewer");
       return { outcome: "error", error: "Failed to post review" };
     }
     log.info("Phase 5: Review posted", { phase: "comment_post", verdict: postResult.verdict, reviewId: postResult.reviewId, durationMs: timings.comment_post_ms });
+
+    // Audit: comment posted
+    this.auditLogger?.commentPosted(owner, repo, prNumber, postResult.commentId ?? "", postResult.reviewId, "reviewer");
 
     // Run post_review features (auto-labeling)
     log.info("Running post_review features", { phase: "post_review_features" });
@@ -362,6 +386,11 @@ export class Reviewer {
       postResult,
     );
     log.info("Phase 6: Review finalized", { phase: "finalize" });
+
+    // Audit: review completed
+    const reviewDuration = Date.now() - reviewStartTime;
+    const findingsCount = reviewResult.structured?.findings?.length ?? 0;
+    this.auditLogger?.reviewCompleted(owner, repo, prNumber, headSha, postResult.verdict, findingsCount, reviewDuration, "reviewer");
 
     return { outcome: "reviewed", verdict: postResult.verdict };
     } finally {
@@ -416,8 +445,11 @@ export class Reviewer {
         log.info(`Ignoring /review trigger: ${reason}`);
       }
       if (freshState.status !== "skipped" || freshState.skipReason !== "draft") {
+        const oldStatus = freshState.status;
         this.store.update(owner, repo, prNumber, { status: "skipped", skipReason: "draft", skippedAtSha: null });
         this.metrics?.recordSkip("draft");
+        // Audit: state changed
+        this.auditLogger?.stateChanged(owner, repo, prNumber, oldStatus, "skipped", "reviewer");
       }
       return { state: null, skipReason: reason };
     }
@@ -427,8 +459,11 @@ export class Reviewer {
         log.info(`Ignoring /review trigger: ${reason}`);
       }
       if (freshState.status !== "skipped" || freshState.skipReason !== "wip_title") {
+        const oldStatus = freshState.status;
         this.store.update(owner, repo, prNumber, { status: "skipped", skipReason: "wip_title", skippedAtSha: null });
         this.metrics?.recordSkip("wip_title");
+        // Audit: state changed
+        this.auditLogger?.stateChanged(owner, repo, prNumber, oldStatus, "skipped", "reviewer");
       }
       return { state: null, skipReason: reason };
     }
@@ -771,6 +806,10 @@ export class Reviewer {
       findings: result.structured?.findings ?? [],
     }].slice(-maxHistory);
 
+    // Get old status before update
+    const currentState = this.store.get(owner, repo, prNumber);
+    const oldStatus = currentState?.status ?? "reviewing";
+
     this.store.update(owner, repo, prNumber, {
       status: "reviewed",
       reviews,
@@ -786,6 +825,9 @@ export class Reviewer {
       skipDiffLines: null,
       skippedAtSha: null,
     });
+
+    // Audit: state changed to reviewed
+    this.auditLogger?.stateChanged(owner, repo, prNumber, oldStatus, "reviewed", "reviewer");
 
     log.info("Review complete", { verdict });
   }
@@ -825,6 +867,8 @@ export class Reviewer {
     // reviewed + new SHA → changes_pushed
     if (state.status === "reviewed" && state.lastReviewedSha && state.headSha !== state.lastReviewedSha) {
       this.store.setStatus(state.owner, state.repo, state.number, "changes_pushed");
+      // Audit: state changed
+      this.auditLogger?.stateChanged(state.owner, state.repo, state.number, "reviewed", "changes_pushed", "reviewer");
     }
 
     // skipped + condition cleared → pending_review
@@ -843,6 +887,8 @@ export class Reviewer {
           skipDiffLines: null,
           skippedAtSha: null,
         });
+        // Audit: state changed
+        this.auditLogger?.stateChanged(state.owner, state.repo, state.number, "skipped", "pending_review", "reviewer");
       }
     }
   }
@@ -862,6 +908,9 @@ export class Reviewer {
       ? this.config.review.maxRetries
       : currentErrors + 1;
 
+    // Get old status before update
+    const oldStatus = freshState?.status ?? "pending_review";
+
     this.store.update(owner, repo, prNumber, {
       status: "error",
       lastError: {
@@ -873,5 +922,8 @@ export class Reviewer {
       },
       consecutiveErrors,
     });
+
+    // Audit: state changed to error
+    this.auditLogger?.stateChanged(owner, repo, prNumber, oldStatus, "error", "reviewer");
   }
 }

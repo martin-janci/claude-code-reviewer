@@ -210,6 +210,7 @@ export class WebhookServer {
     private store: StateStore,
     private logger: Logger,
     private metrics?: MetricsCollector,
+    private auditLogger?: import("../audit/logger.js").AuditLogger,
     private healthInfo?: { version: string; startTime: number },
   ) {
     try {
@@ -226,6 +227,10 @@ export class WebhookServer {
       claude: { ...claudeStatus, lastChecked: now },
       github: { ...ghStatus, lastChecked: now },
     };
+
+    // Audit auth status
+    this.auditLogger?.authCheck("claude", claudeStatus.available, claudeStatus.authenticated, claudeStatus.error);
+    this.auditLogger?.authCheck("github", ghStatus.available, ghStatus.authenticated, ghStatus.error);
   }
 
   start(): void {
@@ -424,6 +429,7 @@ export class WebhookServer {
           }
 
           this.logger.info("Webhook: PR event", { pr: `${owner}/${repo}#${prData.number}`, action });
+          this.auditLogger?.webhookReceived(action, owner, repo, prData.number);
           res.writeHead(202);
           res.end("Accepted");
 
@@ -503,15 +509,27 @@ export class WebhookServer {
     if (action === "closed") {
       const isMerged = prData.merged === true;
       const now = new Date().toISOString();
-      this.logger.info("Webhook: PR lifecycle", { pr: label, status: isMerged ? "merged" : "closed" });
+      const newStatus = isMerged ? "merged" : "closed";
+      this.logger.info("Webhook: PR lifecycle", { pr: label, status: newStatus });
+
+      // Get old status before update
+      const oldStatus = state?.status ?? "pending_review";
+
       this.store.update(owner, repo, prNumber, {
-        status: isMerged ? "merged" : "closed",
+        status: newStatus,
         closedAt: now,
       });
+
+      // Audit: state changed
+      this.auditLogger?.stateChanged(owner, repo, prNumber, oldStatus, newStatus, "webhook");
     }
 
     if (action === "converted_to_draft") {
       this.logger.info("Webhook: PR converted to draft", { pr: label });
+
+      // Get old status before update
+      const oldStatus = state?.status ?? "pending_review";
+
       if (this.config.review.skipDrafts) {
         this.store.update(owner, repo, prNumber, {
           status: "skipped",
@@ -519,6 +537,8 @@ export class WebhookServer {
           skipReason: "draft",
           skippedAtSha: null,
         });
+        // Audit: state changed to skipped
+        this.auditLogger?.stateChanged(owner, repo, prNumber, oldStatus, "skipped", "webhook");
       } else {
         // skipDrafts is disabled — just update the draft flag without skipping
         this.store.update(owner, repo, prNumber, { isDraft: true });

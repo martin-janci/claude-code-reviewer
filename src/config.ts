@@ -92,6 +92,19 @@ export function validateConfig(config: AppConfig): ConfigError[] {
     errors.push({ field: "features.slack.webhookUrl", message: "Required when slack.enabled is true", severity: "error" });
   }
 
+  // Audit config
+  if (config.features.audit.enabled) {
+    if (config.features.audit.maxEntries < 100) {
+      errors.push({ field: "features.audit.maxEntries", message: "Should be >= 100 for useful history", severity: "warning" });
+    }
+    if (config.features.audit.maxEntries > 100000) {
+      errors.push({ field: "features.audit.maxEntries", message: "Should be <= 100000 to avoid large files", severity: "warning" });
+    }
+    if (!config.features.audit.filePath) {
+      errors.push({ field: "features.audit.filePath", message: "File path is required", severity: "error" });
+    }
+  }
+
   return errors;
 }
 
@@ -130,6 +143,7 @@ const DEFAULTS: AppConfig = {
     autoDescription: { enabled: false, overwriteExisting: false, timeoutMs: 120_000 },
     autoLabel: { enabled: false, verdictLabels: {}, severityLabels: {}, diffLabels: [] },
     slack: { enabled: false, webhookUrl: "", notifyOn: ["error", "request_changes"] },
+    audit: { enabled: false, maxEntries: 10000, filePath: "data/audit.json", includeMetadata: true, minSeverity: "info" },
   },
 };
 
@@ -159,6 +173,7 @@ export function loadConfig(path: string = "config.yaml", allowEmptyRepos = false
       autoDescription: { ...DEFAULTS.features.autoDescription, ...fileFeatures?.autoDescription },
       autoLabel: { ...DEFAULTS.features.autoLabel, ...fileFeatures?.autoLabel },
       slack: { ...DEFAULTS.features.slack, ...fileFeatures?.slack },
+      audit: { ...DEFAULTS.features.audit, ...fileFeatures?.audit },
     },
   };
 

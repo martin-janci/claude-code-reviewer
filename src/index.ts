@@ -11,6 +11,7 @@ import { MetricsCollector } from "./metrics.js";
 import { createRootLogger } from "./logger.js";
 import { setGhToken, getPRDetails } from "./reviewer/github.js";
 import { recoverPendingReviews } from "./startup-recovery.js";
+import { AuditLogger } from "./audit/logger.js";
 
 let VERSION = "unknown";
 try {
@@ -52,6 +53,7 @@ function parseOneShotArg(): OneShotTarget | null {
 async function runOneShot(target: OneShotTarget): Promise<void> {
   const logger = createRootLogger();
   const config = loadConfig("config.yaml", true);
+  const auditLogger = new AuditLogger(config.features.audit);
 
   // Inject the target repo if not already configured
   const hasRepo = config.repos.some(
@@ -77,7 +79,7 @@ async function runOneShot(target: OneShotTarget): Promise<void> {
   }
 
   const metrics = new MetricsCollector();
-  const reviewer = new Reviewer(config, store, logger, cloneManager, metrics);
+  const reviewer = new Reviewer(config, store, logger, cloneManager, metrics, auditLogger);
 
   const key = `${target.owner}/${target.repo}#${target.prNumber}`;
   console.log(`One-shot review: ${key}`);
@@ -95,6 +97,9 @@ async function runOneShot(target: OneShotTarget): Promise<void> {
   pr.forceReview = true;
 
   await reviewer.processPR(pr);
+
+  // Flush audit log before exit
+  auditLogger.stop();
 
   // Read final state to determine exit code
   const state = store.get(target.owner, target.repo, target.prNumber);
@@ -165,6 +170,10 @@ function main(): void {
   const logger = createRootLogger();
   const config = loadConfig();
   const store = new StateStore();
+  const auditLogger = new AuditLogger(config.features.audit);
+
+  // Log config loaded
+  auditLogger.configLoaded(config.mode, config.repos.length);
 
   let cloneManager: CloneManager | undefined;
   if (config.review.codebaseAccess) {
@@ -186,7 +195,7 @@ function main(): void {
   }
 
   const metrics = new MetricsCollector();
-  const reviewer = new Reviewer(config, store, logger, cloneManager, metrics);
+  const reviewer = new Reviewer(config, store, logger, cloneManager, metrics, auditLogger);
 
   // Pass GitHub token to gh CLI wrapper
   if (config.github.token) {
@@ -203,16 +212,19 @@ function main(): void {
   }
 
   if (config.mode === "polling" || config.mode === "both") {
-    poller = new Poller(config, reviewer, store, logger, cloneManager);
+    poller = new Poller(config, reviewer, store, logger, cloneManager, auditLogger);
     poller.start();
+    auditLogger.serverStarted("Poller");
   }
 
   if (config.mode === "webhook" || config.mode === "both") {
-    webhook = new WebhookServer(config, reviewer, store, logger, metrics, { version: VERSION, startTime: START_TIME });
+    webhook = new WebhookServer(config, reviewer, store, logger, metrics, auditLogger, { version: VERSION, startTime: START_TIME });
     webhook.start();
+    auditLogger.serverStarted("WebhookServer", config.webhook.port);
   } else {
     // In polling-only mode, start a minimal health server so Docker health checks pass
     healthServer = startHealthServer(config.webhook.port, metrics, store);
+    auditLogger.serverStarted("HealthServer", config.webhook.port);
   }
 
   // Startup recovery: check for PRs that need attention after restart
@@ -246,6 +258,10 @@ function main(): void {
         logger.warn("Exiting with in-flight reviews still running", { inflight: reviewer.inflight });
       }
     }
+
+    // Flush final audit entries before exit
+    auditLogger.stop();
+    logger.info("Audit log flushed");
 
     process.exit(0);
   };

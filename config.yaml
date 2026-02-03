@@ -78,3 +78,11 @@ features:
       - error
       - request_changes
     # channel: ""              # optional: override channel (default uses webhook's configured channel)
+
+  # Audit logging for tracking important operations
+  audit:
+    enabled: false             # disabled by default (opt-in like other features)
+    maxEntries: 10000          # rolling window size (keep last N entries)
+    filePath: data/audit.json  # path to audit log file
+    includeMetadata: true      # include detailed metadata in entries
+    minSeverity: info          # minimum severity to log: info, warning, error
