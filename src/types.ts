@@ -283,3 +283,12 @@ export interface ReviewResult {
   success: boolean;
   structured?: StructuredReview;
 }
+
+export type ProcessPROutcome = "reviewed" | "skipped" | "error";
+
+export interface ProcessPRResult {
+  outcome: ProcessPROutcome;
+  skipReason?: string; // Human-readable reason when skipped
+  verdict?: ReviewVerdict; // When reviewed successfully
+  error?: string; // When error occurred
+}

@@ -1,4 +1,4 @@
-import type { AppConfig, PullRequest, ReviewVerdict, ReviewFinding, ErrorPhase, ErrorKind, PRState, ReviewResult } from "../types.js";
+import type { AppConfig, PullRequest, ReviewVerdict, ReviewFinding, ErrorPhase, ErrorKind, PRState, ReviewResult, ProcessPRResult } from "../types.js";
 import type { StateStore } from "../state/store.js";
 import type { CloneManager } from "../clone/manager.js";
 import type { MetricsCollector, PhaseTimings } from "../metrics.js";
@@ -50,8 +50,9 @@ function classifyError(err: unknown, phase: ErrorPhase): ErrorKind {
   // Permanent: authentication failures
   if (/401|unauthorized|authentication/i.test(message)) return "permanent";
 
-  // Permanent: rate limit exceeded (often requires manual intervention)
-  if (/rate limit/i.test(message)) return "permanent";
+  // Transient: rate limit exceeded (will recover after cooldown)
+  // Note: GitHub rate limits reset after 1 hour, so retries will eventually succeed
+  if (/rate limit/i.test(message)) return "transient";
 
   // Default: transient (timeout, network issues, temporary service errors)
   return "transient";
@@ -96,8 +97,9 @@ export class Reviewer {
   /**
    * Acquire a slot in the concurrency pool.
    * Returns a release function to call when done.
+   * Throws if wait exceeds timeout (default 10 minutes).
    */
-  private async acquireConcurrencySlot(log: Logger): Promise<() => void> {
+  private async acquireConcurrencySlot(log: Logger, timeoutMs: number = 600_000): Promise<() => void> {
     const maxConcurrent = this.config.review.maxConcurrentReviews;
 
     if (this.activeReviews < maxConcurrent) {
@@ -106,11 +108,35 @@ export class Reviewer {
       return () => this.releaseConcurrencySlot(log);
     }
 
-    // Wait in queue
-    log.info("Waiting for concurrency slot", { active: this.activeReviews, max: maxConcurrent, queued: this.concurrencyQueue.length });
-    await new Promise<void>((resolve) => {
-      this.concurrencyQueue.push(resolve);
+    // Wait in queue with timeout
+    log.info("Waiting for concurrency slot", { active: this.activeReviews, max: maxConcurrent, queued: this.concurrencyQueue.length, timeoutMs });
+
+    let resolver: (() => void) | null = null;
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+
+    const waitPromise = new Promise<"resolved" | "timeout">((resolve) => {
+      resolver = () => resolve("resolved");
+      this.concurrencyQueue.push(resolver);
+
+      timeoutHandle = setTimeout(() => {
+        // Remove from queue if still waiting
+        const idx = this.concurrencyQueue.indexOf(resolver!);
+        if (idx !== -1) {
+          this.concurrencyQueue.splice(idx, 1);
+        }
+        resolve("timeout");
+      }, timeoutMs);
     });
+
+    const result = await waitPromise;
+
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+
+    if (result === "timeout") {
+      log.error("Concurrency slot timeout — queue may be stuck", { active: this.activeReviews, queued: this.concurrencyQueue.length });
+      throw new Error(`Timed out waiting for concurrency slot after ${timeoutMs}ms`);
+    }
+
     this.activeReviews++;
     log.debug("Acquired concurrency slot after wait", { active: this.activeReviews, max: maxConcurrent });
     return () => this.releaseConcurrencySlot(log);
@@ -135,7 +161,7 @@ export class Reviewer {
     return this.inflightCount;
   }
 
-  async processPR(pr: PullRequest): Promise<void> {
+  async processPR(pr: PullRequest): Promise<ProcessPRResult> {
     const key = `${pr.owner}/${pr.repo}#${pr.number}`;
     const traceId = Math.random().toString(36).slice(2, 10);
     const log = this.logger.child({ pr: key, traceId });
@@ -160,7 +186,7 @@ export class Reviewer {
     log.info("Processing PR", { sha: pr.headSha.slice(0, 7), inflight: this.inflightCount, maxConcurrent: this.config.review.maxConcurrentReviews });
 
     try {
-      await this.doProcessPR(pr, log);
+      return await this.doProcessPR(pr, log);
     } finally {
       this.inflightCount--;
       this.locks.delete(key);
@@ -170,17 +196,18 @@ export class Reviewer {
     }
   }
 
-  private async doProcessPR(pr: PullRequest, log: Logger): Promise<void> {
+  private async doProcessPR(pr: PullRequest, log: Logger): Promise<ProcessPRResult> {
     const { owner, repo, number: prNumber, headSha } = pr;
 
     log.info("Phase 1: Initializing state", { phase: "init" });
 
     // Phase 1: Initialize state and check gating conditions
-    const state = this.initializeState(pr, log);
-    if (!state) {
-      log.info("Phase 1: Gating check failed, skipping review", { phase: "init" });
-      return;
+    const initResult = this.initializeState(pr, log);
+    if (!initResult.state) {
+      log.info("Phase 1: Gating check failed, skipping review", { phase: "init", reason: initResult.skipReason });
+      return { outcome: "skipped", skipReason: initResult.skipReason };
     }
+    const state = initResult.state;
 
     log.info("Phase 2: Fetching diff", { phase: "diff_fetch" });
 
@@ -188,7 +215,7 @@ export class Reviewer {
     const diffResult = await this.fetchDiff(pr, log);
     if (!diffResult) {
       log.info("Phase 2: Diff fetch failed", { phase: "diff_fetch" });
-      return;
+      return { outcome: "error", error: "Failed to fetch diff" };
     }
 
     log.info("Phase 2: Diff fetched", { phase: "diff_fetch", lines: diffResult.diff.split("\n").length, durationMs: diffResult.diffFetchMs });
@@ -237,7 +264,7 @@ export class Reviewer {
         skippedAtSha: headSha,
       });
       deleteStatusComment();
-      return;
+      return { outcome: "skipped", skipReason: `Diff too large (${lineCount} lines, max ${this.config.review.maxDiffLines})` };
     }
 
     try {
@@ -272,7 +299,7 @@ export class Reviewer {
       } catch (err) {
         log.error("Phase 3: Worktree preparation failed", { phase: "clone_prepare", error: String(err) });
         this.recordError(owner, repo, prNumber, headSha, err, "clone_prepare", log);
-        return;
+        return { outcome: "error", error: `Worktree preparation failed: ${err instanceof Error ? err.message : String(err)}` };
       }
     }
 
@@ -281,7 +308,7 @@ export class Reviewer {
     const reviewResult = await this.runReview(pr, currentState, diffResult.diff, cwd, timings, log);
     if (!reviewResult) {
       log.info("Phase 4: Claude review failed", { phase: "claude_review" });
-      return;
+      return { outcome: "error", error: "Claude review failed" };
     }
     log.info("Phase 4: Claude review completed", { phase: "claude_review", structured: !!reviewResult.structured, durationMs: timings.claude_review_ms });
 
@@ -312,7 +339,7 @@ export class Reviewer {
     );
     if (!postResult) {
       log.info("Phase 5: Failed to post review", { phase: "comment_post" });
-      return;
+      return { outcome: "error", error: "Failed to post review" };
     }
     log.info("Phase 5: Review posted", { phase: "comment_post", verdict: postResult.verdict, reviewId: postResult.reviewId, durationMs: timings.comment_post_ms });
 
@@ -335,6 +362,8 @@ export class Reviewer {
       postResult,
     );
     log.info("Phase 6: Review finalized", { phase: "finalize" });
+
+    return { outcome: "reviewed", verdict: postResult.verdict };
     } finally {
       // Always delete the status comment when review finishes (success or error)
       deleteStatusComment();
@@ -343,9 +372,9 @@ export class Reviewer {
 
   /**
    * Phase 1: Initialize state, sync metadata, check gating conditions.
-   * Returns null if PR should not be reviewed.
+   * Returns { state, skipReason } - state is null if PR should not be reviewed.
    */
-  private initializeState(pr: PullRequest, log: Logger): PRState | null {
+  private initializeState(pr: PullRequest, log: Logger): { state: PRState | null; skipReason?: string } {
     const { owner, repo, number: prNumber, title, headSha, isDraft, baseBranch, headBranch } = pr;
 
     // Get or create state entry
@@ -382,35 +411,37 @@ export class Reviewer {
 
     // Check skip conditions
     if (this.config.review.skipDrafts && freshState.isDraft) {
+      const reason = "PR is a draft (skipDrafts is enabled)";
       if (pr.forceReview) {
-        log.info("Ignoring /review trigger: PR is a draft (skipDrafts is enabled)");
+        log.info(`Ignoring /review trigger: ${reason}`);
       }
       if (freshState.status !== "skipped" || freshState.skipReason !== "draft") {
         this.store.update(owner, repo, prNumber, { status: "skipped", skipReason: "draft", skippedAtSha: null });
         this.metrics?.recordSkip("draft");
       }
-      return null;
+      return { state: null, skipReason: reason };
     }
     if (this.config.review.skipWip && freshState.title.toLowerCase().startsWith("wip")) {
+      const reason = "PR title starts with WIP (skipWip is enabled)";
       if (pr.forceReview) {
-        log.info("Ignoring /review trigger: PR title starts with WIP (skipWip is enabled)");
+        log.info(`Ignoring /review trigger: ${reason}`);
       }
       if (freshState.status !== "skipped" || freshState.skipReason !== "wip_title") {
         this.store.update(owner, repo, prNumber, { status: "skipped", skipReason: "wip_title", skippedAtSha: null });
         this.metrics?.recordSkip("wip_title");
       }
-      return null;
+      return { state: null, skipReason: reason };
     }
 
     // Check if we should review
     const decision = shouldReview(freshState, this.config.review, pr.forceReview);
     if (!decision.shouldReview) {
       log.info("Skipping PR", { reason: decision.reason, status: freshState.status });
-      return null;
+      return { state: null, skipReason: decision.reason };
     }
 
     log.info("Reviewing PR", { sha: headSha.slice(0, 7), reason: decision.reason });
-    return freshState;
+    return { state: freshState };
   }
 
   /**

@@ -5,7 +5,7 @@ import type { Reviewer } from "../reviewer/reviewer.js";
 import type { StateStore } from "../state/store.js";
 import type { MetricsCollector } from "../metrics.js";
 import type { Logger } from "../logger.js";
-import { getPRDetails } from "../reviewer/github.js";
+import { getPRDetails, postComment } from "../reviewer/github.js";
 
 function verifySignature(secret: string, payload: Buffer, signature: string): boolean {
   const expected = "sha256=" + createHmac("sha256", secret).update(payload).digest("hex");
@@ -452,7 +452,18 @@ export class WebhookServer {
     const pr = await getPRDetails(owner, repo, prNumber);
     pr.forceReview = true;
     pr.overrides = overrides;
-    await this.reviewer.processPR(pr);
+    const result = await this.reviewer.processPR(pr);
+
+    // If the review was skipped, post a reply comment explaining why
+    if (result.outcome === "skipped" && result.skipReason) {
+      try {
+        const skipMessage = `⏭️ **Review skipped**: ${result.skipReason}`;
+        await postComment(owner, repo, prNumber, skipMessage);
+        this.logger.info("Posted skip reason comment", { pr: `${owner}/${repo}#${prNumber}`, reason: result.skipReason });
+      } catch (err) {
+        this.logger.warn("Failed to post skip reason comment", { pr: `${owner}/${repo}#${prNumber}`, error: String(err) });
+      }
+    }
   }
 
   stop(): Promise<void> {

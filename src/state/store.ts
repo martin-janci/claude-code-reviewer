@@ -1,15 +1,87 @@
-import { readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync, openSync, closeSync, existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import type { PRState, PRStatus, StateFileV1, StateFileV2 } from "../types.js";
 
+/**
+ * Simple file-based lock using mkdir (atomic on all platforms).
+ * Lock is held via a .lock directory — mkdir fails if exists.
+ */
+class FileLock {
+  private lockPath: string;
+  private acquired = false;
+  private readonly staleMs = 60_000; // Consider lock stale after 60s
+
+  constructor(filePath: string) {
+    this.lockPath = `${filePath}.lock`;
+  }
+
+  acquire(timeoutMs: number = 5000): boolean {
+    const deadline = Date.now() + timeoutMs;
+    const spinMs = 50;
+
+    while (Date.now() < deadline) {
+      // Check for stale lock
+      if (existsSync(this.lockPath)) {
+        try {
+          const stat = require("node:fs").statSync(this.lockPath);
+          if (Date.now() - stat.mtimeMs > this.staleMs) {
+            // Stale lock — remove it
+            try { require("node:fs").rmdirSync(this.lockPath); } catch {}
+          }
+        } catch {}
+      }
+
+      try {
+        mkdirSync(this.lockPath);
+        this.acquired = true;
+        return true;
+      } catch {
+        // Lock held by another process — spin wait
+        const waitUntil = Date.now() + spinMs;
+        while (Date.now() < waitUntil) {
+          // Busy wait (sync)
+        }
+      }
+    }
+
+    return false;
+  }
+
+  release(): void {
+    if (this.acquired) {
+      try {
+        require("node:fs").rmdirSync(this.lockPath);
+      } catch {}
+      this.acquired = false;
+    }
+  }
+}
+
 export class StateStore {
   private state: StateFileV2 = { version: 2, prs: {} };
   private filePath: string;
+  private lock: FileLock;
 
   constructor(filePath: string = "data/state.json") {
     this.filePath = filePath;
+    this.lock = new FileLock(filePath);
     this.load();
+  }
+
+  /**
+   * Execute a function with exclusive file lock.
+   * Throws if lock cannot be acquired within timeout.
+   */
+  private withLock<T>(fn: () => T): T {
+    if (!this.lock.acquire(5000)) {
+      throw new Error(`Failed to acquire state file lock after 5s — another process may be stuck`);
+    }
+    try {
+      return fn();
+    } finally {
+      this.lock.release();
+    }
   }
 
   private load(): void {
@@ -141,13 +213,15 @@ export class StateStore {
   }
 
   private save(): void {
-    const dir = dirname(this.filePath);
-    mkdirSync(dir, { recursive: true });
+    this.withLock(() => {
+      const dir = dirname(this.filePath);
+      mkdirSync(dir, { recursive: true });
 
-    // Atomic write: write to temp file then rename
-    const tmpPath = join(dir, `.state-${randomUUID()}.tmp`);
-    writeFileSync(tmpPath, JSON.stringify(this.state, null, 2));
-    renameSync(tmpPath, this.filePath);
+      // Atomic write: write to temp file then rename
+      const tmpPath = join(dir, `.state-${randomUUID()}.tmp`);
+      writeFileSync(tmpPath, JSON.stringify(this.state, null, 2));
+      renameSync(tmpPath, this.filePath);
+    });
   }
 
   static prKey(owner: string, repo: string, number: number): string {

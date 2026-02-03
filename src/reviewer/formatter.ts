@@ -88,7 +88,9 @@ export function formatReviewBody(
       parts.push(`### ${pluralizeLabel(label)}`);
       for (const f of findings) {
         const blocking = f.blocking ? " (blocking)" : "";
-        parts.push(`- \`${f.path}:${f.line}\` — ${truncate(f.body, 120)}${blocking}`);
+        const isNew = f.isNew ? " 🆕" : "";
+        const security = f.securityRelated ? " 🔐" : "";
+        parts.push(`- \`${f.path}:${f.line}\` — ${truncate(f.body, 120)}${blocking}${security}${isNew}`);
       }
       parts.push("");
     }
@@ -102,7 +104,9 @@ export function formatReviewBody(
     parts.push(`### Additional Findings`);
     parts.push("");
     for (const f of orphanFindings) {
-      parts.push(`**${f.severity}${f.blocking ? " (blocking)" : ""}:** \`${f.path}:${f.line}\``);
+      const isNew = f.isNew ? " 🆕" : "";
+      const security = f.securityRelated ? " 🔐" : "";
+      parts.push(`**${f.severity}${f.blocking ? " (blocking)" : ""}${security}${isNew}:** \`${f.path}:${f.line}\``);
       parts.push(f.body);
       parts.push("");
     }
@@ -136,7 +140,9 @@ export function formatReviewBody(
  */
 export function formatInlineComment(finding: ReviewFinding): string {
   const blockingStr = finding.blocking ? " (blocking)" : " (non-blocking)";
-  return `**${finding.severity}${blockingStr}:** ${finding.body}`;
+  const isNew = finding.isNew ? " 🆕" : "";
+  const security = finding.securityRelated ? " 🔐" : "";
+  return `**${finding.severity}${blockingStr}${security}${isNew}:** ${finding.body}`;
 }
 
 function countBySeverity(findings: ReviewFinding[]): Record<string, number> {
