@@ -1,7 +1,6 @@
 import { createServer, type Server } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import type { AppConfig, PullRequest, ReviewOverrides } from "../types.js";
 import type { Reviewer } from "../reviewer/reviewer.js";
 import type { StateStore } from "../state/store.js";
@@ -9,7 +8,13 @@ import type { MetricsCollector } from "../metrics.js";
 import type { Logger } from "../logger.js";
 import { getPRDetails, postComment } from "../reviewer/github.js";
 
-const execFileAsync = promisify(execFile);
+interface AuthStatus {
+  available: boolean;
+  authenticated: boolean;
+  username?: string;
+  error?: string;
+  lastChecked: number;
+}
 
 function verifySignature(secret: string, payload: Buffer, signature: string): boolean {
   const expected = "sha256=" + createHmac("sha256", secret).update(payload).digest("hex");
@@ -82,48 +87,77 @@ function sanitizeConfig(config: AppConfig): Record<string, unknown> {
   };
 }
 
-async function checkClaudeAuth(): Promise<{ available: boolean; authenticated: boolean; error?: string }> {
-  try {
-    // Check if claude CLI is available
-    const { stdout } = await execFileAsync("which", ["claude"], { timeout: 2000 });
-    if (!stdout.trim()) {
-      return { available: false, authenticated: false, error: "claude CLI not found in PATH" };
-    }
-
-    // Try to run a simple command to verify authentication
-    // The 'code' command should fail if not authenticated
-    await execFileAsync("claude", ["code", "--help"], { timeout: 3000 });
-    return { available: true, authenticated: true };
-  } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    // If claude is available but command fails, it might be auth issue
-    if (errMsg.includes("not authenticated") || errMsg.includes("login")) {
-      return { available: true, authenticated: false, error: "Not authenticated" };
-    }
-    return { available: false, authenticated: false, error: errMsg.slice(0, 100) };
-  }
+/**
+ * Check Claude CLI availability and auth status.
+ * Uses direct CLI invocation (no `which`) for Docker compatibility.
+ * Note: `--version` doesn't require auth, so this only confirms availability.
+ * Auth detection is best-effort via error message heuristics.
+ */
+function checkClaudeAuth(): Promise<Omit<AuthStatus, "lastChecked">> {
+  return new Promise((resolve) => {
+    execFile("claude", ["--version"], { timeout: 3000 }, (err, stdout, stderr) => {
+      if (err) {
+        const errMsg = err.message + stderr;
+        // ENOENT = command not found
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+          resolve({ available: false, authenticated: false, error: "claude CLI not found" });
+          return;
+        }
+        // Heuristic: error messages containing these strings suggest auth issues
+        // This is fragile but claude CLI has no dedicated auth status command
+        if (errMsg.includes("not authenticated") || errMsg.includes("login required")) {
+          resolve({ available: true, authenticated: false, error: "Not authenticated" });
+          return;
+        }
+        resolve({ available: false, authenticated: false, error: errMsg.slice(0, 100) });
+        return;
+      }
+      // If --version succeeds, CLI is available. Auth status is best-effort unknown.
+      // We assume authenticated unless proven otherwise by actual usage.
+      resolve({ available: true, authenticated: true });
+    });
+  });
 }
 
-async function checkGhAuth(): Promise<{ available: boolean; authenticated: boolean; username?: string; error?: string }> {
-  try {
-    // Check if gh CLI is available and authenticated
-    const { stdout } = await execFileAsync("gh", ["auth", "status"], { timeout: 2000 });
-    const usernameMatch = stdout.match(/Logged in to github\.com as (\S+)/);
-    return {
-      available: true,
-      authenticated: true,
-      username: usernameMatch?.[1],
-    };
-  } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    return { available: false, authenticated: false, error: errMsg.slice(0, 100) };
-  }
+/**
+ * Check GitHub CLI availability and auth status.
+ * Uses `gh auth status` which reliably reports auth state.
+ */
+function checkGhAuth(): Promise<Omit<AuthStatus, "lastChecked">> {
+  return new Promise((resolve) => {
+    execFile("gh", ["auth", "status"], { timeout: 3000 }, (err, stdout, stderr) => {
+      if (err) {
+        // ENOENT = command not found
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+          resolve({ available: false, authenticated: false, error: "gh CLI not found" });
+          return;
+        }
+        // gh auth status exits non-zero if not authenticated
+        const output = stdout + stderr;
+        resolve({ available: true, authenticated: false, error: output.slice(0, 100) });
+        return;
+      }
+      const usernameMatch = stdout.match(/Logged in to github\.com account (\S+)|as (\S+)/);
+      resolve({
+        available: true,
+        authenticated: true,
+        username: usernameMatch?.[1] || usernameMatch?.[2],
+      });
+    });
+  });
 }
 
 function getImportantSettings(config: AppConfig): Record<string, unknown> {
   return {
     mode: config.mode,
     repos: config.repos.map(r => `${r.owner}/${r.repo}`),
+    polling: {
+      intervalSeconds: config.polling.intervalSeconds,
+    },
+    webhook: {
+      port: config.webhook.port,
+      path: config.webhook.path,
+    },
     review: {
       maxDiffLines: config.review.maxDiffLines,
       skipDrafts: config.review.skipDrafts,
@@ -155,6 +189,9 @@ const CONDITIONAL_ACTIONS = ["edited"];
 export class WebhookServer {
   private server: Server | null = null;
   private commentTriggerRegex: RegExp;
+  private authCache: { claude: AuthStatus; github: AuthStatus } | null = null;
+  private authRefreshInterval: NodeJS.Timeout | null = null;
+  private readonly AUTH_CACHE_TTL_MS = 60_000; // 60 seconds
 
   constructor(
     private config: AppConfig,
@@ -171,36 +208,49 @@ export class WebhookServer {
     }
   }
 
+  private async refreshAuthCache(): Promise<void> {
+    const [claudeStatus, ghStatus] = await Promise.all([checkClaudeAuth(), checkGhAuth()]);
+    const now = Date.now();
+    this.authCache = {
+      claude: { ...claudeStatus, lastChecked: now },
+      github: { ...ghStatus, lastChecked: now },
+    };
+  }
+
   start(): void {
     const { port, path, secret } = this.config.webhook;
 
+    // Initial auth check (non-blocking)
+    this.refreshAuthCache().catch((err) => {
+      this.logger.warn("Initial auth check failed", { error: String(err) });
+    });
+
+    // Refresh auth cache every 60 seconds
+    this.authRefreshInterval = setInterval(() => {
+      this.refreshAuthCache().catch((err) => {
+        this.logger.warn("Auth cache refresh failed", { error: String(err) });
+      });
+    }, this.AUTH_CACHE_TTL_MS);
+
     this.server = createServer((req, res) => {
-      // Health check
+      // Health check - returns immediately with cached auth status
       if (req.method === "GET" && req.url === "/health") {
         const info = this.healthInfo;
         const baseHealth = info
           ? { status: "ok", version: info.version, uptime: Math.floor((Date.now() - info.startTime) / 1000) }
           : { status: "ok" };
 
-        // Async auth checks - run in background, don't block response
-        Promise.all([checkClaudeAuth(), checkGhAuth()])
-          .then(([claudeStatus, ghStatus]) => {
-            const enhancedHealth = {
-              ...baseHealth,
-              settings: getImportantSettings(this.config),
-              auth: {
-                claude: claudeStatus,
-                github: ghStatus,
-              },
-            };
-            res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify(enhancedHealth, null, 2));
-          })
-          .catch(() => {
-            // Fallback to basic health if checks fail
-            res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify(baseHealth));
-          });
+        const enhancedHealth = {
+          ...baseHealth,
+          settings: getImportantSettings(this.config),
+          auth: this.authCache ?? {
+            claude: { available: false, authenticated: false, error: "Not yet checked", lastChecked: 0 },
+            github: { available: false, authenticated: false, error: "Not yet checked", lastChecked: 0 },
+          },
+        };
+
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(enhancedHealth, null, 2));
         return;
       }
 
@@ -551,6 +601,12 @@ export class WebhookServer {
 
   stop(): Promise<void> {
     return new Promise((resolve) => {
+      // Clear auth refresh interval
+      if (this.authRefreshInterval) {
+        clearInterval(this.authRefreshInterval);
+        this.authRefreshInterval = null;
+      }
+
       if (this.server) {
         this.server.close(() => {
           this.logger.info("Webhook server stopped");
