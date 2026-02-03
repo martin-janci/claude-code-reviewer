@@ -162,6 +162,8 @@ mkdir -p .claude
 cp -r ~/.claude/* .claude/
 ```
 
+**Important:** The docker-compose.yaml mounts Claude credentials to both `/root/.claude` and `/home/node/.claude`. This is necessary because some operations (git, gh CLI) may run as root while the Node.js app runs as the node user. Both mounts ensure authentication works for all operations.
+
 5. **Start the service:**
 ```bash
 docker-compose up -d
@@ -181,6 +183,33 @@ Claude Code PR Reviewer v1.13.0 starting
 ```bash
 curl http://localhost:3000/health
 ```
+
+**Alternative: Bind mounts (Synology, custom setups)**
+
+If you prefer bind mounts to named volumes (e.g., on Synology NAS), use this docker-compose.yaml configuration:
+
+```yaml
+services:
+  reviewer:
+    image: registry.rlt.sk/claude-code-reviewer:latest
+    env_file:
+      - /your/path/to/secrets/claude-code-review.env
+    volumes:
+      # Mount Claude credentials to BOTH locations
+      - /your/path/to/.claude:/root/.claude
+      - /your/path/to/.claude:/home/node/.claude
+      # Mount config and data
+      - /your/path/to/config.yaml:/app/config.yaml:ro
+      - /your/path/to/data:/app/data
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+```
+
+**Why mount to both `/root/.claude` and `/home/node/.claude`?**
+- Git clone and gh commands run as root
+- Node.js app and Claude CLI run as node user
+- Both users need access to authentication credentials
 
 ---
 
@@ -523,14 +552,42 @@ gh auth status
 
 ### Issue: "Claude authentication failed"
 
-**Cause:** Claude CLI not authenticated
+**Cause:** Claude CLI not authenticated or incorrect volume mounts
 
 **Solution:**
+
+1. **Authenticate Claude CLI locally:**
 ```bash
 claude auth login
 ```
 
-For Docker, ensure `.claude/` directory is mounted with credentials.
+2. **For Docker Compose, verify volume mounts:**
+
+Check that your docker-compose.yaml includes BOTH mount points:
+```yaml
+volumes:
+  - claude-auth:/root/.claude
+  - claude-auth:/home/node/.claude
+```
+
+**Why both?** Some operations (git, gh CLI) run as root, while the Node.js app runs as the node user. Both mounts ensure authentication works for all operations.
+
+3. **Verify credentials are copied:**
+```bash
+# Check your local .claude directory exists
+ls -la ~/.claude/
+
+# For bind mounts (Synology, custom setups)
+ls -la /your/path/to/.claude/
+```
+
+4. **Check container can access credentials:**
+```bash
+docker-compose exec reviewer ls -la /root/.claude/
+docker-compose exec reviewer ls -la /home/node/.claude/
+```
+
+Both paths should show authentication files.
 
 ### Issue: "Webhook not receiving events"
 
