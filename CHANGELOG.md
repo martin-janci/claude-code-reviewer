@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.8.0
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.7.4...v1.8.0)
+
+### 🚀 Enhancements
+
+- Add observability and review quality improvements (Phase 1 & 2) ([8da9e53](https://github.com/martin-janci/claude-code-reviewer/commit/8da9e53))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.7.4
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.5.0...v1.7.4)
