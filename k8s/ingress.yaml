@@ -1,0 +1,27 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: claude-reviewer
+  namespace: claude-reviewer
+  annotations:
+    # Adjust these based on your ingress controller
+    # nginx.ingress.kubernetes.io/rewrite-target: /
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+    # nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx  # Change to your ingress class
+  # tls:
+  # - hosts:
+  #   - claude-reviewer.your-domain.com
+  #   secretName: claude-reviewer-tls
+  rules:
+  - host: claude-reviewer.your-domain.com  # Change this
+    http:
+      paths:
+      - path: /webhook
+        pathType: Prefix
+        backend:
+          service:
+            name: claude-reviewer
+            port:
+              number: 3000

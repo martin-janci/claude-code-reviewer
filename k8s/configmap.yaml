@@ -1,0 +1,86 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: claude-reviewer-config
+  namespace: claude-reviewer
+data:
+  config.yaml: |
+    mode: webhook  # "polling" | "webhook" | "both"
+
+    polling:
+      intervalSeconds: 300
+
+    webhook:
+      port: 3000
+      path: /webhook
+
+    repos:
+      - owner: your-org
+        repo: your-repo
+      # Add more repos here
+
+    review:
+      maxDiffLines: 5000
+      skipDrafts: true
+      skipWip: true
+      commentTag: "<!-- claude-code-review -->"
+      maxRetries: 3
+      debouncePeriodSeconds: 60
+      staleClosedDays: 7
+      staleErrorDays: 30
+      commentVerifyIntervalMinutes: 60
+      maxReviewHistory: 20
+      commentTrigger: "^\\s*/review\\s*$"
+      codebaseAccess: true
+      cloneDir: data/clones
+      cloneTimeoutMs: 120000
+      reviewTimeoutMs: 600000
+      reviewMaxTurns: 30
+      staleWorktreeMinutes: 60
+      excludePaths: []
+      dryRun: false
+      maxConcurrentReviews: 3
+      confidenceThreshold: 0
+      securityPaths:
+        - "**/auth/**"
+        - "**/crypto/**"
+        - "**/security/**"
+        - "**/*.env*"
+        - "**/secrets/**"
+
+    features:
+      jira:
+        enabled: false
+        baseUrl: ""
+        projectKeys: []
+
+      autoDescription:
+        enabled: false
+        overwriteExisting: false
+        timeoutMs: 120000
+
+      autoLabel:
+        enabled: false
+        verdictLabels: {}
+        severityLabels: {}
+        diffLabels: []
+
+      slack:
+        enabled: false
+        notifyOn:
+          - error
+          - request_changes
+
+      audit:
+        enabled: true
+        maxEntries: 10000
+        filePath: data/audit.json
+        includeMetadata: true
+        minSeverity: info
+
+      autofix:
+        enabled: false
+        commandTrigger: "^\\s*/fix\\s*$"
+        autoApply: false
+        maxTurns: 10
+        timeoutMs: 300000

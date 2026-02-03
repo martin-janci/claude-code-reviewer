@@ -1,0 +1,28 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: claude-reviewer
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - secret.yaml
+  - pvc.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+
+# Optional: Add common labels
+commonLabels:
+  app.kubernetes.io/name: claude-reviewer
+  app.kubernetes.io/component: code-review
+  app.kubernetes.io/managed-by: kustomize
+
+# Optional: Add annotations
+commonAnnotations:
+  documentation: https://github.com/martin-janci/claude-code-reviewer
+
+# Images can be customized here
+images:
+  - name: registry.rlt.sk/claude-code-reviewer
+    newTag: latest

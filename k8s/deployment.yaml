@@ -1,0 +1,128 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: claude-reviewer
+  namespace: claude-reviewer
+  labels:
+    app: claude-reviewer
+spec:
+  replicas: 1  # Keep at 1 to avoid concurrent state issues
+  strategy:
+    type: Recreate  # Ensure only one pod at a time
+  selector:
+    matchLabels:
+      app: claude-reviewer
+  template:
+    metadata:
+      labels:
+        app: claude-reviewer
+    spec:
+      containers:
+      - name: reviewer
+        image: registry.rlt.sk/claude-code-reviewer:latest
+        imagePullPolicy: Always
+
+        ports:
+        - containerPort: 3000
+          name: webhook
+          protocol: TCP
+
+        env:
+        # Secrets from Secret
+        - name: GITHUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: claude-reviewer-secrets
+              key: GITHUB_TOKEN
+
+        - name: WEBHOOK_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: claude-reviewer-secrets
+              key: WEBHOOK_SECRET
+
+        # Optional secrets (uncomment if needed)
+        # - name: JIRA_TOKEN
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: claude-reviewer-secrets
+        #       key: JIRA_TOKEN
+
+        # - name: JIRA_EMAIL
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: claude-reviewer-secrets
+        #       key: JIRA_EMAIL
+
+        # - name: JIRA_BASE_URL
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: claude-reviewer-secrets
+        #       key: JIRA_BASE_URL
+
+        # - name: SLACK_WEBHOOK_URL
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: claude-reviewer-secrets
+        #       key: SLACK_WEBHOOK_URL
+
+        volumeMounts:
+        - name: config
+          mountPath: /app/config.yaml
+          subPath: config.yaml
+          readOnly: true
+
+        - name: data
+          mountPath: /app/data
+
+        - name: claude-config
+          mountPath: /home/node/.claude
+          readOnly: true
+
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false  # Needs write for /app/data
+
+      volumes:
+      - name: config
+        configMap:
+          name: claude-reviewer-config
+
+      - name: data
+        persistentVolumeClaim:
+          claimName: claude-reviewer-data
+
+      - name: claude-config
+        secret:
+          secretName: claude-reviewer-claude-config
+          optional: true  # Make optional if not using authentication
+
+      restartPolicy: Always
