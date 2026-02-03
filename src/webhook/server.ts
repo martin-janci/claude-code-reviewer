@@ -1,11 +1,15 @@
 import { createServer, type Server } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type { AppConfig, PullRequest, ReviewOverrides } from "../types.js";
 import type { Reviewer } from "../reviewer/reviewer.js";
 import type { StateStore } from "../state/store.js";
 import type { MetricsCollector } from "../metrics.js";
 import type { Logger } from "../logger.js";
 import { getPRDetails, postComment } from "../reviewer/github.js";
+
+const execFileAsync = promisify(execFile);
 
 function verifySignature(secret: string, payload: Buffer, signature: string): boolean {
   const expected = "sha256=" + createHmac("sha256", secret).update(payload).digest("hex");
@@ -78,6 +82,67 @@ function sanitizeConfig(config: AppConfig): Record<string, unknown> {
   };
 }
 
+async function checkClaudeAuth(): Promise<{ available: boolean; authenticated: boolean; error?: string }> {
+  try {
+    // Check if claude CLI is available
+    const { stdout } = await execFileAsync("which", ["claude"], { timeout: 2000 });
+    if (!stdout.trim()) {
+      return { available: false, authenticated: false, error: "claude CLI not found in PATH" };
+    }
+
+    // Try to run a simple command to verify authentication
+    // The 'code' command should fail if not authenticated
+    await execFileAsync("claude", ["code", "--help"], { timeout: 3000 });
+    return { available: true, authenticated: true };
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    // If claude is available but command fails, it might be auth issue
+    if (errMsg.includes("not authenticated") || errMsg.includes("login")) {
+      return { available: true, authenticated: false, error: "Not authenticated" };
+    }
+    return { available: false, authenticated: false, error: errMsg.slice(0, 100) };
+  }
+}
+
+async function checkGhAuth(): Promise<{ available: boolean; authenticated: boolean; username?: string; error?: string }> {
+  try {
+    // Check if gh CLI is available and authenticated
+    const { stdout } = await execFileAsync("gh", ["auth", "status"], { timeout: 2000 });
+    const usernameMatch = stdout.match(/Logged in to github\.com as (\S+)/);
+    return {
+      available: true,
+      authenticated: true,
+      username: usernameMatch?.[1],
+    };
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    return { available: false, authenticated: false, error: errMsg.slice(0, 100) };
+  }
+}
+
+function getImportantSettings(config: AppConfig): Record<string, unknown> {
+  return {
+    mode: config.mode,
+    repos: config.repos.map(r => `${r.owner}/${r.repo}`),
+    review: {
+      maxDiffLines: config.review.maxDiffLines,
+      skipDrafts: config.review.skipDrafts,
+      skipWip: config.review.skipWip,
+      maxRetries: config.review.maxRetries,
+      codebaseAccess: config.review.codebaseAccess,
+      maxConcurrentReviews: config.review.maxConcurrentReviews,
+      confidenceThreshold: config.review.confidenceThreshold,
+      dryRun: config.review.dryRun,
+    },
+    features: {
+      jira: config.features.jira.enabled,
+      autoDescription: config.features.autoDescription.enabled,
+      autoLabel: config.features.autoLabel.enabled,
+      slack: config.features.slack.enabled,
+    },
+  };
+}
+
 // Actions that trigger a full review cycle via processPR
 const REVIEW_ACTIONS = ["opened", "synchronize", "reopened", "ready_for_review"];
 
@@ -113,11 +178,29 @@ export class WebhookServer {
       // Health check
       if (req.method === "GET" && req.url === "/health") {
         const info = this.healthInfo;
-        const body = info
+        const baseHealth = info
           ? { status: "ok", version: info.version, uptime: Math.floor((Date.now() - info.startTime) / 1000) }
           : { status: "ok" };
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(body));
+
+        // Async auth checks - run in background, don't block response
+        Promise.all([checkClaudeAuth(), checkGhAuth()])
+          .then(([claudeStatus, ghStatus]) => {
+            const enhancedHealth = {
+              ...baseHealth,
+              settings: getImportantSettings(this.config),
+              auth: {
+                claude: claudeStatus,
+                github: ghStatus,
+              },
+            };
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(enhancedHealth, null, 2));
+          })
+          .catch(() => {
+            // Fallback to basic health if checks fail
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(baseHealth));
+          });
         return;
       }
 
