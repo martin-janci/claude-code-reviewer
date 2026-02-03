@@ -1,10 +1,25 @@
-import type { ConventionalLabel, ReviewFinding, StructuredReview } from "../types.js";
+import type { ConventionalLabel, ReviewFinding, StructuredReview, RiskLevel } from "../types.js";
 
 export interface JiraLink {
   key: string;
   url: string;
   summary?: string;
   valid: boolean;
+}
+
+const RISK_EMOJI: Record<RiskLevel, string> = {
+  low: "🟢",
+  medium: "🟡",
+  high: "🟠",
+  critical: "🔴",
+};
+
+/**
+ * Filter findings by confidence threshold.
+ */
+export function filterByConfidence(findings: ReviewFinding[], threshold: number): ReviewFinding[] {
+  if (threshold <= 0) return findings;
+  return findings.filter((f) => (f.confidence ?? 100) >= threshold);
 }
 
 /**
@@ -19,6 +34,26 @@ export function formatReviewBody(
   jira?: JiraLink,
 ): string {
   const parts: string[] = [tag, ""];
+
+  // PR Summary (TL;DR section)
+  if (structured.prSummary) {
+    const ps = structured.prSummary;
+    const riskEmoji = RISK_EMOJI[ps.riskLevel] ?? "⚪";
+    parts.push(`## TL;DR`);
+    parts.push(`> ${ps.tldr}`);
+    parts.push("");
+    parts.push(`| Metric | Value |`);
+    parts.push(`|--------|-------|`);
+    parts.push(`| Files Changed | ${ps.filesChanged} |`);
+    parts.push(`| Lines | +${ps.linesAdded} / -${ps.linesRemoved} |`);
+    parts.push(`| Areas | ${ps.areasAffected.join(", ")} |`);
+    parts.push(`| Risk | ${riskEmoji} ${ps.riskLevel.toUpperCase()} |`);
+    if (ps.riskFactors && ps.riskFactors.length > 0) {
+      parts.push("");
+      parts.push(`**Risk Factors:** ${ps.riskFactors.join("; ")}`);
+    }
+    parts.push("");
+  }
 
   // Jira link (before summary)
   if (jira) {

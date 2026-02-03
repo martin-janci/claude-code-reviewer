@@ -60,13 +60,24 @@ Schema:
 {
   "verdict": "APPROVE | REQUEST_CHANGES | COMMENT",
   "summary": "Brief one-line summary of the review.",
+  "prSummary": {
+    "tldr": "One-line TL;DR of what this PR does",
+    "filesChanged": 5,
+    "linesAdded": 120,
+    "linesRemoved": 30,
+    "areasAffected": ["authentication", "database", "API"],
+    "riskLevel": "low | medium | high | critical",
+    "riskFactors": ["Touches auth logic", "Modifies DB schema"]
+  },
   "findings": [
     {
       "severity": "issue | suggestion | nitpick | question | praise",
       "blocking": true | false,
       "path": "src/foo.ts",
       "line": 42,
-      "body": "Explanation of the finding."
+      "body": "Explanation of the finding.",
+      "confidence": 85,
+      "securityRelated": false
     }
   ],
   "overall": "Optional overall notes (omit if not needed)."
@@ -77,6 +88,13 @@ Rules:
 - `path` must match the file path from the diff (e.g. `src/foo.ts`, not `./src/foo.ts`)
 - `line` must reference a line number from the NEW file (right side of the diff)
 - `body` should be concise but complete — include the problem, impact, and suggested fix
+- `confidence` is 0-100 indicating how certain you are about the finding. Use 90+ for obvious issues, 70-89 for likely issues, below 70 for uncertain observations.
+- `securityRelated` should be true for findings related to security vulnerabilities
+- `prSummary.riskLevel` should reflect the overall risk of the changes:
+  - `low` — simple changes, well-tested areas, low impact
+  - `medium` — moderate complexity, some risk
+  - `high` — complex changes, touches critical paths, auth, or data
+  - `critical` — security-sensitive, breaking changes, or high-blast-radius
 - Empty `findings` array is valid for APPROVE verdicts
 - If the diff looks good with no significant issues, return APPROVE with an empty findings array and a brief summary. Don't invent problems.
 

@@ -9,11 +9,12 @@ import { runFeatures } from "../features/plugin.js";
 import { jiraPlugin } from "../features/jira-plugin.js";
 import { autoDescriptionPlugin } from "../features/auto-description-plugin.js";
 import { autoLabelPlugin } from "../features/auto-label-plugin.js";
+import { slackPlugin } from "../features/slack-plugin.js";
 import { shouldReview } from "../state/decisions.js";
 import { getPRDiff, postReview, postComment, updateComment, deleteComment, findExistingComment, getReviewThreads, resolveReviewThread, type ReviewEvent } from "./github.js";
 import { reviewDiff } from "./claude.js";
-import { parseCommentableLines, findNearestCommentableLine, filterDiff } from "./diff-parser.js";
-import { formatReviewBody, formatInlineComment, type JiraLink } from "./formatter.js";
+import { parseCommentableLines, findNearestCommentableLine, filterDiff, extractDiffPaths, findSecurityPaths } from "./diff-parser.js";
+import { formatReviewBody, formatInlineComment, filterByConfidence, type JiraLink } from "./formatter.js";
 import { extractJiraKey } from "../features/jira.js";
 
 function parseLegacyVerdict(body: string): ReviewVerdict {
@@ -72,6 +73,9 @@ export class Reviewer {
   private locks = new Map<string, Promise<void>>();
   private inflightCount = 0;
   private features: Feature[];
+  // Semaphore for limiting concurrent reviews
+  private concurrencyQueue: Array<() => void> = [];
+  private activeReviews = 0;
 
   constructor(
     private config: AppConfig,
@@ -85,7 +89,42 @@ export class Reviewer {
       jiraPlugin,
       autoDescriptionPlugin,
       autoLabelPlugin,
+      slackPlugin,
     ];
+  }
+
+  /**
+   * Acquire a slot in the concurrency pool.
+   * Returns a release function to call when done.
+   */
+  private async acquireConcurrencySlot(log: Logger): Promise<() => void> {
+    const maxConcurrent = this.config.review.maxConcurrentReviews;
+
+    if (this.activeReviews < maxConcurrent) {
+      this.activeReviews++;
+      log.debug("Acquired concurrency slot", { active: this.activeReviews, max: maxConcurrent });
+      return () => this.releaseConcurrencySlot(log);
+    }
+
+    // Wait in queue
+    log.info("Waiting for concurrency slot", { active: this.activeReviews, max: maxConcurrent, queued: this.concurrencyQueue.length });
+    await new Promise<void>((resolve) => {
+      this.concurrencyQueue.push(resolve);
+    });
+    this.activeReviews++;
+    log.debug("Acquired concurrency slot after wait", { active: this.activeReviews, max: maxConcurrent });
+    return () => this.releaseConcurrencySlot(log);
+  }
+
+  private releaseConcurrencySlot(log: Logger): void {
+    this.activeReviews--;
+    log.debug("Released concurrency slot", { active: this.activeReviews, queued: this.concurrencyQueue.length });
+
+    // Wake next waiter if any
+    const next = this.concurrencyQueue.shift();
+    if (next) {
+      next();
+    }
   }
 
   get lockKeys(): string[] {
@@ -111,11 +150,14 @@ export class Reviewer {
       await this.locks.get(key);
     }
 
+    // Acquire concurrency slot (limits total parallel reviews across all PRs)
+    const releaseConcurrency = await this.acquireConcurrencySlot(log);
+
     let unlock: () => void;
     const lock = new Promise<void>((resolve) => { unlock = resolve; });
     this.locks.set(key, lock);
     this.inflightCount++;
-    log.info("Processing PR", { sha: pr.headSha.slice(0, 7), inflight: this.inflightCount });
+    log.info("Processing PR", { sha: pr.headSha.slice(0, 7), inflight: this.inflightCount, maxConcurrent: this.config.review.maxConcurrentReviews });
 
     try {
       await this.doProcessPR(pr, log);
@@ -123,6 +165,7 @@ export class Reviewer {
       this.inflightCount--;
       this.locks.delete(key);
       unlock!();
+      releaseConcurrency();
       log.info("Finished processing PR");
     }
   }
@@ -441,9 +484,16 @@ export class Reviewer {
       previousFindings: allPreviousFindings,
     } : undefined;
 
+    // Detect security-sensitive paths
+    const diffPaths = extractDiffPaths(diff);
+    const securityPaths = findSecurityPaths(diffPaths, this.config.review.securityPaths);
+    if (securityPaths.length > 0) {
+      log.info("Security-sensitive paths detected", { paths: securityPaths });
+    }
+
     // Run Claude review
     const effectiveMaxTurns = pr.overrides?.maxTurns ?? (cwd ? this.config.review.reviewMaxTurns : undefined);
-    log.info("Starting Claude review", { phase: "claude_review", timeoutMs: this.config.review.reviewTimeoutMs, maxTurns: effectiveMaxTurns, codebase: !!cwd, focusPaths: pr.overrides?.focusPaths });
+    log.info("Starting Claude review", { phase: "claude_review", timeoutMs: this.config.review.reviewTimeoutMs, maxTurns: effectiveMaxTurns, codebase: !!cwd, focusPaths: pr.overrides?.focusPaths, securityPaths: securityPaths.length > 0 ? securityPaths : undefined });
 
     const claudeT0 = Date.now();
     const result = await reviewDiff({
@@ -455,6 +505,7 @@ export class Reviewer {
       maxTurns: effectiveMaxTurns,
       logger: log,
       focusPaths: pr.overrides?.focusPaths,
+      securityPaths: securityPaths.length > 0 ? securityPaths : undefined,
     });
     timings.claude_review_ms = Date.now() - claudeT0;
 
@@ -504,6 +555,19 @@ export class Reviewer {
       // Structured path: PR Reviews API with inline comments
       const structured = result.structured;
       verdict = structured.verdict;
+
+      // Apply confidence filtering
+      const confidenceThreshold = this.config.review.confidenceThreshold;
+      const filteredFindings = filterByConfidence(structured.findings, confidenceThreshold);
+      if (filteredFindings.length < structured.findings.length) {
+        log.info("Filtered low-confidence findings", {
+          threshold: confidenceThreshold,
+          before: structured.findings.length,
+          after: filteredFindings.length,
+        });
+      }
+      // Use filtered findings for the rest of the review
+      structured.findings = filteredFindings;
 
       // Auto-escalate verdict if any previous blocking finding is still open
       if (structured.resolutions?.length && allPreviousFindings.length) {

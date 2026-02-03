@@ -10,6 +10,7 @@ import { CloneManager } from "./clone/manager.js";
 import { MetricsCollector } from "./metrics.js";
 import { createRootLogger } from "./logger.js";
 import { setGhToken, getPRDetails } from "./reviewer/github.js";
+import { recoverPendingReviews } from "./startup-recovery.js";
 
 let VERSION = "unknown";
 try {
@@ -213,6 +214,12 @@ function main(): void {
     // In polling-only mode, start a minimal health server so Docker health checks pass
     healthServer = startHealthServer(config.webhook.port, metrics, store);
   }
+
+  // Startup recovery: check for PRs that need attention after restart
+  // This is especially important in webhook-only mode where we don't poll
+  recoverPendingReviews(config, store, reviewer, logger).catch((err) => {
+    logger.error("Startup recovery failed", { error: String(err) });
+  });
 
   // Graceful shutdown (guarded against concurrent SIGINT+SIGTERM)
   let shuttingDown = false;

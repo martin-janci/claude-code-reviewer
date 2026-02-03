@@ -1,30 +1,16 @@
 #!/bin/sh
-# Ensure /home/node/.claude exists as a real writable directory
-mkdir -p /home/node/.claude
+set -e
+
+# Ensure required subdirectories exist in .claude
 for sub in debug todos projects statsig; do
-  mkdir -p "/home/node/.claude/$sub"
+  mkdir -p "/home/node/.claude/$sub" 2>/dev/null || true
 done
 
-# Copy credentials from wherever they exist (root login stores at /root/.claude)
-for candidate in /root/.claude /home/.claude; do
-  if [ -f "$candidate/.credentials.json" ] && [ ! -f /home/node/.claude/.credentials.json ]; then
-    echo "Copying credentials from $candidate to /home/node/.claude"
-    cp -a "$candidate/.credentials.json" /home/node/.claude/.credentials.json
-  fi
-done
-
-# Fix ownership — must come after copy/mkdir
+# Fix ownership if needed
 chown -R node:node /home/node/.claude 2>/dev/null || true
-chmod -R u=rwX,go=rX /home/node/.claude 2>/dev/null || true
 chown -R node:node /app/data 2>/dev/null || true
 
-# Symlink so root's claude also sees the same dir (for manual exec debugging)
-if [ ! -L /root/.claude ] && [ -d /root/.claude ]; then
-  rm -rf /root/.claude
-fi
-ln -sf /home/node/.claude /root/.claude 2>/dev/null || true
-
-# Configure git
+# Configure git for node user
 su-exec node git config --global advice.detachedHead false
 
 # Configure git to use gh CLI for GitHub authentication

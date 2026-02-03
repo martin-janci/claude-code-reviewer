@@ -37,6 +37,12 @@ export interface ReviewConfig {
   staleWorktreeMinutes: number;
   excludePaths: string[];
   dryRun: boolean;
+  // Parallel reviews
+  maxConcurrentReviews: number;
+  // Confidence filtering
+  confidenceThreshold: number;
+  // Security paths for elevated scrutiny
+  securityPaths: string[];
 }
 
 export interface JiraConfig {
@@ -65,10 +71,18 @@ export interface AutoLabelConfig {
   diffLabels: DiffLabelRule[];
 }
 
+export interface SlackConfig {
+  enabled: boolean;
+  webhookUrl: string;
+  notifyOn: ("review_complete" | "error" | "request_changes" | "approve")[];
+  channel?: string;
+}
+
 export interface FeaturesConfig {
   jira: JiraConfig;
   autoDescription: AutoDescriptionConfig;
   autoLabel: AutoLabelConfig;
+  slack: SlackConfig;
 }
 
 export interface AppConfig {
@@ -107,6 +121,9 @@ export interface ReviewFinding {
   path: string;
   line: number;
   body: string;
+  confidence?: number; // 0-100, for filtering low-confidence findings
+  isNew?: boolean; // For incremental reviews: true if finding is new since last review
+  securityRelated?: boolean; // True if finding relates to security
 }
 
 export interface ResolutionEntry {
@@ -116,9 +133,22 @@ export interface ResolutionEntry {
   resolution: FindingResolution;
 }
 
+export type RiskLevel = "low" | "medium" | "high" | "critical";
+
+export interface PRSummary {
+  tldr: string; // One-line summary
+  filesChanged: number;
+  linesAdded: number;
+  linesRemoved: number;
+  areasAffected: string[]; // e.g., ["authentication", "database", "UI"]
+  riskLevel: RiskLevel;
+  riskFactors?: string[]; // Why it's risky
+}
+
 export interface StructuredReview {
   verdict: ReviewVerdict;
   summary: string;
+  prSummary?: PRSummary; // New: structured PR summary
   findings: ReviewFinding[];
   overall?: string;
   resolutions?: ResolutionEntry[];
@@ -148,7 +178,7 @@ export interface ErrorRecord {
   kind: ErrorKind;
 }
 
-export type FeatureName = "jira" | "auto_description" | "auto_label";
+export type FeatureName = "jira" | "auto_description" | "auto_label" | "slack";
 export type FeatureStatus = "success" | "skipped" | "error";
 
 export interface FeatureExecution {
