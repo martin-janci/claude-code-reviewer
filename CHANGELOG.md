@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.9.0
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.8.0...v1.9.0)
+
+### 🚀 Enhancements
+
+- Implement feature plugin architecture (Phase 3) ([#7](https://github.com/martin-janci/claude-code-reviewer/pull/7))
+
+### ❤️ Contributors
+
+- Martin Janči ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.8.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.7.4...v1.8.0)
