@@ -9,6 +9,7 @@ import type { Logger } from "../logger.js";
 import type { CloneManager } from "../clone/manager.js";
 import { getPRDetails, postComment } from "../reviewer/github.js";
 import { executeAutofix } from "../features/autofix.js";
+import { PrometheusExporter } from "../prometheus.js";
 
 // Note: execFile is used directly for CLI checks (checkClaudeAuth, checkGhAuth).
 // If more endpoints need CLI validation, consider extracting to a shared helper module.
@@ -205,6 +206,7 @@ export class WebhookServer {
   private authCache: { claude: AuthStatus; github: AuthStatus } | null = null;
   private authRefreshInterval: NodeJS.Timeout | null = null;
   private readonly AUTH_CACHE_TTL_MS = 60_000; // 60 seconds
+  private prometheusExporter?: PrometheusExporter;
 
   constructor(
     private config: AppConfig,
@@ -220,6 +222,11 @@ export class WebhookServer {
       this.commentTriggerRegex = new RegExp(config.review.commentTrigger, "m");
     } catch (err) {
       throw new Error(`Invalid commentTrigger regex "${config.review.commentTrigger}": ${err instanceof Error ? err.message : err}`);
+    }
+
+    // Initialize Prometheus exporter if metrics are enabled
+    if (this.metrics) {
+      this.prometheusExporter = new PrometheusExporter();
     }
   }
 
@@ -273,12 +280,43 @@ export class WebhookServer {
         return;
       }
 
-      // Metrics endpoint
-      if (req.method === "GET" && req.url === "/metrics") {
+      // Metrics endpoint - supports both Prometheus and JSON formats
+      if (req.method === "GET" && (req.url === "/metrics" || req.url?.startsWith("/metrics?"))) {
         if (this.metrics && this.healthInfo) {
           const uptime = Math.floor((Date.now() - this.healthInfo.startTime) / 1000);
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify(this.metrics.snapshot(uptime, this.store.getStatusCounts())));
+          const snapshot = this.metrics.snapshot(uptime, this.store.getStatusCounts());
+
+          // Check Accept header or query parameter for format preference
+          const acceptHeader = req.headers["accept"] || "";
+          const url = new URL(req.url || "", `http://${req.headers.host}`);
+          const format = url.searchParams.get("format") || "";
+
+          // Prefer Prometheus format (for Prometheus scraping)
+          // Also serve Prometheus if explicitly requested via Accept header or format param
+          if (
+            this.prometheusExporter &&
+            (acceptHeader.includes("text/plain") ||
+              acceptHeader.includes("application/openmetrics-text") ||
+              format === "prometheus" ||
+              !acceptHeader.includes("application/json"))
+          ) {
+            // Update Prometheus metrics from snapshot
+            this.prometheusExporter.updateMetrics(snapshot);
+
+            // Return Prometheus text format (async)
+            this.prometheusExporter.getMetrics().then((prometheusText) => {
+              res.writeHead(200, { "Content-Type": "text/plain; version=0.0.4; charset=utf-8" });
+              res.end(prometheusText);
+            }).catch((err) => {
+              this.logger.error("Failed to generate Prometheus metrics", { error: String(err) });
+              res.writeHead(500, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ error: "Failed to generate metrics" }));
+            });
+          } else {
+            // Return JSON format (for debugging, dashboards, etc.)
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(snapshot, null, 2));
+          }
         } else {
           res.writeHead(404, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: "Metrics not configured" }));

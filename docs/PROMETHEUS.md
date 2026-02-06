@@ -15,14 +15,10 @@ apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor
 metadata:
   name: claude-reviewer
-  namespace: claude
+  namespace: claude-reviewer
   labels:
     app: claude-reviewer
     release: prometheus
-
-⚠️ **IMPORTANT**: This PodMonitor is ready for deployment but commented out in kustomization.yaml.
-The application does not yet expose a /metrics endpoint. Uncomment after implementing metrics.
-
 spec:
   podMetricsEndpoints:
   - interval: 15s
@@ -60,47 +56,35 @@ kubectl apply -f k8s/podmonitor.yaml
 
 ### Current Status
 
-⚠️ **Not Yet Implemented** - The application does not currently expose a `/metrics` endpoint.
+✅ **Implemented** - The `/metrics` endpoint is now available in Prometheus text format.
 
-### Future Implementation
+### Format Support
 
-To add Prometheus metrics support:
+The endpoint supports both formats based on the `Accept` header or `format` query parameter:
 
-1. Install `prom-client` dependency:
-   ```bash
-   npm install prom-client
-   ```
+**Prometheus format** (default):
+```bash
+curl http://localhost:3000/metrics
+# or
+curl -H "Accept: text/plain" http://localhost:3000/metrics
+```
 
-2. Add metrics middleware to the webhook server (`src/webhook/server.ts`):
-   ```typescript
-   import { register, collectDefaultMetrics } from 'prom-client';
+**JSON format** (for debugging):
+```bash
+curl http://localhost:3000/metrics?format=json
+# or
+curl -H "Accept: application/json" http://localhost:3000/metrics
+```
 
-   // Collect default metrics (memory, CPU, etc.)
-   collectDefaultMetrics({ prefix: 'claude_reviewer_' });
+### Implementation Details
 
-   // Add /metrics endpoint
-   app.get('/metrics', async (req, res) => {
-     res.set('Content-Type', register.contentType);
-     res.send(await register.metrics());
-   });
-   ```
+The application uses `prom-client` to export metrics in Prometheus text format. The `PrometheusExporter` class (in `src/prometheus.ts`) converts internal JSON metrics to Prometheus format.
 
-3. Add custom metrics for review operations:
-   ```typescript
-   import { Counter, Histogram } from 'prom-client';
-
-   const reviewsTotal = new Counter({
-     name: 'claude_reviewer_reviews_total',
-     help: 'Total number of PR reviews',
-     labelNames: ['status', 'verdict'],
-   });
-
-   const reviewDuration = new Histogram({
-     name: 'claude_reviewer_review_duration_seconds',
-     help: 'Duration of PR reviews',
-     buckets: [1, 5, 10, 30, 60, 120, 300],
-   });
-   ```
+Default Node.js metrics are automatically collected:
+- `process_cpu_user_seconds_total` - CPU usage
+- `process_resident_memory_bytes` - Memory usage
+- `nodejs_heap_size_total_bytes` - Heap size
+- `nodejs_eventloop_lag_seconds` - Event loop lag
 
 ## Recommended Metrics
 

@@ -11,8 +11,7 @@ resources:
   - deployment.yaml
   - service.yaml
   - ingress.yaml
-  # Uncomment when /metrics endpoint is implemented (see docs/PROMETHEUS.md)
-  # - podmonitor.yaml
+  - podmonitor.yaml
 
 # Optional: Add common labels
 commonLabels:
