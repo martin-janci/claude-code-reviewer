@@ -291,15 +291,17 @@ export class WebhookServer {
           const url = new URL(req.url || "", `http://${req.headers.host}`);
           const format = url.searchParams.get("format") || "";
 
-          // Prefer Prometheus format (for Prometheus scraping)
-          // Also serve Prometheus if explicitly requested via Accept header or format param
-          if (
-            this.prometheusExporter &&
-            (acceptHeader.includes("text/plain") ||
-              acceptHeader.includes("application/openmetrics-text") ||
-              format === "prometheus" ||
-              !acceptHeader.includes("application/json"))
-          ) {
+          // Determine format based on explicit indicators
+          // Default to JSON for backward compatibility and easier debugging
+          const wantsPrometheus = this.prometheusExporter && (
+            acceptHeader.includes("text/plain") ||
+            acceptHeader.includes("application/openmetrics-text") ||
+            format === "prometheus"
+          );
+
+          const wantsJson = acceptHeader.includes("application/json") || format === "json";
+
+          if (wantsPrometheus && !wantsJson && this.prometheusExporter) {
             // Update Prometheus metrics from snapshot
             this.prometheusExporter.updateMetrics(snapshot);
 

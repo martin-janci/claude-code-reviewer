@@ -38,13 +38,32 @@ spec:
 
 ## Deployment
 
-### Using Kustomize (Recommended)
+⚠️ **Status**: The PodMonitor is ready but commented out pending validation.
 
-The PodMonitor is included in the kustomization.yaml:
+### Using Kustomize (After Validation)
+
+The PodMonitor is commented out in `kustomization.yaml`. After validation, uncomment it:
+
+```yaml
+resources:
+  # ...
+  - podmonitor.yaml  # Uncomment this line
+```
+
+Then deploy:
 
 ```bash
 kubectl apply -k k8s/
 ```
+
+### Validation Steps
+
+Before enabling in production:
+
+1. Test endpoint: `curl http://localhost:3000/metrics`
+2. Verify Prometheus format (# HELP, # TYPE lines)
+3. Enable in staging/dev environment first
+4. Monitor for 24 hours to ensure stability
 
 ### Manual Deployment
 
@@ -80,6 +99,16 @@ curl -H "Accept: application/json" http://localhost:3000/metrics
 
 The application uses `prom-client` to export metrics in Prometheus text format. The `PrometheusExporter` class (in `src/prometheus.ts`) converts internal JSON metrics to Prometheus format.
 
+**Metrics Approach:**
+- Uses **Gauges** for cumulative values (reviews_total, errors_total, skips_total)
+- Syncs metrics from snapshot state on each `/metrics` request
+- This is correct for state-based (vs event-based) metric collection
+
+**Important:** To get rates from gauges, use `rate()` or `irate()` in PromQL:
+```promql
+rate(claude_reviewer_reviews_total[5m])  # Reviews per second
+```
+
 Default Node.js metrics are automatically collected:
 - `process_cpu_user_seconds_total` - CPU usage
 - `process_resident_memory_bytes` - Memory usage
@@ -90,12 +119,15 @@ Default Node.js metrics are automatically collected:
 
 ### Application Metrics
 
-- `claude_reviewer_reviews_total{status, verdict}` - Counter of reviews by status/verdict
-- `claude_reviewer_review_duration_seconds` - Histogram of review durations
-- `claude_reviewer_errors_total{phase}` - Counter of errors by phase
-- `claude_reviewer_state_transitions_total{from, to}` - Counter of state transitions
-- `claude_reviewer_clone_operations_total{operation}` - Counter of clone/worktree operations
-- `claude_reviewer_webhook_events_total{event}` - Counter of webhook events received
+- `claude_reviewer_reviews_total{verdict}` - Gauge of total reviews by verdict (use rate() for rates)
+- `claude_reviewer_errors_total{phase}` - Gauge of total errors by phase
+- `claude_reviewer_skips_total{reason}` - Gauge of total skips by reason
+- `claude_reviewer_prs{status}` - Gauge of current PRs by status
+- `claude_reviewer_active_reviews` - Gauge of reviews in progress
+- `claude_reviewer_queue_depth` - Gauge of PRs waiting for review
+- `claude_reviewer_review_duration_avg_seconds{phase}` - Gauge of average duration
+- `claude_reviewer_review_duration_p95_seconds{phase}` - Gauge of p95 duration
+- `claude_reviewer_review_duration_max_seconds{phase}` - Gauge of max duration
 
 ### System Metrics (Default)
 

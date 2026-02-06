@@ -11,7 +11,8 @@ resources:
   - deployment.yaml
   - service.yaml
   - ingress.yaml
-  - podmonitor.yaml
+  # PodMonitor - Uncomment after validating metrics in dev/staging
+  # - podmonitor.yaml
 
 # Optional: Add common labels
 commonLabels:

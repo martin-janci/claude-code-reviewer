@@ -1,67 +1,64 @@
-import { Registry, Counter, Gauge, Histogram, collectDefaultMetrics } from "prom-client";
-import type { MetricsCollector, MetricsSnapshot } from "./metrics.js";
-import type { PRStatus, ReviewVerdict, ErrorPhase, SkipReason } from "./types.js";
+import { Registry, Counter, Gauge, collectDefaultMetrics } from "prom-client";
+import type { MetricsSnapshot } from "./metrics.js";
+import type { PRStatus } from "./types.js";
 
 /**
  * Prometheus metrics exporter for Claude Code Reviewer
  * Converts internal JSON metrics to Prometheus text format
+ *
+ * Note: This uses gauges for cumulative counters since we're syncing from
+ * an external state rather than incrementing on events. This is the correct
+ * approach when the source of truth is a snapshot rather than event stream.
  */
 export class PrometheusExporter {
   private registry: Registry;
 
-  // Counters
-  private reviewsTotal: Counter<string>;
-  private errorsTotal: Counter<string>;
-  private skipsTotal: Counter<string>;
-  private stateTransitionsTotal: Counter<string>;
+  // Gauges for cumulative values (synced from snapshots)
+  private reviewsTotalGauge: Gauge<string>;
+  private errorsTotalGauge: Gauge<string>;
+  private skipsTotalGauge: Gauge<string>;
 
-  // Gauges
+  // Gauges for current state
   private prsGauge: Gauge<string>;
   private activeReviewsGauge: Gauge;
   private queueDepthGauge: Gauge;
   private uptimeGauge: Gauge;
 
-  // Histograms
-  private reviewDuration: Histogram<string>;
+  // Gauges for timing statistics
+  private reviewDurationAvg: Gauge<string>;
+  private reviewDurationP95: Gauge<string>;
+  private reviewDurationMax: Gauge<string>;
 
   constructor() {
     this.registry = new Registry();
 
     // Collect default Node.js metrics (CPU, memory, event loop, etc.)
+    // Note: These will have standard prometheus names (process_*, nodejs_*)
     collectDefaultMetrics({
       register: this.registry,
-      prefix: "claude_reviewer_",
     });
 
-    // Review counters
-    this.reviewsTotal = new Counter({
+    // Review totals (as gauges since we're syncing from external state)
+    this.reviewsTotalGauge = new Gauge({
       name: "claude_reviewer_reviews_total",
       help: "Total number of PR reviews completed",
       labelNames: ["verdict"],
       registers: [this.registry],
     });
 
-    // Error counters
-    this.errorsTotal = new Counter({
+    // Error totals
+    this.errorsTotalGauge = new Gauge({
       name: "claude_reviewer_errors_total",
       help: "Total number of errors encountered",
       labelNames: ["phase"],
       registers: [this.registry],
     });
 
-    // Skip counters
-    this.skipsTotal = new Counter({
+    // Skip totals
+    this.skipsTotalGauge = new Gauge({
       name: "claude_reviewer_skips_total",
       help: "Total number of PRs skipped",
       labelNames: ["reason"],
-      registers: [this.registry],
-    });
-
-    // State transition counter
-    this.stateTransitionsTotal = new Counter({
-      name: "claude_reviewer_state_transitions_total",
-      help: "Total number of PR state transitions",
-      labelNames: ["from_status", "to_status"],
       registers: [this.registry],
     });
 
@@ -93,33 +90,47 @@ export class PrometheusExporter {
       registers: [this.registry],
     });
 
-    // Review duration histogram
-    this.reviewDuration = new Histogram({
-      name: "claude_reviewer_review_duration_seconds",
-      help: "Review duration in seconds",
+    // Review duration gauges (statistics from rolling window)
+    this.reviewDurationAvg = new Gauge({
+      name: "claude_reviewer_review_duration_avg_seconds",
+      help: "Average review duration by phase (rolling window)",
       labelNames: ["phase"],
-      buckets: [1, 5, 10, 30, 60, 120, 300, 600], // 1s to 10min
+      registers: [this.registry],
+    });
+
+    this.reviewDurationP95 = new Gauge({
+      name: "claude_reviewer_review_duration_p95_seconds",
+      help: "95th percentile review duration by phase (rolling window)",
+      labelNames: ["phase"],
+      registers: [this.registry],
+    });
+
+    this.reviewDurationMax = new Gauge({
+      name: "claude_reviewer_review_duration_max_seconds",
+      help: "Maximum review duration by phase (rolling window)",
+      labelNames: ["phase"],
       registers: [this.registry],
     });
   }
 
   /**
    * Update Prometheus metrics from internal metrics snapshot
+   * This is called on each /metrics request to sync with current state
    */
   updateMetrics(snapshot: MetricsSnapshot): void {
-    // Update review counters by verdict
+    // Update review totals by verdict
     for (const [verdict, count] of Object.entries(snapshot.reviews.byVerdict)) {
-      this.reviewsTotal.labels(verdict).inc(count - (this.reviewsTotal.labels(verdict) as any)._value || 0);
+      this.reviewsTotalGauge.labels(verdict).set(count);
     }
 
-    // Update error counters by phase
+    // Update error totals by phase
     for (const [phase, count] of Object.entries(snapshot.errors.byPhase)) {
-      this.errorsTotal.labels(phase).inc(count - (this.errorsTotal.labels(phase) as any)._value || 0);
+      this.errorsTotalGauge.labels(phase).set(count);
     }
 
-    // Update skip counters by reason
+    // Update skip totals by reason
     for (const [reason, count] of Object.entries(snapshot.skips.byReason)) {
-      this.skipsTotal.labels(reason).inc(count - (this.skipsTotal.labels(reason) as any)._value || 0);
+      this.skipsTotalGauge.labels(reason).set(count);
     }
 
     // Update PR status gauges
@@ -134,23 +145,20 @@ export class PrometheusExporter {
     // Update uptime
     this.uptimeGauge.set(snapshot.uptime);
 
-    // Update timing histograms
+    // Update timing statistics
     if (snapshot.timings.total) {
-      this.reviewDuration.labels("total").observe(snapshot.timings.total.avg / 1000);
+      this.reviewDurationAvg.labels("total").set(snapshot.timings.total.avg / 1000);
+      this.reviewDurationP95.labels("total").set(snapshot.timings.total.p95 / 1000);
+      this.reviewDurationMax.labels("total").set(snapshot.timings.total.max / 1000);
     }
 
     for (const [phase, stats] of Object.entries(snapshot.timings.byPhase)) {
       if (stats) {
-        this.reviewDuration.labels(phase).observe(stats.avg / 1000);
+        this.reviewDurationAvg.labels(phase).set(stats.avg / 1000);
+        this.reviewDurationP95.labels(phase).set(stats.p95 / 1000);
+        this.reviewDurationMax.labels(phase).set(stats.max / 1000);
       }
     }
-  }
-
-  /**
-   * Record a state transition
-   */
-  recordStateTransition(from: PRStatus, to: PRStatus): void {
-    this.stateTransitionsTotal.labels(from, to).inc();
   }
 
   /**
