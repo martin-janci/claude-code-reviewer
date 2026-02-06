@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.16.0
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.15.0...v1.16.0)
+
+### 🚀 Enhancements
+
+- Kubernetes and docker improvements ([#12](https://github.com/martin-janci/claude-code-reviewer/pull/12))
+
+### 📖 Documentation
+
+- Add comprehensive setup guide and configuration template ([914e667](https://github.com/martin-janci/claude-code-reviewer/commit/914e667))
+- Clarify Claude volume mounts for root and node users ([ce5950b](https://github.com/martin-janci/claude-code-reviewer/commit/ce5950b))
+
+### ❤️ Contributors
+
+- Martin Janči <martin.janci@papayapos.sk>
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.15.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.14.0...v1.15.0)
