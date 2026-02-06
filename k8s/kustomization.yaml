@@ -11,6 +11,8 @@ resources:
   - deployment.yaml
   - service.yaml
   - ingress.yaml
+  # PodMonitor - Uncomment after validating metrics in dev/staging
+  # - podmonitor.yaml
 
 # Optional: Add common labels
 commonLabels:
@@ -24,5 +26,5 @@ commonAnnotations:
 
 # Images can be customized here
 images:
-  - name: registry.rlt.sk/claude-code-reviewer
+  - name: ghcr.io/papayapos/claude-code-reviewer
     newTag: latest

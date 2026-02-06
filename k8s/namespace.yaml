@@ -4,3 +4,5 @@ metadata:
   name: claude-reviewer
   labels:
     name: claude-reviewer
+  annotations:
+    description: "Claude Code Reviewer namespace"

@@ -11,6 +11,6 @@ spec:
   - port: 3000
     targetPort: 3000
     protocol: TCP
-    name: webhook
+    name: http
   selector:
     app: claude-reviewer

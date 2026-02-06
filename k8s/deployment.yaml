@@ -19,12 +19,12 @@ spec:
     spec:
       containers:
       - name: reviewer
-        image: registry.rlt.sk/claude-code-reviewer:latest
+        image: ghcr.io/papayapos/claude-code-reviewer:latest
         imagePullPolicy: Always
 
         ports:
         - containerPort: 3000
-          name: webhook
+          name: http
           protocol: TCP
 
         env:
