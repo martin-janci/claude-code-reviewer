@@ -103,6 +103,11 @@ export interface FeaturesConfig {
   autofix: AutofixConfig;
 }
 
+export interface DashboardConfig {
+  port: number;
+  token?: string;
+}
+
 export interface AppConfig {
   mode: "polling" | "webhook" | "both";
   polling: PollingConfig;
@@ -111,6 +116,7 @@ export interface AppConfig {
   repos: RepoConfig[];
   review: ReviewConfig;
   features: FeaturesConfig;
+  dashboard?: DashboardConfig;
 }
 
 // --- PR State Machine ---

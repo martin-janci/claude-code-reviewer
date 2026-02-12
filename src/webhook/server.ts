@@ -230,6 +230,16 @@ export class WebhookServer {
     }
   }
 
+  /** Hot-reload: swap config reference and recompile regex. */
+  updateConfig(config: AppConfig): void {
+    this.config = config;
+    try {
+      this.commentTriggerRegex = new RegExp(config.review.commentTrigger, "m");
+    } catch (err) {
+      this.logger.error("Failed to recompile commentTrigger regex on config update", { error: String(err) });
+    }
+  }
+
   private async refreshAuthCache(): Promise<void> {
     const [claudeStatus, ghStatus] = await Promise.all([checkClaudeAuth(), checkGhAuth()]);
     const now = Date.now();

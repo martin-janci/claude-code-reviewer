@@ -2,10 +2,12 @@ import { createServer, type Server } from "node:http";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "./config.js";
+import { ConfigManager } from "./config-manager.js";
 import { StateStore } from "./state/store.js";
 import { Reviewer } from "./reviewer/reviewer.js";
 import { Poller } from "./polling/poller.js";
 import { WebhookServer } from "./webhook/server.js";
+import { DashboardServer } from "./dashboard/server.js";
 import { CloneManager } from "./clone/manager.js";
 import { MetricsCollector } from "./metrics.js";
 import { createRootLogger } from "./logger.js";
@@ -169,7 +171,8 @@ function main(): void {
   }
 
   const logger = createRootLogger();
-  const config = loadConfig();
+  const configManager = new ConfigManager("config.yaml", logger);
+  const config = configManager.getConfig();
   const store = new StateStore();
   const auditLogger = new AuditLogger(config.features.audit);
 
@@ -206,6 +209,7 @@ function main(): void {
   let poller: Poller | null = null;
   let webhook: WebhookServer | null = null;
   let healthServer: Server | null = null;
+  let dashboard: DashboardServer | null = null;
 
   logger.info(`Claude Code PR Reviewer v${VERSION} starting`, { mode: config.mode, repos: config.repos.map((r) => `${r.owner}/${r.repo}`), dryRun: config.review.dryRun });
   if (config.review.dryRun) {
@@ -228,6 +232,19 @@ function main(): void {
     auditLogger.serverStarted("HealthServer", config.webhook.port);
   }
 
+  // Register hot-reload callbacks
+  configManager.onChange((newConfig) => {
+    if (poller) poller.updateConfig(newConfig);
+    if (webhook) webhook.updateConfig(newConfig);
+    reviewer.updateConfig(newConfig);
+    logger.info("Hot-reload: config updated for poller, webhook, and reviewer");
+  });
+
+  // Start dashboard server on admin port
+  const dashboardPort = config.dashboard?.port ?? 3001;
+  dashboard = new DashboardServer(configManager, logger, store, metrics, { version: VERSION, startTime: START_TIME });
+  dashboard.start(dashboardPort);
+
   // Startup recovery: check for PRs that need attention after restart
   // This is especially important in webhook-only mode where we don't poll
   recoverPendingReviews(config, store, reviewer, logger).catch((err) => {
@@ -242,6 +259,7 @@ function main(): void {
     logger.info("Shutting down...");
     await poller?.stop();
     await webhook?.stop();
+    await dashboard?.stop();
     if (healthServer) {
       const closePromise = new Promise<void>((resolve) => healthServer!.close(() => resolve()));
       healthServer.closeAllConnections();

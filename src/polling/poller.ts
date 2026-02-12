@@ -24,6 +24,11 @@ export class Poller {
     private auditLogger?: import("../audit/logger.js").AuditLogger,
   ) {}
 
+  /** Hot-reload: swap the config reference for the next poll cycle. */
+  updateConfig(config: AppConfig): void {
+    this.config = config;
+  }
+
   start(): void {
     this.logger.info("Polling started", { intervalSeconds: this.config.polling.intervalSeconds });
     this.running = true;

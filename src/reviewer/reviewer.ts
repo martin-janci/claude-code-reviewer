@@ -95,6 +95,11 @@ export class Reviewer {
     ];
   }
 
+  /** Hot-reload: swap the config reference for subsequent reviews. */
+  updateConfig(config: AppConfig): void {
+    this.config = config;
+  }
+
   /**
    * Acquire a slot in the concurrency pool.
    * Returns a release function to call when done.
