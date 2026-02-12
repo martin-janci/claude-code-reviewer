@@ -34,6 +34,8 @@ The dashboard runs on a **separate HTTP server** from the webhook endpoint (port
 │  GET  /metrics   │     │  PUT  /api/config │  ← update config
 │                  │     │  POST /api/config/validate │
 │                  │     │  GET  /api/health  │
+│                  │     │  GET  /api/claude/version │
+│                  │     │  POST /api/claude/update  │
 └──────────────────┘     └──────────────────┘
          │                        │
          └────────┬───────────────┘
@@ -108,6 +110,41 @@ Response:
 
 Returns service health, uptime, PR state counts, and metrics snapshot.
 
+### `GET /api/claude/version`
+
+Returns the current Claude CLI version.
+
+```bash
+curl http://localhost:3001/api/claude/version \
+  -H "Authorization: Bearer my-secret-token"
+```
+
+Response:
+
+```json
+{
+  "version": "1.0.16 (Claude Code)"
+}
+```
+
+### `POST /api/claude/update`
+
+Runs `npm install -g @anthropic-ai/claude-code` to update the Claude CLI. Returns before/after version. Only one update can run at a time (concurrent requests get `409 Conflict`).
+
+```bash
+curl -X POST http://localhost:3001/api/claude/update \
+  -H "Authorization: Bearer my-secret-token"
+```
+
+Response:
+
+```json
+{
+  "before": "1.0.15 (Claude Code)",
+  "after": "1.0.16 (Claude Code)"
+}
+```
+
 ## Dashboard UI
 
 The UI has five tabs:
@@ -118,7 +155,7 @@ The UI has five tabs:
 | **Review** | All `review.*` fields — behavior, limits, timeouts, paths |
 | **Features** | Jira, auto-description, auto-label, Slack, audit, autofix (each with enable/disable toggle) |
 | **Repos** | Dynamic list of owner/repo entries with add/remove |
-| **Status** | Read-only health, uptime, PR state counts, metrics |
+| **Status** | Read-only health, uptime, PR state counts, metrics, Claude CLI version + update button |
 
 ### UI Features
 
@@ -189,6 +226,7 @@ Config writes are rate-limited to **10 per minute** (in-memory counter) to preve
 |----------|------------|-------------|
 | `DASHBOARD_PORT` | `dashboard.port` | Dashboard server port (default: `3001`) |
 | `DASHBOARD_TOKEN` | `dashboard.token` | Bearer token for dashboard auth |
+| `CLAUDE_AUTO_UPDATE` | — | Set to `true` to auto-update Claude CLI on startup |
 
 Environment variable overrides always take precedence over config file values. The dashboard UI shows which fields are overridden and by which env var.
 

@@ -834,6 +834,19 @@ export function getDashboardHtml(): string {
   <div class="tab-panel" id="panel-status">
     <div class="status-grid" id="status-grid"></div>
     <div class="section">
+      <div class="section-header">Claude CLI</div>
+      <div class="section-body">
+        <div class="field">
+          <label>Version</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <code id="claude-version" style="font-family:var(--mono);font-size:13px;color:var(--text-muted)">Loading...</code>
+            <button class="btn btn-sm" id="claude-update-btn" onclick="updateClaudeCli()">Update CLI</button>
+          </div>
+        </div>
+        <div id="claude-update-status" style="display:none;margin-top:12px;padding:12px;background:var(--surface2);border-radius:6px;font-size:13px;font-family:var(--mono)"></div>
+      </div>
+    </div>
+    <div class="section">
       <div class="section-header">Service Info</div>
       <div class="section-body">
         <pre id="status-json" style="font-family:var(--mono);font-size:12px;white-space:pre-wrap;color:var(--text-muted)">Loading...</pre>
@@ -1247,6 +1260,58 @@ export function getDashboardHtml(): string {
       document.getElementById('status-json').textContent = JSON.stringify(data, null, 2);
     } catch (err) {
       document.getElementById('status-json').textContent = 'Error: ' + err.message;
+    }
+
+    // Also load Claude CLI version
+    loadClaudeVersion();
+  };
+
+  async function loadClaudeVersion() {
+    const el = document.getElementById('claude-version');
+    try {
+      const res = await fetch('/api/claude/version');
+      const data = await res.json();
+      el.textContent = data.version || 'unknown';
+      el.style.color = 'var(--text)';
+    } catch {
+      el.textContent = 'unavailable';
+      el.style.color = 'var(--text-muted)';
+    }
+  }
+
+  window.updateClaudeCli = async function() {
+    const btn = document.getElementById('claude-update-btn');
+    const statusEl = document.getElementById('claude-update-status');
+    btn.disabled = true;
+    btn.textContent = 'Updating...';
+    statusEl.style.display = 'block';
+    statusEl.style.color = 'var(--text-muted)';
+    statusEl.textContent = 'Running npm install -g @anthropic-ai/claude-code ...';
+
+    try {
+      const res = await fetch('/api/claude/update', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) {
+        statusEl.style.color = 'var(--danger)';
+        statusEl.textContent = 'Update failed: ' + (data.error || 'Unknown error');
+        showToast('Claude CLI update failed', 'error');
+      } else {
+        const changed = data.before !== data.after;
+        statusEl.style.color = changed ? 'var(--success)' : 'var(--text)';
+        statusEl.textContent = changed
+          ? 'Updated: ' + data.before + ' -> ' + data.after
+          : 'Already up to date: ' + data.after;
+        showToast(changed ? 'Claude CLI updated' : 'Claude CLI already up to date', 'success');
+        document.getElementById('claude-version').textContent = data.after;
+        document.getElementById('claude-version').style.color = 'var(--text)';
+      }
+    } catch (err) {
+      statusEl.style.color = 'var(--danger)';
+      statusEl.textContent = 'Update failed: ' + err.message;
+      showToast('Claude CLI update failed', 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Update CLI';
     }
   };
 

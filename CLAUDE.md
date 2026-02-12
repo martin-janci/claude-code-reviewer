@@ -96,6 +96,7 @@ GITHUB_TOKEN=ghp_xxx node dist/index.js  # Production
 | Auto-description | `features/auto-description.ts`, `.claude/skills/auto-description-prompt/skill.md` |
 | Auto-labeling | `features/auto-label.ts`, `reviewer/reviewer.ts` |
 | Dashboard | `dashboard/server.ts`, `dashboard/html.ts`, `config-manager.ts` |
+| Claude CLI update | `dashboard/server.ts` (`/api/claude/*`), `entrypoint.sh` (auto-update) |
 | Hot-reload | `config-manager.ts`, `index.ts` (onChange callbacks) |
 
 ## Commit Conventions
@@ -142,5 +143,5 @@ Before committing changes:
 - **No test framework** — project relies on TypeScript strict mode and manual verification
 - **State file format** is versioned (V2) — changes to `PRState` must be backward-compatible or add migration logic in `store.ts`
 - **`gh` CLI** must be available on PATH with a valid `GH_TOKEN`
-- **`claude` CLI** must be authenticated (Docker mounts `.claude` volume)
+- **`claude` CLI** is installed via npm at build time (`Dockerfile`). In Kubernetes, auth is injected via an init container from a Secret into a writable PVC. Set `CLAUDE_AUTO_UPDATE=true` to auto-update on startup
 - **Webhook signature** verification uses HMAC-SHA256 with timing-safe comparison — don't weaken this

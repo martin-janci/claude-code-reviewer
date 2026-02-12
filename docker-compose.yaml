@@ -5,16 +5,15 @@ services:
     environment:
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
+      - CLAUDE_AUTO_UPDATE=${CLAUDE_AUTO_UPDATE:-false}
     volumes:
-      # IMPORTANT: Mount Claude auth to BOTH /root/.claude and /home/node/.claude
-      # Some operations (git, gh) may run as root, others as node user
-      - claude-auth:/root/.claude
       - claude-auth:/home/node/.claude
       - ./.claude/skills:/home/node/.claude/skills:ro
       - ./config.yaml:/app/config.yaml:ro
       - reviewer-data:/app/data
     ports:
       - "3000:3000"
+      - "3001:3001"
     restart: unless-stopped
 
 volumes:
