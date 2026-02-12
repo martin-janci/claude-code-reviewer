@@ -277,7 +277,7 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
   }
 
   userPrompt += `## Diff\n\`\`\`diff\n${diff}\n\`\`\`\n\n`;
-  userPrompt += `## Output Requirements\nCRITICAL: Your entire response must be a single JSON object and nothing else. Do NOT include any thinking, analysis, explanation, or commentary before or after the JSON. Do NOT wrap the JSON in markdown code fences. Output ONLY the raw JSON object matching this schema:\n${JSON_SCHEMA}\n\nVerdict rules:\n- REQUEST_CHANGES if any finding has "blocking": true\n- APPROVE if no issues or only non-blocking suggestions\n- COMMENT for non-blocking observations worth noting\n\nResolutions array: only include when re-reviewing (previous findings were provided). Omit the field entirely on first reviews.\n\nRemember: Output ONLY valid JSON. No text before or after the JSON object.`;
+  userPrompt += `## Output Requirements\nOutput ONLY a JSON object matching this schema — no markdown, no fences, no extra text:\n${JSON_SCHEMA}\n\nVerdict rules:\n- REQUEST_CHANGES if any finding has "blocking": true\n- APPROVE if no issues or only non-blocking suggestions\n- COMMENT for non-blocking observations worth noting\n\nResolutions array: only include when re-reviewing (previous findings were provided). Omit the field entirely on first reviews.`;
 
   const args = ["-p", "--output-format", "text"];
 
