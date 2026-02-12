@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "jira": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-jira-stdio",
+        "-e",
+        "JIRA_HOST=https://papayapos.atlassian.net",
+        "-e",
+        "JIRA_EMAIL=martin.janci@papayapos.sk",
+        "-e",
+        "JIRA_API_TOKEN=ATATT3xFfGF0pdjhqvpj4K-DNcc4j2QcCaSkz5S60QwO9hc7UXPWT-7pJU5zVMzemH7g4r9KZ7fqkooGUJdqKmQtS0Zn6IAH26JqBvy9KIycufBVlo05Xp6l7mAjLM4KeCnwqZsUWjgT9RM4fGsLEzsvTkbUgyyaX-uI2QgYpa7XKajxT5lKHKk=F924CC74"
+      ],
+      "env": {}
+    }
+  }
+}

@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.18.0
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.16.0...v1.18.0)
+
+### 🚀 Enhancements
+
+- Add web configuration dashboard with hot-reload ([#13](https://github.com/martin-janci/claude-code-reviewer/pull/13))
+
+### ❤️ Contributors
+
+- Martin Janči ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.17.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.16.0...v1.17.0)
