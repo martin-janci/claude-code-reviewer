@@ -237,7 +237,8 @@ function main(): void {
     if (poller) poller.updateConfig(newConfig);
     if (webhook) webhook.updateConfig(newConfig);
     reviewer.updateConfig(newConfig);
-    logger.info("Hot-reload: config updated for poller, webhook, and reviewer");
+    if (cloneManager) cloneManager.updateConfig(newConfig.github.token, newConfig.review.cloneTimeoutMs);
+    logger.info("Hot-reload: config updated for poller, webhook, reviewer, and cloneManager");
   });
 
   // Start dashboard server on admin port

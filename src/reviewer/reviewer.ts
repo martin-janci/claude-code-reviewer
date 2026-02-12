@@ -95,7 +95,13 @@ export class Reviewer {
     ];
   }
 
-  /** Hot-reload: swap the config reference for subsequent reviews. */
+  /**
+   * Hot-reload: swap the config reference for subsequent reviews.
+   * Note: reviews already in-flight will continue using the config snapshot they
+   * captured at the start of reviewPR(). Only reviews that begin after this call
+   * will pick up the new config. This is intentional — mid-flight config changes
+   * could cause inconsistent behavior within a single review.
+   */
   updateConfig(config: AppConfig): void {
     this.config = config;
   }
