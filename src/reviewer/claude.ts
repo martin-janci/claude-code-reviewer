@@ -164,7 +164,7 @@ function validateStructuredReview(obj: unknown): StructuredReview | null {
 
 /**
  * Attempt to parse Claude's output as a structured JSON review.
- * Two-tier fallback: direct parse → fence extraction → null (freeform).
+ * Three-tier fallback: direct parse → fence extraction → trailing JSON extraction → null (freeform).
  */
 export function parseStructuredReview(stdout: string): StructuredReview | null {
   const trimmed = stdout.trim();
@@ -187,6 +187,46 @@ export function parseStructuredReview(stdout: string): StructuredReview | null {
       if (result) return result;
     } catch {
       // Invalid JSON in fence
+    }
+  }
+
+  // Tier 3: extract trailing JSON object from mixed text output.
+  // Claude sometimes outputs reasoning/thinking text before the JSON object.
+  // Find the last top-level { ... } block by scanning from the end.
+  const lastBrace = trimmed.lastIndexOf("}");
+  if (lastBrace !== -1) {
+    // Walk backwards to find the matching opening brace
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    for (let i = lastBrace; i >= 0; i--) {
+      const ch = trimmed[i];
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (ch === "\\" && inString) {
+        escape = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
+      if (ch === "}") depth++;
+      if (ch === "{") depth--;
+      if (depth === 0) {
+        const candidate = trimmed.slice(i, lastBrace + 1);
+        try {
+          const obj = JSON.parse(candidate);
+          const result = validateStructuredReview(obj);
+          if (result) return result;
+        } catch {
+          // Not valid JSON at this position
+        }
+        break;
+      }
     }
   }
 
@@ -237,7 +277,7 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
   }
 
   userPrompt += `## Diff\n\`\`\`diff\n${diff}\n\`\`\`\n\n`;
-  userPrompt += `## Output Requirements\nOutput ONLY a JSON object matching this schema — no markdown, no fences, no extra text:\n${JSON_SCHEMA}\n\nVerdict rules:\n- REQUEST_CHANGES if any finding has "blocking": true\n- APPROVE if no issues or only non-blocking suggestions\n- COMMENT for non-blocking observations worth noting\n\nResolutions array: only include when re-reviewing (previous findings were provided). Omit the field entirely on first reviews.`;
+  userPrompt += `## Output Requirements\nCRITICAL: Your entire response must be a single JSON object and nothing else. Do NOT include any thinking, analysis, explanation, or commentary before or after the JSON. Do NOT wrap the JSON in markdown code fences. Output ONLY the raw JSON object matching this schema:\n${JSON_SCHEMA}\n\nVerdict rules:\n- REQUEST_CHANGES if any finding has "blocking": true\n- APPROVE if no issues or only non-blocking suggestions\n- COMMENT for non-blocking observations worth noting\n\nResolutions array: only include when re-reviewing (previous findings were provided). Omit the field entirely on first reviews.\n\nRemember: Output ONLY valid JSON. No text before or after the JSON object.`;
 
   const args = ["-p", "--output-format", "text"];
 
