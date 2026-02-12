@@ -190,43 +190,26 @@ export function parseStructuredReview(stdout: string): StructuredReview | null {
     }
   }
 
-  // Tier 3: extract trailing JSON object from mixed text output.
+  // Tier 3: extract JSON object from mixed text output.
   // Claude sometimes outputs reasoning/thinking text before the JSON object.
-  // Find the last top-level { ... } block by scanning from the end.
+  // Strategy: find each '{' in the text (searching from the end) and try
+  // JSON.parse on the substring from that '{' to the last '}'. This is
+  // simple, correct, and delegates all parsing complexity to JSON.parse.
   const lastBrace = trimmed.lastIndexOf("}");
   if (lastBrace !== -1) {
-    // Walk backwards to find the matching opening brace
-    let depth = 0;
-    let inString = false;
-    let escape = false;
-    for (let i = lastBrace; i >= 0; i--) {
-      const ch = trimmed[i];
-      if (escape) {
-        escape = false;
-        continue;
+    let searchFrom = lastBrace;
+    while (searchFrom >= 0) {
+      const openIdx = trimmed.lastIndexOf("{", searchFrom);
+      if (openIdx === -1) break;
+      const candidate = trimmed.slice(openIdx, lastBrace + 1);
+      try {
+        const obj = JSON.parse(candidate);
+        const result = validateStructuredReview(obj);
+        if (result) return result;
+      } catch {
+        // Not valid JSON starting here — try the next '{' to the left
       }
-      if (ch === "\\" && inString) {
-        escape = true;
-        continue;
-      }
-      if (ch === '"') {
-        inString = !inString;
-        continue;
-      }
-      if (inString) continue;
-      if (ch === "}") depth++;
-      if (ch === "{") depth--;
-      if (depth === 0) {
-        const candidate = trimmed.slice(i, lastBrace + 1);
-        try {
-          const obj = JSON.parse(candidate);
-          const result = validateStructuredReview(obj);
-          if (result) return result;
-        } catch {
-          // Not valid JSON at this position
-        }
-        break;
-      }
+      searchFrom = openIdx - 1;
     }
   }
 
