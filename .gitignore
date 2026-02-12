@@ -4,3 +4,4 @@ data/
 *.log
 .env
 *.txt
+.mcp.json

@@ -26,7 +26,7 @@ spec:
         - |
           echo "[init] Copying Claude auth credentials into PVC..."
           if [ -d /auth-secret ] && [ "$(ls -A /auth-secret 2>/dev/null)" ]; then
-            cp -f /auth-secret/* /home/node/.claude/ 2>/dev/null || true
+            cp -rf /auth-secret/* /home/node/.claude/ 2>/dev/null || true
             chown -R 1000:1000 /home/node/.claude/
             echo "[init] Auth credentials copied."
           else
@@ -157,6 +157,6 @@ spec:
       - name: claude-auth-secret
         secret:
           secretName: claude-reviewer-claude-auth
-          optional: true  # Make optional if not using authentication
+          optional: true  # Omit secret if Claude CLI doesn't require auth credentials
 
       restartPolicy: Always

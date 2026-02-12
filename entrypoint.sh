@@ -5,10 +5,11 @@ set -e
 export PATH="/home/node/.local/bin:$PATH"
 
 # --- PVC initialization ---
-# If .claude is empty (fresh PVC mount), seed from baked-in defaults
-if [ ! -d "/home/node/.claude/skills" ]; then
+# If .claude is empty or missing key content (fresh PVC mount), seed from baked-in defaults
+if [ ! -f "/home/node/.claude/.seeded" ]; then
   echo "[entrypoint] Empty .claude detected — seeding from defaults..."
   cp -a /home/node/.claude-defaults/. /home/node/.claude/
+  touch /home/node/.claude/.seeded
 fi
 
 # Ensure required subdirectories exist in .claude
