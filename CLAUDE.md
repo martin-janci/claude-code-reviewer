@@ -12,9 +12,13 @@ Automated PR code review service using Claude Code CLI. Watches GitHub PRs via p
 src/
 ├── index.ts                     # Entry point, wiring, graceful shutdown
 ├── config.ts                    # YAML config loading + env var overrides
+├── config-manager.ts            # Hot-reload config lifecycle (persistence, validation, callbacks)
 ├── types.ts                     # All TypeScript interfaces and types
 ├── clone/
 │   └── manager.ts               # Bare clones + git worktrees for codebase access
+├── dashboard/
+│   ├── server.ts                # Admin dashboard HTTP server (separate port)
+│   └── html.ts                  # Embedded single-page dashboard UI
 ├── features/
 │   ├── jira.ts                  # Jira key extraction + REST API validation
 │   ├── auto-description.ts      # PR description generation via Claude CLI
@@ -52,7 +56,8 @@ config.yaml                                      # Runtime configuration
 - **`shouldReview()`** is the single decision point — all review gating logic lives in `decisions.ts`
 - **Codebase access** via bare clones + git worktrees (`clone/manager.ts`). Each PR gets an isolated worktree sharing the same object store. Claude receives read-only tools (`Read`, `Grep`, `Glob`) scoped to the worktree.
 - **PR Reviews API** — reviews are posted via `POST /pulls/{n}/reviews` with `event: "COMMENT"` (never approve/block from the bot). Inline comments use Conventional Comments format.
-- **Structured JSON output** from Claude with two-tier fallback parsing (direct → fence extraction → freeform legacy). Invalid JSON gracefully degrades to issue comment posting.
+- **Structured JSON output** from Claude with three-tier fallback parsing (direct → fence extraction → trailing JSON extraction → freeform legacy). Invalid JSON gracefully degrades to issue comment posting.
+- **Admin dashboard** runs on a separate port (default `3001`) from the webhook server. Config changes are applied via hot-reload where possible; fields that require restart are clearly marked. See `docs/DASHBOARD.md`.
 - **Diff parser** validates line numbers — Claude's line references are snapped to the nearest commentable line or promoted to the top-level review body.
 
 ## PR State Flow
@@ -90,6 +95,8 @@ GITHUB_TOKEN=ghp_xxx node dist/index.js  # Production
 | Jira integration | `features/jira.ts`, `reviewer/formatter.ts` (JiraLink), `reviewer/reviewer.ts` |
 | Auto-description | `features/auto-description.ts`, `.claude/skills/auto-description-prompt/skill.md` |
 | Auto-labeling | `features/auto-label.ts`, `reviewer/reviewer.ts` |
+| Dashboard | `dashboard/server.ts`, `dashboard/html.ts`, `config-manager.ts` |
+| Hot-reload | `config-manager.ts`, `index.ts` (onChange callbacks) |
 
 ## Commit Conventions
 
