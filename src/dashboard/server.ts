@@ -1,4 +1,5 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
+import { timingSafeEqual } from "node:crypto";
 import type { ConfigManager } from "../config-manager.js";
 import type { Logger } from "../logger.js";
 import type { StateStore } from "../state/store.js";
@@ -152,7 +153,14 @@ export class DashboardServer {
     if (!token) return true; // No auth configured
 
     const authHeader = req.headers.authorization;
-    if (!authHeader || authHeader !== `Bearer ${token}`) {
+    const expected = `Bearer ${token}`;
+
+    // Use timing-safe comparison to prevent token enumeration via timing attacks
+    if (
+      !authHeader ||
+      authHeader.length !== expected.length ||
+      !timingSafeEqual(Buffer.from(authHeader), Buffer.from(expected))
+    ) {
       res.writeHead(401, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Unauthorized" }));
       return false;
@@ -164,11 +172,24 @@ export class DashboardServer {
     return new Promise((resolve) => {
       const chunks: Buffer[] = [];
       let len = 0;
+      let resolved = false;
       const MAX = 1024 * 1024; // 1MB
+      const TIMEOUT = 10_000; // 10s max to receive full body
+
+      const timer = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          resolve(null);
+          req.destroy();
+        }
+      }, TIMEOUT);
 
       req.on("data", (chunk: Buffer) => {
+        if (resolved) return;
         len += chunk.length;
         if (len > MAX) {
+          resolved = true;
+          clearTimeout(timer);
           resolve(null);
           req.destroy();
           return;
@@ -176,13 +197,21 @@ export class DashboardServer {
         chunks.push(chunk);
       });
       req.on("end", () => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timer);
         if (len === 0) {
           resolve(null);
           return;
         }
         resolve(Buffer.concat(chunks).toString("utf-8"));
       });
-      req.on("error", () => resolve(null));
+      req.on("error", () => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timer);
+        resolve(null);
+      });
     });
   }
 }

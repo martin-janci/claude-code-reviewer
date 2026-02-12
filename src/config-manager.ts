@@ -15,6 +15,13 @@ import {
   loadConfig,
 } from "./config.js";
 
+/**
+ * Unique sentinel value used to represent redacted secrets in API responses.
+ * Using a UUID-style string instead of plain "[REDACTED]" to avoid collisions
+ * with legitimate user values.
+ */
+export const REDACTED_SENTINEL = "$$REDACTED_b7e2c4a9$$";
+
 export type ConfigChangeCallback = (
   newConfig: AppConfig,
   oldConfig: AppConfig,
@@ -24,6 +31,7 @@ export type ConfigChangeCallback = (
 export interface ConfigUpdateResult {
   success: boolean;
   errors?: string[];
+  warnings?: string[];
   restartRequired?: boolean;
 }
 
@@ -34,6 +42,7 @@ export class ConfigManager {
   private writeCount = 0;
   private writeWindowStart = 0;
   private static readonly MAX_WRITES_PER_MINUTE = 10;
+  private static readonly MAX_YAML_SIZE = 512 * 1024; // 512KB limit for config files
 
   constructor(
     private configPath: string,
@@ -44,7 +53,13 @@ export class ConfigManager {
 
     // Store original YAML for serializeConfig to know what was in the file
     try {
-      this.originalYaml = readFileSync(configPath, "utf-8");
+      const raw = readFileSync(configPath, "utf-8");
+      if (raw.length > ConfigManager.MAX_YAML_SIZE) {
+        this.logger.warn("Config file exceeds size limit, treating as empty for serialization", { size: raw.length, limit: ConfigManager.MAX_YAML_SIZE });
+        this.originalYaml = "";
+      } else {
+        this.originalYaml = raw;
+      }
     } catch {
       this.originalYaml = "";
     }
@@ -66,7 +81,7 @@ export class ConfigManager {
     for (const field of SENSITIVE_FIELDS) {
       const value = getByPath(redacted, field);
       if (value && value !== "") {
-        setByPath(redacted, field, "[REDACTED]");
+        setByPath(redacted, field, REDACTED_SENTINEL);
       }
     }
 
@@ -105,6 +120,17 @@ export class ConfigManager {
 
     // Deep-merge the partial update
     this.deepMerge(candidate, partial, "", changedPaths);
+
+    // Detect fields the user tried to change that are overridden by env vars
+    const envOverrides = getActiveEnvOverrides();
+    const clobberedFields = changedPaths.filter((p) => envOverrides.has(p));
+    const warnings: string[] = [];
+    if (clobberedFields.length > 0) {
+      for (const field of clobberedFields) {
+        const envName = Object.entries(ENV_VAR_MAP).find(([, v]) => v === field)?.[0] ?? "unknown";
+        warnings.push(`"${field}" is overridden by env var ${envName} — your change will be saved to config.yaml but won't take effect until the env var is removed`);
+      }
+    }
 
     // Re-apply env var overrides (env vars always win)
     this.applyEnvOverrides(candidate);
@@ -148,9 +174,13 @@ export class ConfigManager {
       }
     }
 
-    this.logger.info("Config updated", { changedPaths, restartRequired });
+    this.logger.info("Config updated", { changedPaths, restartRequired, clobberedFields });
 
-    return { success: true, restartRequired };
+    return {
+      success: true,
+      restartRequired,
+      warnings: warnings.length > 0 ? warnings : undefined,
+    };
   }
 
   /** Validate a partial config update without saving (dry-run). */
@@ -185,8 +215,8 @@ export class ConfigManager {
       const sourceValue = source[key];
       const targetValue = target[key];
 
-      // Handle "[REDACTED]" — skip sensitive fields that weren't actually changed
-      if (sourceValue === "[REDACTED]" && SENSITIVE_FIELDS.includes(dotPath as any)) {
+      // Handle redacted sentinel — skip sensitive fields that weren't actually changed
+      if (sourceValue === REDACTED_SENTINEL && SENSITIVE_FIELDS.includes(dotPath as any)) {
         continue;
       }
 

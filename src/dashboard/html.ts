@@ -1149,7 +1149,12 @@ export function getDashboardHtml(): string {
       const result = await res.json();
       if (result.success) {
         dirty = false;
-        showToast('Configuration saved successfully', 'success');
+        const warnings = result.warnings || [];
+        if (warnings.length > 0) {
+          showToast('Saved with warnings: ' + warnings.join('; '), 'success');
+        } else {
+          showToast('Configuration saved successfully', 'success');
+        }
         if (result.restartRequired) {
           document.getElementById('restart-banner').classList.add('visible');
         } else {
