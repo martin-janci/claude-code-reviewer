@@ -220,7 +220,9 @@ export class ConfigManager {
         continue;
       }
 
-      // If source is an array, replace entirely
+      // Arrays use replace semantics (not union/append). An empty array in the
+      // update will clear the target array. This is intentional — the dashboard
+      // always sends the full array (e.g. repos, excludePaths) so replace is correct.
       if (Array.isArray(sourceValue)) {
         if (JSON.stringify(targetValue) !== JSON.stringify(sourceValue)) {
           changedPaths.push(dotPath);

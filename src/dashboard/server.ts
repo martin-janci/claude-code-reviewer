@@ -48,8 +48,12 @@ export class DashboardServer {
   }
 
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    // Auth check
-    if (!this.checkAuth(req, res)) return;
+    // Auth check — reject early before any further processing
+    if (!this.isAuthorized(req)) {
+      res.writeHead(401, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Unauthorized" }));
+      return;
+    }
 
     const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
     const path = url.pathname;
@@ -147,7 +151,8 @@ export class DashboardServer {
     res.end(JSON.stringify({ error: "Not found" }));
   }
 
-  private checkAuth(req: IncomingMessage, res: ServerResponse): boolean {
+  /** Pure auth check — returns true if request is authorized, false otherwise. */
+  private isAuthorized(req: IncomingMessage): boolean {
     const config = this.configManager.getConfig();
     const token = config.dashboard?.token;
     if (!token) return true; // No auth configured
@@ -161,8 +166,6 @@ export class DashboardServer {
       authHeader.length !== expected.length ||
       !timingSafeEqual(Buffer.from(authHeader), Buffer.from(expected))
     ) {
-      res.writeHead(401, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Unauthorized" }));
       return false;
     }
     return true;
