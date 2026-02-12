@@ -12,5 +12,9 @@ spec:
     targetPort: 3000
     protocol: TCP
     name: http
+  - port: 3001
+    targetPort: 3001
+    protocol: TCP
+    name: dashboard
   selector:
     app: claude-reviewer

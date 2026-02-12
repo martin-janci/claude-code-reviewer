@@ -1,4 +1,5 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
+import { execFile } from "node:child_process";
 import { timingSafeEqual } from "node:crypto";
 import type { ConfigManager } from "../config-manager.js";
 import type { Logger } from "../logger.js";
@@ -8,6 +9,7 @@ import { getDashboardHtml } from "./html.js";
 
 export class DashboardServer {
   private server: Server | null = null;
+  private updateInProgress = false;
 
   constructor(
     private configManager: ConfigManager,
@@ -147,6 +149,45 @@ export class DashboardServer {
       return;
     }
 
+    // GET /api/claude/version — return current Claude CLI version
+    if (req.method === "GET" && path === "/api/claude/version") {
+      try {
+        const version = await this.getClaudeVersion();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ version }));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    // POST /api/claude/update — update Claude CLI via npm
+    if (req.method === "POST" && path === "/api/claude/update") {
+      if (this.updateInProgress) {
+        res.writeHead(409, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Update already in progress" }));
+        return;
+      }
+
+      this.updateInProgress = true;
+      try {
+        const before = await this.getClaudeVersion().catch(() => "unknown");
+        await this.runNpmInstall();
+        const after = await this.getClaudeVersion().catch(() => "unknown");
+        this.logger.info("Claude CLI updated", { before, after });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ before, after }));
+      } catch (err) {
+        this.logger.error("Claude CLI update failed", { error: String(err) });
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      } finally {
+        this.updateInProgress = false;
+      }
+      return;
+    }
+
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "Not found" }));
   }
@@ -169,6 +210,32 @@ export class DashboardServer {
       return false;
     }
     return true;
+  }
+
+  private getClaudeVersion(): Promise<string> {
+    return new Promise((resolve, reject) => {
+      execFile("claude", ["--version"], { timeout: 10_000 }, (err, stdout) => {
+        if (err) return reject(err);
+        resolve(stdout.trim());
+      });
+    });
+  }
+
+  private runNpmInstall(): Promise<string> {
+    return new Promise((resolve, reject) => {
+      execFile(
+        "npm",
+        ["install", "-g", "@anthropic-ai/claude-code"],
+        {
+          timeout: 120_000,
+          env: { ...process.env, NPM_CONFIG_PREFIX: "/home/node/.local" },
+        },
+        (err, stdout, stderr) => {
+          if (err) return reject(new Error(stderr || String(err)));
+          resolve(stdout.trim());
+        },
+      );
+    });
   }
 
   private readBody(req: IncomingMessage): Promise<string | null> {

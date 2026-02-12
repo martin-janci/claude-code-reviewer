@@ -11,3 +11,15 @@ spec:
       storage: 10Gi  # Adjust based on number of repos
   # Optional: Specify storage class
   # storageClassName: your-storage-class
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: claude-reviewer-claude-config
+  namespace: claude-reviewer
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

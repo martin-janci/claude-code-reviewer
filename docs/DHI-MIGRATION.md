@@ -16,18 +16,18 @@ Docker Hardened Images (dhi.io) is a Docker-operated service in the Google Cloud
 ## Migration Status
 
 ### Completed
-- ✅ Build stage: `node:20-alpine` → `dhi.io/node:20-alpine3.21`
+- ✅ Build stage: `node:20-alpine` → `dhi.io/node:20-alpine3.22-dev`
+- ✅ Runtime stage: `registry.rlt.sk/claude-code-custom:latest` → `dhi.io/node:20-alpine3.22-dev` + Claude CLI via npm
 - ✅ Kubernetes manifests: Updated to use `ghcr.io/papayapos/claude-code-reviewer`
 - ✅ PodMonitor: Added for future Prometheus integration (currently commented out)
+- ✅ Claude CLI: Installed via `npm install -g @anthropic-ai/claude-code` (no custom base image)
+- ✅ PVC for `.claude`: Writable volume with init container for auth credential injection
 
 ### Pending
 - ⏳ Node 24 upgrade: Requires compatibility testing before migration
   - Current: Node 20 LTS (support until April 2026)
   - Target: `dhi.io/node:24-alpine3.23-dev` (support until April 2028)
   - Needs: Testing of dependencies and runtime compatibility
-- ⏳ Runtime stage: Still using `registry.rlt.sk/claude-code-custom:latest`
-  - Needs evaluation of custom image requirements
-  - Consider migrating to `dhi.io/node:20-alpine3.21` + separate Claude CLI setup
 
 ## Prerequisites
 
@@ -58,36 +58,30 @@ For more details, see: https://papayapos.atlassian.net/wiki/spaces/PTD/pages/689
 The build stage has been migrated to use DHI with Node 20:
 
 ```dockerfile
-FROM dhi.io/node:20-alpine3.21 AS build
+FROM dhi.io/node:20-alpine3.22-dev AS build
 ```
 
 This maintains compatibility with the current Node 20 runtime while gaining DHI security benefits.
 
-### For Runtime Stage (Future Work)
+### For Runtime Stage (Completed)
 
-Current runtime stage uses a custom base image with Claude CLI pre-installed. To fully migrate to DHI:
+The runtime stage now uses DHI base with Claude CLI installed via npm:
 
-1. Evaluate custom image dependencies:
-   - Claude CLI installation
-   - GitHub CLI (gh)
-   - Git
-   - Other custom configurations
+```dockerfile
+FROM dhi.io/node:20-alpine3.22-dev
+RUN apk add --no-cache github-cli git su-exec
+ENV NPM_CONFIG_PREFIX=/home/node/.local
+RUN mkdir -p /home/node/.local && chown node:node /home/node/.local \
+    && su-exec node npm install -g @anthropic-ai/claude-code \
+    && su-exec node npm cache clean --force
+```
 
-2. Option A: Migrate to DHI base + install tools
-   ```dockerfile
-   FROM dhi.io/node:20-alpine3.21
-   RUN apk add --no-cache github-cli git
-   # Add Claude CLI installation steps
-   ```
-
-3. Option B: Keep custom base but rebuild from DHI
-   - Rebuild `claude-code-custom` image using `dhi.io/node:20-alpine3.21`
-   - Maintain custom tooling layer
-
-4. Option C (Future): Upgrade to Node 24 after testing
-   - Test all dependencies with Node 24
-   - Verify runtime compatibility
-   - Then migrate to `dhi.io/node:24-alpine3.23-dev`
+Key decisions:
+- Claude CLI installed as `node` user (not root) under `/home/node/.local`
+- Version pinnable via `ARG CLAUDE_CLI_VERSION=latest`
+- Auto-update on startup via `CLAUDE_AUTO_UPDATE=true` env var
+- Runtime update via dashboard API (`POST /api/claude/update`)
+- `.claude` directory on a writable PVC (seeded from baked-in defaults on first boot)
 
 ## Kubernetes Considerations
 
