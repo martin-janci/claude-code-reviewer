@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.19.0
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.18.0...v1.19.0)
+
+### 🚀 Enhancements
+
+- Installable & updatable Claude CLI ([#14](https://github.com/martin-janci/claude-code-reviewer/pull/14))
+
+### ❤️ Contributors
+
+- Martin Janči ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.18.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.16.0...v1.18.0)
