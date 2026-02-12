@@ -164,7 +164,7 @@ function validateStructuredReview(obj: unknown): StructuredReview | null {
 
 /**
  * Attempt to parse Claude's output as a structured JSON review.
- * Two-tier fallback: direct parse → fence extraction → null (freeform).
+ * Three-tier fallback: direct parse → fence extraction → trailing JSON extraction → null (freeform).
  */
 export function parseStructuredReview(stdout: string): StructuredReview | null {
   const trimmed = stdout.trim();
@@ -187,6 +187,29 @@ export function parseStructuredReview(stdout: string): StructuredReview | null {
       if (result) return result;
     } catch {
       // Invalid JSON in fence
+    }
+  }
+
+  // Tier 3: extract JSON object from mixed text output.
+  // Claude sometimes outputs reasoning/thinking text before the JSON object.
+  // Strategy: find each '{' in the text (searching from the end) and try
+  // JSON.parse on the substring from that '{' to the last '}'. This is
+  // simple, correct, and delegates all parsing complexity to JSON.parse.
+  const lastBrace = trimmed.lastIndexOf("}");
+  if (lastBrace !== -1) {
+    let searchFrom = lastBrace;
+    while (searchFrom >= 0) {
+      const openIdx = trimmed.lastIndexOf("{", searchFrom);
+      if (openIdx === -1) break;
+      const candidate = trimmed.slice(openIdx, lastBrace + 1);
+      try {
+        const obj = JSON.parse(candidate);
+        const result = validateStructuredReview(obj);
+        if (result) return result;
+      } catch {
+        // Not valid JSON starting here — try the next '{' to the left
+      }
+      searchFrom = openIdx - 1;
     }
   }
 

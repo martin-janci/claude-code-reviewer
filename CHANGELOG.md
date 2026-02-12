@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.17.0
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.16.0...v1.17.0)
+
+### 🚀 Enhancements
+
+- Add web configuration dashboard with hot-reload ([#13](https://github.com/martin-janci/claude-code-reviewer/pull/13))
+  - Browser-based admin dashboard on separate port (default `3001`)
+  - REST API for config CRUD (`GET/PUT /api/config`, `POST /api/config/validate`, `GET /api/health`)
+  - Hot-reload for most config fields without restart
+  - ConfigManager with change notification callbacks, atomic persistence, and rate limiting
+
+### 🩹 Fixes
+
+- Extract structured JSON from mixed Claude output with three-tier fallback parser ([e6a7552](https://github.com/martin-janci/claude-code-reviewer/commit/e6a7552))
+- Timing-safe Bearer token comparison for dashboard auth ([80dc3c8](https://github.com/martin-janci/claude-code-reviewer/commit/80dc3c8))
+- Propagate hot-reload config to CloneManager ([b936ddb](https://github.com/martin-janci/claude-code-reviewer/commit/b936ddb))
+
+### ❤️ Contributors
+
+- Martin Janči <martin.janci@papayapos.sk>
+
 ## v1.16.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.15.0...v1.16.0)

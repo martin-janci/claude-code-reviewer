@@ -94,3 +94,10 @@ features:
     autoApply: false                         # if true, push to PR branch; if false, push to autofix/pr-N branch for review
     maxTurns: 10                             # max Claude agentic turns for autofix session
     timeoutMs: 300000                        # timeout for autofix session (5 min)
+
+# --- Admin Dashboard ---
+# Web UI for viewing and editing config at runtime.
+# Runs on a separate port from the webhook server.
+dashboard:
+  port: 3001               # admin dashboard port — or DASHBOARD_PORT env var
+  # token: ""              # optional bearer token for dashboard auth — or DASHBOARD_TOKEN env var

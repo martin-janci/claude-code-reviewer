@@ -34,6 +34,12 @@ export class CloneManager {
     this.timeoutMs = timeoutMs ?? 120_000;
   }
 
+  /** Hot-reload: update token and timeout from new config. */
+  updateConfig(ghToken?: string, timeoutMs?: number): void {
+    if (ghToken !== undefined) this.ghToken = ghToken;
+    if (timeoutMs !== undefined) this.timeoutMs = timeoutMs;
+  }
+
   /** Redact token from error messages to prevent credential leakage in logs */
   private redactToken(message: string): string {
     if (!this.ghToken) return message;

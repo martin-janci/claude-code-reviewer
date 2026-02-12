@@ -96,6 +96,17 @@ export class Reviewer {
   }
 
   /**
+   * Hot-reload: swap the config reference for subsequent reviews.
+   * Note: reviews already in-flight will continue using the config snapshot they
+   * captured at the start of reviewPR(). Only reviews that begin after this call
+   * will pick up the new config. This is intentional — mid-flight config changes
+   * could cause inconsistent behavior within a single review.
+   */
+  updateConfig(config: AppConfig): void {
+    this.config = config;
+  }
+
+  /**
    * Acquire a slot in the concurrency pool.
    * Returns a release function to call when done.
    * Throws if wait exceeds timeout (default 10 minutes).
