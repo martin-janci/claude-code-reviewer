@@ -77,7 +77,7 @@ function classifyError(err: unknown, phase: ErrorPhase): ErrorKind {
 
 /** Extract retry-after seconds from error messages (e.g. "retry-after: 120" or "retry after 30s"). */
 function extractRetryAfterSeconds(message: string): number | null {
-  const match = message.match(/retry.?after[:\s]*(\d+)/i);
+  const match = message.match(/retry.?after[:\s]*(\d+)(?:s\b)?/i);
   return match ? parseInt(match[1], 10) : null;
 }
 
@@ -653,7 +653,7 @@ export class Reviewer {
         }
         this.metrics?.recordUsage(result.usage);
       } catch (err) {
-        log.warn("Failed to record usage", { error: String(err) });
+        log.warn("Failed to record usage", { error: String(err), sessionId: result.usage?.sessionId });
       }
     }
 

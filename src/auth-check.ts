@@ -5,6 +5,7 @@ export interface AuthStatus {
   authenticated: boolean;
   username?: string;
   error?: string;
+  warning?: string;
   lastChecked: number;
 }
 
@@ -19,9 +20,15 @@ export function checkClaudeAuth(): Promise<Omit<AuthStatus, "lastChecked">> {
     execFile("claude", ["--version"], { timeout: 3000 }, (err, stdout, stderr) => {
       if (err) {
         const errMsg = err.message + stderr;
+        const code = (err as NodeJS.ErrnoException).code;
         // ENOENT = command not found
-        if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        if (code === "ENOENT") {
           resolve({ available: false, authenticated: false, error: "claude CLI not found" });
+          return;
+        }
+        // EACCES = permission denied (exists but not executable)
+        if (code === "EACCES") {
+          resolve({ available: false, authenticated: false, error: "claude CLI not executable (permission denied)" });
           return;
         }
         // Heuristic: error messages containing these strings suggest auth issues
@@ -36,8 +43,7 @@ export function checkClaudeAuth(): Promise<Omit<AuthStatus, "lastChecked">> {
 
       // Check stderr for warnings that might indicate broken/incompatible installation
       if (stderr && stderr.trim()) {
-        const warning = stderr.slice(0, 100);
-        resolve({ available: true, authenticated: true, error: `Warning: ${warning}` });
+        resolve({ available: true, authenticated: true, warning: stderr.slice(0, 100) });
         return;
       }
 
@@ -56,9 +62,15 @@ export function checkGhAuth(): Promise<Omit<AuthStatus, "lastChecked">> {
   return new Promise((resolve) => {
     execFile("gh", ["auth", "status"], { timeout: 3000 }, (err, stdout, stderr) => {
       if (err) {
+        const code = (err as NodeJS.ErrnoException).code;
         // ENOENT = command not found
-        if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        if (code === "ENOENT") {
           resolve({ available: false, authenticated: false, error: "gh CLI not found" });
+          return;
+        }
+        // EACCES = permission denied (exists but not executable)
+        if (code === "EACCES") {
+          resolve({ available: false, authenticated: false, error: "gh CLI not executable (permission denied)" });
           return;
         }
         // gh auth status exits non-zero if not authenticated

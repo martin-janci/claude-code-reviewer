@@ -1577,7 +1577,10 @@ export function getDashboardHtml(): string {
       const data = await res.json();
 
       // Claude auth
-      if (data.claude?.available && data.claude?.authenticated) {
+      if (data.claude?.available && data.claude?.authenticated && data.claude?.warning) {
+        claudeEl.innerHTML = '<span style="color:var(--warning)">&#10003;</span> Authenticated <span style="color:var(--text-muted);font-size:12px">(' + esc(data.claude.warning) + ')</span>';
+        claudeEl.style.color = 'var(--warning)';
+      } else if (data.claude?.available && data.claude?.authenticated) {
         claudeEl.innerHTML = '<span style="color:var(--success)">&#10003;</span> Authenticated';
         claudeEl.style.color = 'var(--success)';
       } else if (data.claude?.available) {

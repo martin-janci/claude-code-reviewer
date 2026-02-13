@@ -172,9 +172,9 @@ export class WebhookServer {
       github: { ...ghStatus, lastChecked: now },
     };
 
-    // Audit auth status
-    this.auditLogger?.authCheck("claude", claudeStatus.available, claudeStatus.authenticated, claudeStatus.error);
-    this.auditLogger?.authCheck("github", ghStatus.available, ghStatus.authenticated, ghStatus.error);
+    // Audit auth status (pass warning as fallback so audit captures CLI stderr warnings too)
+    this.auditLogger?.authCheck("claude", claudeStatus.available, claudeStatus.authenticated, claudeStatus.error ?? claudeStatus.warning);
+    this.auditLogger?.authCheck("github", ghStatus.available, ghStatus.authenticated, ghStatus.error ?? ghStatus.warning);
   }
 
   start(): void {

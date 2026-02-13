@@ -177,11 +177,11 @@ export class UsageStore {
     if (!row) return null;
 
     const lastUsed = new Date(row.last_used_at).getTime();
-    if (isNaN(lastUsed)) {
+    const now = Date.now();
+    if (isNaN(lastUsed) || lastUsed > now) {
       console.warn("UsageStore: invalid last_used_at timestamp for session", { owner, repo, raw: row.last_used_at });
       return null;
     }
-    const now = Date.now();
     if (now - lastUsed > ttlSeconds * 1000) return null;
 
     return row.session_id;
