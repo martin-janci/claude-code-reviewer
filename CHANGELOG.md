@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.20.0
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.19.0...v1.20.0)
+
+### 🚀 Enhancements
+
+- Add usage tracking with prompt caching and session reuse ([#15](https://github.com/martin-janci/claude-code-reviewer/pull/15))
+
+### ❤️ Contributors
+
+- Martin Janči ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.19.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.18.0...v1.19.0)
