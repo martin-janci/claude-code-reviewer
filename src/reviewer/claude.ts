@@ -1,7 +1,7 @@
 import { exec, execFile } from "node:child_process";
 import { existsSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { resolve, join } from "node:path";
-import type { ReviewResult, ReviewVerdict, StructuredReview, ConventionalLabel, ReviewFinding, FindingResolution, ResolutionEntry, PRSummary, RiskLevel } from "../types.js";
+import type { ReviewResult, ReviewVerdict, StructuredReview, ConventionalLabel, ReviewFinding, FindingResolution, ResolutionEntry, PRSummary, RiskLevel, ClaudeUsage } from "../types.js";
 import type { Logger } from "../logger.js";
 
 // Resolve skill path: check Docker location first, then project-relative
@@ -32,6 +32,7 @@ export interface ReviewOptions {
   logger?: Logger;
   focusPaths?: string[];
   securityPaths?: string[]; // Paths that touch security-sensitive areas
+  sessionId?: string; // Resume a previous session for prompt cache reuse
 }
 
 const VALID_VERDICTS = new Set<string>(["APPROVE", "REQUEST_CHANGES", "COMMENT"]);
@@ -216,8 +217,30 @@ export function parseStructuredReview(stdout: string): StructuredReview | null {
   return null;
 }
 
+/**
+ * Extract usage metrics from the Claude CLI JSON envelope.
+ * Maps snake_case API fields to camelCase ClaudeUsage.
+ */
+export function extractUsage(envelope: Record<string, unknown>): ClaudeUsage | undefined {
+  // The JSON envelope exposes usage fields at the top level
+  if (typeof envelope.session_id !== "string") return undefined;
+
+  return {
+    inputTokens: typeof envelope.input_tokens === "number" ? envelope.input_tokens : 0,
+    outputTokens: typeof envelope.output_tokens === "number" ? envelope.output_tokens : 0,
+    cacheCreationInputTokens: typeof envelope.cache_creation_input_tokens === "number" ? envelope.cache_creation_input_tokens : 0,
+    cacheReadInputTokens: typeof envelope.cache_read_input_tokens === "number" ? envelope.cache_read_input_tokens : 0,
+    totalCostUsd: typeof envelope.cost_usd === "number" ? envelope.cost_usd : 0,
+    model: typeof envelope.model === "string" ? envelope.model : "unknown",
+    numTurns: typeof envelope.num_turns === "number" ? envelope.num_turns : 0,
+    durationMs: typeof envelope.duration_ms === "number" ? envelope.duration_ms : 0,
+    durationApiMs: typeof envelope.duration_api_ms === "number" ? envelope.duration_api_ms : 0,
+    sessionId: envelope.session_id,
+  };
+}
+
 export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
-  const { diff, prTitle, context, cwd, timeoutMs, maxTurns, logger: log, focusPaths, securityPaths } = options;
+  const { diff, prTitle, context, cwd, timeoutMs, maxTurns, logger: log, focusPaths, securityPaths, sessionId } = options;
 
   let userPrompt = `## PR Title: ${prTitle}\n\n`;
 
@@ -262,7 +285,11 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
   userPrompt += `## Diff\n\`\`\`diff\n${diff}\n\`\`\`\n\n`;
   userPrompt += `## Output Requirements\nOutput ONLY a JSON object matching this schema — no markdown, no fences, no extra text:\n${JSON_SCHEMA}\n\nVerdict rules:\n- REQUEST_CHANGES if any finding has "blocking": true\n- APPROVE if no issues or only non-blocking suggestions\n- COMMENT for non-blocking observations worth noting\n\nResolutions array: only include when re-reviewing (previous findings were provided). Omit the field entirely on first reviews.`;
 
-  const args = ["-p", "--output-format", "text"];
+  const args = ["-p", "--output-format", "json"];
+
+  if (sessionId) {
+    args.push("--resume", sessionId);
+  }
 
   const skillPath = resolveSkillPath();
   if (skillPath) {
@@ -319,8 +346,38 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
         return;
       }
 
-      const body = stdout.trim();
+      // Parse JSON envelope from --output-format json
+      let body: string;
+      let usage: ClaudeUsage | undefined;
+      try {
+        const envelope = JSON.parse(stdout);
+        body = (typeof envelope.result === "string" ? envelope.result : "").trim();
+        if (envelope.is_error) {
+          resolve({ body: body || "Claude returned an error", success: false });
+          return;
+        }
+        usage = extractUsage(envelope);
+      } catch {
+        // Fallback for old CLI versions without JSON output support
+        body = stdout.trim();
+      }
+
       const structured = parseStructuredReview(body);
+
+      // Log cache stats when available
+      if (usage && log) {
+        const total = usage.inputTokens + usage.cacheCreationInputTokens + usage.cacheReadInputTokens;
+        const hitRate = total > 0 ? usage.cacheReadInputTokens / total : 0;
+        log.info("Claude usage", {
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          cacheRead: usage.cacheReadInputTokens,
+          cacheWrite: usage.cacheCreationInputTokens,
+          cost: usage.totalCostUsd,
+          cacheHitRate: Math.round(hitRate * 100) + "%",
+          sessionId: usage.sessionId,
+        });
+      }
 
       if (log) {
         log.info("Claude CLI completed", { elapsedS: elapsed, outputBytes: body.length, structured: !!structured, verdict: structured?.verdict, findings: structured?.findings.length });
@@ -333,7 +390,7 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
         }
       }
 
-      resolve({ body, success: true, structured: structured ?? undefined });
+      resolve({ body, success: true, structured: structured ?? undefined, usage });
     });
   });
 }

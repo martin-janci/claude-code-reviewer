@@ -94,6 +94,13 @@ export interface AutofixConfig {
   timeoutMs: number;
 }
 
+export interface UsageConfig {
+  enabled: boolean;
+  dbPath: string;
+  retentionDays: number;
+  sessionTtlSeconds: number; // default: 270 (4.5 min, under 5-min cache TTL)
+}
+
 export interface FeaturesConfig {
   jira: JiraConfig;
   autoDescription: AutoDescriptionConfig;
@@ -101,6 +108,7 @@ export interface FeaturesConfig {
   slack: SlackConfig;
   audit: AuditConfig;
   autofix: AutofixConfig;
+  usage: UsageConfig;
 }
 
 export interface DashboardConfig {
@@ -302,10 +310,26 @@ export interface PullRequest {
   overrides?: ReviewOverrides;
 }
 
+export interface ClaudeUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
+  totalCostUsd: number;
+  model: string;
+  numTurns: number;
+  durationMs: number;
+  durationApiMs: number;
+  sessionId: string;
+}
+
+export type UsageSource = "review" | "auto_description" | "autofix";
+
 export interface ReviewResult {
   body: string;
   success: boolean;
   structured?: StructuredReview;
+  usage?: ClaudeUsage;
 }
 
 export type ProcessPROutcome = "reviewed" | "skipped" | "error";

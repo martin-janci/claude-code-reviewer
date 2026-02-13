@@ -42,11 +42,13 @@ export const autoDescriptionPlugin: Feature = {
 
     ctx.logger.info("Generating PR description");
 
-    const description = await generateDescription(
+    const result = await generateDescription(
       ctx.diff!,
       ctx.state.title,
       ctx.config.features.autoDescription.timeoutMs,
     );
+
+    const description = result.description;
 
     if (!description) {
       return { success: false, error: "Claude returned empty description" };
@@ -55,7 +57,7 @@ export const autoDescriptionPlugin: Feature = {
     if (ctx.dryRun) {
       ctx.logger.info("Dry run: skipping PR description update");
       ctx.store.update(owner, repo, prNumber, { descriptionGenerated: true });
-      return { success: true, data: { dryRun: true } };
+      return { success: true, data: { dryRun: true, usage: result.usage } };
     }
 
     await updatePRBody(owner, repo, prNumber, description);
@@ -63,6 +65,6 @@ export const autoDescriptionPlugin: Feature = {
 
     ctx.store.update(owner, repo, prNumber, { descriptionGenerated: true });
 
-    return { success: true };
+    return { success: true, data: { usage: result.usage } };
   },
 };

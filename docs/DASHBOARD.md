@@ -36,6 +36,8 @@ The dashboard runs on a **separate HTTP server** from the webhook endpoint (port
 │                  │     │  GET  /api/health  │
 │                  │     │  GET  /api/claude/version │
 │                  │     │  POST /api/claude/update  │
+│                  │     │  GET  /api/usage/summary  │
+│                  │     │  GET  /api/usage/recent   │
 └──────────────────┘     └──────────────────┘
          │                        │
          └────────┬───────────────┘
@@ -51,6 +53,7 @@ The dashboard runs on a **separate HTTP server** from the webhook endpoint (port
 | `src/config-manager.ts` | Config lifecycle: load, validate, persist, hot-reload, change notification |
 | `src/dashboard/server.ts` | HTTP server with REST API and auth |
 | `src/dashboard/html.ts` | Embedded single-page dashboard UI (vanilla HTML/CSS/JS) |
+| `src/usage/store.ts` | SQLite usage tracking and session management |
 
 ## API Endpoints
 
@@ -145,9 +148,56 @@ Response:
 }
 ```
 
+### `GET /api/usage/summary`
+
+Returns aggregated usage data with per-repo breakdown. Requires the `features.usage.enabled` config to be `true` (default).
+
+```bash
+curl http://localhost:3001/api/usage/summary?days=30 \
+  -H "Authorization: Bearer my-secret-token"
+```
+
+Response:
+
+```json
+{
+  "totalReviews": 42,
+  "totalInputTokens": 1250000,
+  "totalOutputTokens": 380000,
+  "totalCacheReadTokens": 890000,
+  "totalCacheCreationTokens": 125000,
+  "totalCostUsd": 12.45,
+  "cacheHitRate": 0.39,
+  "avgCostPerReview": 0.296,
+  "repos": [
+    {
+      "owner": "acme",
+      "repo": "backend",
+      "reviews": 28,
+      "inputTokens": 850000,
+      "outputTokens": 240000,
+      "cacheReadTokens": 680000,
+      "cacheCreationTokens": 85000,
+      "totalCostUsd": 8.20,
+      "cacheHitRate": 0.42,
+      "avgCostPerReview": 0.293
+    }
+  ]
+}
+```
+
+### `GET /api/usage/recent`
+
+Returns recent usage records (most recent first).
+
+```bash
+curl http://localhost:3001/api/usage/recent?limit=10 \
+  -H "Authorization: Bearer my-secret-token"
+```
+
 ## Dashboard UI
 
-The UI has five tabs:
+The UI has six tabs:
 
 | Tab | Contents |
 |-----|----------|
@@ -155,6 +205,7 @@ The UI has five tabs:
 | **Review** | All `review.*` fields — behavior, limits, timeouts, paths |
 | **Features** | Jira, auto-description, auto-label, Slack, audit, autofix (each with enable/disable toggle) |
 | **Repos** | Dynamic list of owner/repo entries with add/remove |
+| **Usage** | Token usage, cost tracking, prompt cache hit rates per repo, recent invocations |
 | **Status** | Read-only health, uptime, PR state counts, metrics, Claude CLI version + update button |
 
 ### UI Features
@@ -177,6 +228,7 @@ These fields take effect on the next poll cycle or review without restart:
 - All `features.*` fields — checked per-feature invocation
 - `review.commentTrigger` — regex recompiled in onChange callback
 - `review.cloneTimeoutMs` — propagated to CloneManager
+- `features.usage.*` — usage tracking settings read per-invocation
 
 ### Requires Restart
 

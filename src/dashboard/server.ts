@@ -5,6 +5,7 @@ import type { ConfigManager } from "../config-manager.js";
 import type { Logger } from "../logger.js";
 import type { StateStore } from "../state/store.js";
 import type { MetricsCollector } from "../metrics.js";
+import type { UsageStore } from "../usage/store.js";
 import { getDashboardHtml } from "./html.js";
 
 export class DashboardServer {
@@ -17,6 +18,7 @@ export class DashboardServer {
     private store?: StateStore,
     private metrics?: MetricsCollector,
     private healthInfo?: { version: string; startTime: number },
+    private usageStore?: UsageStore,
   ) {}
 
   start(port: number): void {
@@ -159,6 +161,34 @@ export class DashboardServer {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: String(err) }));
       }
+      return;
+    }
+
+    // GET /api/usage/summary — aggregated usage with per-repo breakdown
+    if (req.method === "GET" && path === "/api/usage/summary") {
+      if (!this.usageStore) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Usage tracking is not enabled" }));
+        return;
+      }
+      const days = parseInt(url.searchParams.get("days") ?? "30", 10) || 30;
+      const summary = this.usageStore.getOverallSummary(days);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(summary));
+      return;
+    }
+
+    // GET /api/usage/recent — recent usage records
+    if (req.method === "GET" && path === "/api/usage/recent") {
+      if (!this.usageStore) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Usage tracking is not enabled" }));
+        return;
+      }
+      const limit = parseInt(url.searchParams.get("limit") ?? "50", 10) || 50;
+      const records = this.usageStore.getRecentRecords(Math.min(limit, 200));
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(records));
       return;
     }
 
