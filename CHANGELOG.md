@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.21.0
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.20.0...v1.21.0)
+
+### 🚀 Enhancements
+
+- Add usage tracking, rate limit guard, and dashboard auth status ([#17](https://github.com/martin-janci/claude-code-reviewer/pull/17))
+
+### ❤️ Contributors
+
+- Martin Janči ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.20.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.19.0...v1.20.0)
