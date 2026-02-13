@@ -5,6 +5,7 @@ import type { MetricsCollector, PhaseTimings } from "../metrics.js";
 import type { Logger } from "../logger.js";
 import type { ReviewComment } from "./github.js";
 import type { Feature, FeatureContext } from "../features/plugin.js";
+import type { RateLimitGuard } from "../rate-limit-guard.js";
 import { UsageStore } from "../usage/store.js";
 import { runFeatures } from "../features/plugin.js";
 import { jiraPlugin } from "../features/jira-plugin.js";
@@ -35,6 +36,13 @@ function parseLegacyVerdict(body: string): ReviewVerdict {
  * Classify an error as transient (retryable) or permanent (skip retries).
  * Permanent errors: 404 Not Found, 403 Blocked, 422 Validation, explicit auth failures.
  * Everything else is transient.
+ *
+ * Rate limit detection relies on pattern matching against Claude CLI stderr output.
+ * Expected Claude API error patterns (as of 2025):
+ *   - 429: "rate_limit_error" / "rate limit" with optional "retry-after: <seconds>"
+ *   - 429 spending: includes "spending" / "budget" / "billing" keywords, or retry-after > 300s
+ *   - 529: "overloaded_error" / "overloaded"
+ * If the error format changes, unrecognized patterns fall through to "transient" (safe default).
  */
 function classifyError(err: unknown, phase: ErrorPhase): ErrorKind {
   const message = err instanceof Error ? err.message : String(err);
@@ -51,12 +59,26 @@ function classifyError(err: unknown, phase: ErrorPhase): ErrorKind {
   // Permanent: authentication failures
   if (/401|unauthorized|authentication/i.test(message)) return "permanent";
 
-  // Transient: rate limit exceeded (will recover after cooldown)
-  // Note: GitHub rate limits reset after 1 hour, so retries will eventually succeed
-  if (/rate limit/i.test(message)) return "transient";
+  // Rate limit: Claude API 429 — distinguish spending limit from rate limit
+  if (/rate limit/i.test(message)) {
+    if (/spending|budget|billing/i.test(message)) return "spending_limit";
+    // Check retry-after to distinguish: long/absent = spending, short = rate limit
+    const retryAfter = extractRetryAfterSeconds(message);
+    if (retryAfter !== null && retryAfter > 300) return "spending_limit";
+    return "rate_limit";
+  }
+
+  // Overloaded: Claude API 529
+  if (/overloaded|529/i.test(message)) return "overloaded";
 
   // Default: transient (timeout, network issues, temporary service errors)
   return "transient";
+}
+
+/** Extract retry-after seconds from error messages (e.g. "retry-after: 120" or "retry after 30s"). */
+function extractRetryAfterSeconds(message: string): number | null {
+  const match = message.match(/retry.?after[:\s]*(\d+)/i);
+  return match ? parseInt(match[1], 10) : null;
 }
 
 /** Internal state passed through review phases */
@@ -87,6 +109,7 @@ export class Reviewer {
     private metrics?: MetricsCollector,
     private auditLogger?: import("../audit/logger.js").AuditLogger,
     private usageStore?: UsageStore,
+    private rateLimitGuard?: RateLimitGuard,
   ) {
     // Register feature plugins
     this.features = [
@@ -188,6 +211,13 @@ export class Reviewer {
     }
     while (this.locks.has(key)) {
       await this.locks.get(key);
+    }
+
+    // Wait for rate limit guard (blocks if globally paused).
+    // Ordering: mutex → guard → concurrency slot. This ensures no concurrency
+    // slot is held while waiting on the guard, preventing slot leaks during pauses.
+    if (this.rateLimitGuard) {
+      await this.rateLimitGuard.acquire();
     }
 
     // Acquire concurrency slot (limits total parallel reviews across all PRs)
@@ -945,11 +975,21 @@ export class Reviewer {
     this.metrics?.recordError(phase);
     log.error("Review phase error", { phase, error: message, kind });
 
+    // Notify rate limit guard for global pause
+    if ((kind === "rate_limit" || kind === "spending_limit" || kind === "overloaded") && this.rateLimitGuard) {
+      const retryAfter = extractRetryAfterSeconds(message);
+      const cooldown = kind === "spending_limit"
+        ? this.config.rateLimit.spendingLimitCooldownSeconds
+        : (retryAfter ?? this.config.rateLimit.defaultCooldownSeconds);
+      this.rateLimitGuard.reportRateLimit(kind, cooldown);
+    }
+
     // Re-read fresh state to get current consecutiveErrors
     const freshState = this.store.get(owner, repo, prNumber);
     const currentErrors = freshState?.consecutiveErrors ?? 0;
 
     // Permanent errors skip retries by immediately setting consecutiveErrors to maxRetries
+    // Rate limit / spending limit / overloaded errors are transient — use normal backoff
     const consecutiveErrors = kind === "permanent"
       ? this.config.review.maxRetries
       : currentErrors + 1;

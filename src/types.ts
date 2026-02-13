@@ -125,6 +125,7 @@ export interface AppConfig {
   review: ReviewConfig;
   features: FeaturesConfig;
   dashboard?: DashboardConfig;
+  rateLimit: RateLimitConfig;
 }
 
 // --- PR State Machine ---
@@ -190,7 +191,13 @@ export type SkipReason = "draft" | "wip_title" | "diff_too_large";
 
 export type ErrorPhase = "diff_fetch" | "clone_prepare" | "claude_review" | "comment_post" | "jira_validate" | "description_generate" | "label_apply";
 
-export type ErrorKind = "transient" | "permanent";
+export type ErrorKind = "transient" | "permanent" | "rate_limit" | "spending_limit" | "overloaded";
+
+export interface RateLimitConfig {
+  defaultCooldownSeconds: number;
+  spendingLimitCooldownSeconds: number;
+  maxEventHistory: number;
+}
 
 export interface ReviewRecord {
   sha: string;
