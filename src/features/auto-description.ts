@@ -65,6 +65,7 @@ export function generateDescription(
         usage = extractUsage(envelope);
       } catch {
         // Fallback for old CLI versions without JSON output support
+        console.warn("Auto-description: Claude CLI did not return JSON — upgrade claude to enable usage tracking");
         body = stdout.trim();
       }
 

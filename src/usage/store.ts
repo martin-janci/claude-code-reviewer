@@ -177,7 +177,10 @@ export class UsageStore {
     if (!row) return null;
 
     const lastUsed = new Date(row.last_used_at).getTime();
-    if (isNaN(lastUsed)) return null;
+    if (isNaN(lastUsed)) {
+      console.warn("UsageStore: invalid last_used_at timestamp for session", { owner, repo, raw: row.last_used_at });
+      return null;
+    }
     const now = Date.now();
     if (now - lastUsed > ttlSeconds * 1000) return null;
 
@@ -289,12 +292,14 @@ export class UsageStore {
     `).all(limit) as RecentRecord[];
   }
 
-  /** Delete old records and stale sessions. */
+  /** Delete old records and stale sessions. Sessions are cleaned with a shorter TTL (7 days) since they're only useful for prompt cache reuse. */
   cleanup(retentionDays: number): { deletedRecords: number; deletedSessions: number } {
     const cutoff = new Date(Date.now() - retentionDays * 86400_000).toISOString();
+    // Sessions older than 7 days are certainly stale (cache TTL is 5 minutes)
+    const sessionCutoff = new Date(Date.now() - 7 * 86400_000).toISOString();
 
     const recordResult = this.db.prepare(`DELETE FROM usage_records WHERE timestamp < ?`).run(cutoff);
-    const sessionResult = this.db.prepare(`DELETE FROM repo_sessions WHERE last_used_at < ?`).run(cutoff);
+    const sessionResult = this.db.prepare(`DELETE FROM repo_sessions WHERE last_used_at < ?`).run(sessionCutoff);
 
     return {
       deletedRecords: recordResult.changes,

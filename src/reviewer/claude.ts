@@ -359,6 +359,7 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
         usage = extractUsage(envelope);
       } catch {
         // Fallback for old CLI versions without JSON output support
+        if (log) log.warn("Claude CLI did not return JSON — upgrade claude to enable usage tracking and prompt caching");
         body = stdout.trim();
       }
 
