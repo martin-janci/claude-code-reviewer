@@ -29,6 +29,11 @@ export class PrometheusExporter {
   private reviewDurationP95: Gauge<string>;
   private reviewDurationMax: Gauge<string>;
 
+  // Token/cache usage gauges
+  private tokensTotalGauge: Gauge<string>;
+  private costTotalGauge: Gauge;
+  private cacheHitRateGauge: Gauge;
+
   constructor() {
     this.registry = new Registry();
 
@@ -111,6 +116,26 @@ export class PrometheusExporter {
       labelNames: ["phase"],
       registers: [this.registry],
     });
+
+    // Token/cache usage gauges
+    this.tokensTotalGauge = new Gauge({
+      name: "claude_reviewer_tokens_total",
+      help: "Total tokens by type (input, output, cache_read, cache_creation)",
+      labelNames: ["type"],
+      registers: [this.registry],
+    });
+
+    this.costTotalGauge = new Gauge({
+      name: "claude_reviewer_cost_usd_total",
+      help: "Total cost in USD across all Claude invocations",
+      registers: [this.registry],
+    });
+
+    this.cacheHitRateGauge = new Gauge({
+      name: "claude_reviewer_cache_hit_rate",
+      help: "Prompt cache hit rate (0-1)",
+      registers: [this.registry],
+    });
   }
 
   /**
@@ -158,6 +183,16 @@ export class PrometheusExporter {
         this.reviewDurationP95.labels(phase).set(stats.p95 / 1000);
         this.reviewDurationMax.labels(phase).set(stats.max / 1000);
       }
+    }
+
+    // Update token/cache usage gauges
+    if (snapshot.usage) {
+      this.tokensTotalGauge.labels("input").set(snapshot.usage.totalInputTokens);
+      this.tokensTotalGauge.labels("output").set(snapshot.usage.totalOutputTokens);
+      this.tokensTotalGauge.labels("cache_read").set(snapshot.usage.totalCacheReadTokens);
+      this.tokensTotalGauge.labels("cache_creation").set(snapshot.usage.totalCacheCreationTokens);
+      this.costTotalGauge.set(snapshot.usage.totalCostUsd);
+      this.cacheHitRateGauge.set(snapshot.usage.cacheHitRate);
     }
   }
 

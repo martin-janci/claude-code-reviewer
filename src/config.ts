@@ -120,6 +120,19 @@ export function validateConfig(config: AppConfig): ConfigError[] {
     }
   }
 
+  // Usage tracking config
+  if (config.features.usage.enabled) {
+    if (!config.features.usage.dbPath) {
+      errors.push({ field: "features.usage.dbPath", message: "Database path is required", severity: "error" });
+    }
+    if (config.features.usage.retentionDays < 1) {
+      errors.push({ field: "features.usage.retentionDays", message: "Must be >= 1", severity: "error" });
+    }
+    if (config.features.usage.sessionTtlSeconds < 0) {
+      errors.push({ field: "features.usage.sessionTtlSeconds", message: "Must be >= 0", severity: "error" });
+    }
+  }
+
   return errors;
 }
 
@@ -195,6 +208,7 @@ export const DEFAULTS: AppConfig = {
     slack: { enabled: false, webhookUrl: "", notifyOn: ["error", "request_changes"] },
     audit: { enabled: false, maxEntries: 10000, filePath: "data/audit.json", includeMetadata: true, minSeverity: "info" },
     autofix: { enabled: false, commandTrigger: "^\\s*/fix\\s*$", autoApply: false, maxTurns: 10, timeoutMs: 300_000 },
+    usage: { enabled: true, dbPath: "data/usage.db", retentionDays: 90, sessionTtlSeconds: 270 },
   },
   dashboard: { port: 3001 },
 };
@@ -227,6 +241,7 @@ export function loadConfig(path: string = "config.yaml", allowEmptyRepos = false
       slack: { ...DEFAULTS.features.slack, ...fileFeatures?.slack },
       audit: { ...DEFAULTS.features.audit, ...fileFeatures?.audit },
       autofix: { ...DEFAULTS.features.autofix, ...fileFeatures?.autofix },
+      usage: { ...DEFAULTS.features.usage, ...fileFeatures?.usage },
     },
     dashboard: { ...DEFAULTS.dashboard!, ...fileConfig.dashboard },
   };

@@ -1,4 +1,4 @@
-import type { PRStatus, ReviewVerdict, ErrorPhase, SkipReason } from "./types.js";
+import type { PRStatus, ReviewVerdict, ErrorPhase, SkipReason, ClaudeUsage } from "./types.js";
 
 export interface PhaseTimings {
   diff_fetch_ms: number;
@@ -41,6 +41,14 @@ export interface MetricsSnapshot {
   timings: {
     total: TimingStats | null;
     byPhase: Partial<Record<keyof PhaseTimings, TimingStats>>;
+  };
+  usage: {
+    totalInputTokens: number;
+    totalOutputTokens: number;
+    totalCacheReadTokens: number;
+    totalCacheCreationTokens: number;
+    totalCostUsd: number;
+    cacheHitRate: number;
   };
 }
 
@@ -88,6 +96,13 @@ export class MetricsCollector {
   private _activeReviews = 0;
   private _queueDepth = 0;
 
+  // Token/cache usage tracking
+  private tokenInputTotal = 0;
+  private tokenOutputTotal = 0;
+  private cacheReadTotal = 0;
+  private cacheCreationTotal = 0;
+  private costTotal = 0;
+
   recordReview(verdict: ReviewVerdict): void {
     this.reviewCount++;
     this.verdictCounts[verdict]++;
@@ -110,6 +125,14 @@ export class MetricsCollector {
     }
   }
 
+  recordUsage(usage: ClaudeUsage): void {
+    this.tokenInputTotal += usage.inputTokens;
+    this.tokenOutputTotal += usage.outputTokens;
+    this.cacheReadTotal += usage.cacheReadInputTokens;
+    this.cacheCreationTotal += usage.cacheCreationInputTokens;
+    this.costTotal += usage.totalCostUsd;
+  }
+
   updateCapacity(activeReviews: number, queueDepth: number): void {
     this._activeReviews = activeReviews;
     this._queueDepth = queueDepth;
@@ -129,6 +152,9 @@ export class MetricsCollector {
       const stats = computeStats(values);
       if (stats) byPhase[key] = stats;
     }
+
+    const totalCacheTokens = this.tokenInputTotal + this.cacheReadTotal + this.cacheCreationTotal;
+    const cacheHitRate = totalCacheTokens > 0 ? this.cacheReadTotal / totalCacheTokens : 0;
 
     return {
       uptime: uptimeSeconds,
@@ -155,6 +181,14 @@ export class MetricsCollector {
       timings: {
         total: computeStats(totalTimes),
         byPhase,
+      },
+      usage: {
+        totalInputTokens: this.tokenInputTotal,
+        totalOutputTokens: this.tokenOutputTotal,
+        totalCacheReadTokens: this.cacheReadTotal,
+        totalCacheCreationTokens: this.cacheCreationTotal,
+        totalCostUsd: this.costTotal,
+        cacheHitRate,
       },
     };
   }

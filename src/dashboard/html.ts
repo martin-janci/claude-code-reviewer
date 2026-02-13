@@ -404,6 +404,7 @@ export function getDashboardHtml(): string {
   <div class="tab" data-tab="review">Review</div>
   <div class="tab" data-tab="features">Features</div>
   <div class="tab" data-tab="repos">Repos</div>
+  <div class="tab" data-tab="usage">Usage</div>
   <div class="tab" data-tab="status">Status</div>
 </div>
 
@@ -830,6 +831,65 @@ export function getDashboardHtml(): string {
     </div>
   </div>
 
+  <!-- Usage Tab -->
+  <div class="tab-panel" id="panel-usage">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+      <span style="color:var(--text-muted);font-size:13px">Time range:</span>
+      <select id="usage-range" style="width:auto;padding:6px 12px" onchange="loadUsage()">
+        <option value="7">7 days</option>
+        <option value="30" selected>30 days</option>
+        <option value="90">90 days</option>
+        <option value="365">1 year</option>
+      </select>
+      <button class="btn btn-sm" onclick="loadUsage()" style="margin-left:auto">Refresh</button>
+    </div>
+
+    <div class="status-grid" id="usage-summary-grid"></div>
+
+    <div class="section">
+      <div class="section-header">Usage by Repository</div>
+      <div class="section-body" style="padding:0;overflow-x:auto">
+        <table id="usage-repo-table" style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border);text-align:left">
+              <th style="padding:10px 16px;color:var(--text-muted);font-weight:500">Repository</th>
+              <th style="padding:10px 12px;color:var(--text-muted);font-weight:500;text-align:right">Reviews</th>
+              <th style="padding:10px 12px;color:var(--text-muted);font-weight:500;text-align:right">Input Tokens</th>
+              <th style="padding:10px 12px;color:var(--text-muted);font-weight:500;text-align:right">Output Tokens</th>
+              <th style="padding:10px 12px;color:var(--text-muted);font-weight:500">Cache Hit Rate</th>
+              <th style="padding:10px 12px;color:var(--text-muted);font-weight:500;text-align:right">Total Cost</th>
+              <th style="padding:10px 16px;color:var(--text-muted);font-weight:500;text-align:right">Avg Cost</th>
+            </tr>
+          </thead>
+          <tbody id="usage-repo-tbody"></tbody>
+        </table>
+        <div id="usage-repo-empty" style="padding:24px;text-align:center;color:var(--text-muted);display:none">No usage data yet</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">Recent Invocations</div>
+      <div class="section-body" style="padding:0;overflow-x:auto">
+        <table id="usage-recent-table" style="width:100%;border-collapse:collapse;font-size:12px;font-family:var(--mono)">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border);text-align:left">
+              <th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Time</th>
+              <th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Repo</th>
+              <th style="padding:8px 8px;color:var(--text-muted);font-weight:500;text-align:right">PR</th>
+              <th style="padding:8px 8px;color:var(--text-muted);font-weight:500">Source</th>
+              <th style="padding:8px 8px;color:var(--text-muted);font-weight:500;text-align:right">In</th>
+              <th style="padding:8px 8px;color:var(--text-muted);font-weight:500;text-align:right">Out</th>
+              <th style="padding:8px 8px;color:var(--text-muted);font-weight:500;text-align:right">Cache</th>
+              <th style="padding:8px 12px;color:var(--text-muted);font-weight:500;text-align:right">Cost</th>
+            </tr>
+          </thead>
+          <tbody id="usage-recent-tbody"></tbody>
+        </table>
+        <div id="usage-recent-empty" style="padding:24px;text-align:center;color:var(--text-muted);display:none">No usage data yet</div>
+      </div>
+    </div>
+  </div>
+
   <!-- Status Tab -->
   <div class="tab-panel" id="panel-status">
     <div class="status-grid" id="status-grid"></div>
@@ -873,6 +933,7 @@ export function getDashboardHtml(): string {
       tab.classList.add('active');
       document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
       if (tab.dataset.tab === 'status') loadStatus();
+      if (tab.dataset.tab === 'usage') loadUsage();
     });
   });
 
@@ -1230,6 +1291,111 @@ export function getDashboardHtml(): string {
       dirty = true;
     }
   };
+
+  window.loadUsage = async function() {
+    const days = document.getElementById('usage-range').value || '30';
+    try {
+      const [summaryRes, recentRes] = await Promise.all([
+        fetch('/api/usage/summary?days=' + days),
+        fetch('/api/usage/recent?limit=50'),
+      ]);
+
+      if (!summaryRes.ok || !recentRes.ok) {
+        const grid = document.getElementById('usage-summary-grid');
+        grid.innerHTML = '<div class="status-card"><div class="value" style="font-size:14px;color:var(--text-muted)">Usage tracking not enabled</div></div>';
+        return;
+      }
+
+      const summary = await summaryRes.json();
+      const recent = await recentRes.json();
+
+      // Summary cards
+      const grid = document.getElementById('usage-summary-grid');
+      grid.innerHTML = '';
+      const cards = [
+        { label: 'Total Cost', value: '$' + summary.totalCostUsd.toFixed(2) },
+        { label: 'Cache Hit Rate', value: Math.round(summary.cacheHitRate * 100) + '%' },
+        { label: 'Total Reviews', value: summary.totalReviews },
+        { label: 'Avg Cost/Review', value: '$' + summary.avgCostPerReview.toFixed(3) },
+        { label: 'Input Tokens', value: fmtNum(summary.totalInputTokens) },
+        { label: 'Output Tokens', value: fmtNum(summary.totalOutputTokens) },
+      ];
+      cards.forEach(c => {
+        const card = document.createElement('div');
+        card.className = 'status-card';
+        card.innerHTML = '<div class="value">' + c.value + '</div><div class="label">' + c.label + '</div>';
+        grid.appendChild(card);
+      });
+
+      // Repo table
+      const tbody = document.getElementById('usage-repo-tbody');
+      const emptyRepo = document.getElementById('usage-repo-empty');
+      tbody.innerHTML = '';
+      if (!summary.repos || summary.repos.length === 0) {
+        emptyRepo.style.display = 'block';
+      } else {
+        emptyRepo.style.display = 'none';
+        summary.repos.forEach(r => {
+          const hitPct = Math.round(r.cacheHitRate * 100);
+          const barColor = hitPct > 60 ? 'var(--success)' : hitPct > 30 ? 'var(--warning)' : 'var(--danger)';
+          const tr = document.createElement('tr');
+          tr.style.cssText = 'border-bottom:1px solid var(--border)';
+          tr.innerHTML =
+            '<td style="padding:10px 16px">' + esc(r.owner) + '/' + esc(r.repo) + '</td>' +
+            '<td style="padding:10px 12px;text-align:right">' + r.reviews + '</td>' +
+            '<td style="padding:10px 12px;text-align:right;font-family:var(--mono)">' + fmtNum(r.inputTokens) + '</td>' +
+            '<td style="padding:10px 12px;text-align:right;font-family:var(--mono)">' + fmtNum(r.outputTokens) + '</td>' +
+            '<td style="padding:10px 12px"><div style="display:flex;align-items:center;gap:8px"><div style="flex:1;height:6px;background:var(--surface2);border-radius:3px;overflow:hidden"><div style="width:' + hitPct + '%;height:100%;background:' + barColor + ';border-radius:3px"></div></div><span style="font-size:12px;font-family:var(--mono);color:var(--text-muted);min-width:36px;text-align:right">' + hitPct + '%</span></div></td>' +
+            '<td style="padding:10px 12px;text-align:right;font-family:var(--mono)">$' + r.totalCostUsd.toFixed(2) + '</td>' +
+            '<td style="padding:10px 16px;text-align:right;font-family:var(--mono)">$' + r.avgCostPerReview.toFixed(3) + '</td>';
+          tbody.appendChild(tr);
+        });
+      }
+
+      // Recent records table
+      const recentTbody = document.getElementById('usage-recent-tbody');
+      const emptyRecent = document.getElementById('usage-recent-empty');
+      recentTbody.innerHTML = '';
+      if (!recent || recent.length === 0) {
+        emptyRecent.style.display = 'block';
+      } else {
+        emptyRecent.style.display = 'none';
+        recent.forEach(r => {
+          const ts = new Date(r.timestamp);
+          const timeStr = ts.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + ts.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+          const cacheTokens = r.cacheReadTokens + r.cacheCreationTokens + r.inputTokens;
+          const cacheRate = cacheTokens > 0 ? Math.round(r.cacheReadTokens / cacheTokens * 100) : 0;
+          const tr = document.createElement('tr');
+          tr.style.cssText = 'border-bottom:1px solid var(--border)';
+          tr.innerHTML =
+            '<td style="padding:6px 12px;white-space:nowrap">' + esc(timeStr) + '</td>' +
+            '<td style="padding:6px 12px">' + esc(r.owner) + '/' + esc(r.repo) + '</td>' +
+            '<td style="padding:6px 8px;text-align:right">#' + r.prNumber + '</td>' +
+            '<td style="padding:6px 8px">' + esc(r.source) + '</td>' +
+            '<td style="padding:6px 8px;text-align:right">' + fmtNum(r.inputTokens) + '</td>' +
+            '<td style="padding:6px 8px;text-align:right">' + fmtNum(r.outputTokens) + '</td>' +
+            '<td style="padding:6px 8px;text-align:right">' + cacheRate + '%</td>' +
+            '<td style="padding:6px 12px;text-align:right">$' + r.totalCostUsd.toFixed(4) + '</td>';
+          recentTbody.appendChild(tr);
+        });
+      }
+    } catch (err) {
+      const grid = document.getElementById('usage-summary-grid');
+      grid.innerHTML = '<div class="status-card"><div class="value" style="font-size:14px;color:var(--danger)">' + esc(err.message) + '</div></div>';
+    }
+  };
+
+  function fmtNum(n) {
+    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+    if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+    return String(n);
+  }
+
+  function esc(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
 
   window.loadStatus = async function() {
     try {

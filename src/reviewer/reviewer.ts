@@ -1,10 +1,11 @@
-import type { AppConfig, PullRequest, ReviewVerdict, ReviewFinding, ErrorPhase, ErrorKind, PRState, ReviewResult, ProcessPRResult } from "../types.js";
+import type { AppConfig, PullRequest, ReviewVerdict, ReviewFinding, ErrorPhase, ErrorKind, PRState, ReviewResult, ProcessPRResult, ClaudeUsage } from "../types.js";
 import type { StateStore } from "../state/store.js";
 import type { CloneManager } from "../clone/manager.js";
 import type { MetricsCollector, PhaseTimings } from "../metrics.js";
 import type { Logger } from "../logger.js";
 import type { ReviewComment } from "./github.js";
 import type { Feature, FeatureContext } from "../features/plugin.js";
+import { UsageStore } from "../usage/store.js";
 import { runFeatures } from "../features/plugin.js";
 import { jiraPlugin } from "../features/jira-plugin.js";
 import { autoDescriptionPlugin } from "../features/auto-description-plugin.js";
@@ -85,6 +86,7 @@ export class Reviewer {
     private cloneManager?: CloneManager,
     private metrics?: MetricsCollector,
     private auditLogger?: import("../audit/logger.js").AuditLogger,
+    private usageStore?: UsageStore,
   ) {
     // Register feature plugins
     this.features = [
@@ -306,8 +308,20 @@ export class Reviewer {
 
     // Run pre_review features (jira extraction, auto-description)
     log.info("Running pre_review features", { phase: "pre_review_features" });
-    await runFeatures(this.features, "pre_review", featureCtx);
+    const preFeatureResults = await runFeatures(this.features, "pre_review", featureCtx);
     log.info("Completed pre_review features", { phase: "pre_review_features" });
+
+    // Record auto-description usage if available
+    const descResult = preFeatureResults.get("auto_description");
+    if (descResult?.data?.usage && this.usageStore && this.config.features.usage.enabled) {
+      try {
+        const descUsage = descResult.data.usage as ClaudeUsage;
+        this.usageStore.record(UsageStore.buildRecord(owner, repo, prNumber, "auto_description", descUsage));
+        this.metrics?.recordUsage(descUsage);
+      } catch (err) {
+        log.warn("Failed to record auto-description usage", { error: String(err) });
+      }
+    }
 
     // Re-read state after features may have modified it
     const currentState = this.store.get(owner, repo, prNumber)!;
@@ -570,7 +584,14 @@ export class Reviewer {
 
     // Run Claude review
     const effectiveMaxTurns = pr.overrides?.maxTurns ?? (cwd ? this.config.review.reviewMaxTurns : undefined);
-    log.info("Starting Claude review", { phase: "claude_review", timeoutMs: this.config.review.reviewTimeoutMs, maxTurns: effectiveMaxTurns, codebase: !!cwd, focusPaths: pr.overrides?.focusPaths, securityPaths: securityPaths.length > 0 ? securityPaths : undefined });
+
+    // Look up a cached session for prompt cache reuse
+    const usageCfg = this.config.features.usage;
+    const sessionId = (this.usageStore && usageCfg.enabled)
+      ? this.usageStore.getSession(owner, repo, usageCfg.sessionTtlSeconds) ?? undefined
+      : undefined;
+
+    log.info("Starting Claude review", { phase: "claude_review", timeoutMs: this.config.review.reviewTimeoutMs, maxTurns: effectiveMaxTurns, codebase: !!cwd, focusPaths: pr.overrides?.focusPaths, securityPaths: securityPaths.length > 0 ? securityPaths : undefined, sessionReuse: !!sessionId });
 
     const claudeT0 = Date.now();
     const result = await reviewDiff({
@@ -583,6 +604,7 @@ export class Reviewer {
       logger: log,
       focusPaths: pr.overrides?.focusPaths,
       securityPaths: securityPaths.length > 0 ? securityPaths : undefined,
+      sessionId,
     });
     timings.claude_review_ms = Date.now() - claudeT0;
 
@@ -590,6 +612,19 @@ export class Reviewer {
       log.error("Claude review failed", { phase: "claude_review" });
       this.recordError(owner, repo, prNumber, headSha, new Error(result.body || "Claude review returned unsuccessful"), "claude_review", log);
       return null;
+    }
+
+    // Record usage and update session for cache reuse
+    if (result.usage && this.usageStore && usageCfg.enabled) {
+      try {
+        this.usageStore.record(UsageStore.buildRecord(owner, repo, prNumber, "review", result.usage));
+        if (result.usage.sessionId) {
+          this.usageStore.setSession(owner, repo, result.usage.sessionId);
+        }
+        this.metrics?.recordUsage(result.usage);
+      } catch (err) {
+        log.warn("Failed to record usage", { error: String(err) });
+      }
     }
 
     log.info("Claude review succeeded", { structured: !!result.structured });

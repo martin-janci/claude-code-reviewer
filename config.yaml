@@ -87,6 +87,13 @@ features:
     includeMetadata: true      # include detailed metadata in entries
     minSeverity: info          # minimum severity to log: info, warning, error
 
+  # Usage tracking: token costs, prompt cache hit rates, session reuse
+  usage:
+    enabled: true              # enabled by default — tracks token usage in SQLite
+    dbPath: data/usage.db      # path to SQLite database
+    retentionDays: 90          # delete records older than this
+    sessionTtlSeconds: 270     # session reuse TTL (4.5 min — 90% of Claude's 5-min prompt cache TTL, 30s buffer for latency)
+
   # Autofix: automatically apply fixes for review findings via /fix comment
   autofix:
     enabled: false                           # disabled by default

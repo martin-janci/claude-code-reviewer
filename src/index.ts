@@ -14,6 +14,7 @@ import { createRootLogger } from "./logger.js";
 import { setGhToken, getPRDetails } from "./reviewer/github.js";
 import { recoverPendingReviews } from "./startup-recovery.js";
 import { AuditLogger } from "./audit/logger.js";
+import { UsageStore } from "./usage/store.js";
 
 let VERSION = "unknown";
 try {
@@ -81,7 +82,9 @@ async function runOneShot(target: OneShotTarget): Promise<void> {
   }
 
   const metrics = new MetricsCollector();
-  const reviewer = new Reviewer(config, store, logger, cloneManager, metrics, auditLogger);
+  const usageStore = config.features.usage.enabled
+    ? new UsageStore(config.features.usage.dbPath) : undefined;
+  const reviewer = new Reviewer(config, store, logger, cloneManager, metrics, auditLogger, usageStore);
 
   const key = `${target.owner}/${target.repo}#${target.prNumber}`;
   console.log(`Claude Code PR Reviewer v${VERSION}`);
@@ -101,8 +104,9 @@ async function runOneShot(target: OneShotTarget): Promise<void> {
 
   await reviewer.processPR(pr);
 
-  // Flush audit log before exit
+  // Flush audit log and close usage DB before exit
   auditLogger.stop();
+  usageStore?.close();
 
   // Read final state to determine exit code
   const state = store.get(target.owner, target.repo, target.prNumber);
@@ -199,7 +203,18 @@ function main(): void {
   }
 
   const metrics = new MetricsCollector();
-  const reviewer = new Reviewer(config, store, logger, cloneManager, metrics, auditLogger);
+  const usageStore = config.features.usage.enabled
+    ? new UsageStore(config.features.usage.dbPath) : undefined;
+
+  // Run usage cleanup on startup
+  if (usageStore) {
+    const cleanup = usageStore.cleanup(config.features.usage.retentionDays);
+    if (cleanup.deletedRecords > 0 || cleanup.deletedSessions > 0) {
+      logger.info("Usage store cleanup", { deletedRecords: cleanup.deletedRecords, deletedSessions: cleanup.deletedSessions });
+    }
+  }
+
+  const reviewer = new Reviewer(config, store, logger, cloneManager, metrics, auditLogger, usageStore);
 
   // Pass GitHub token to gh CLI wrapper
   if (config.github.token) {
@@ -243,7 +258,7 @@ function main(): void {
 
   // Start dashboard server on admin port
   const dashboardPort = config.dashboard?.port ?? 3001;
-  dashboard = new DashboardServer(configManager, logger, store, metrics, { version: VERSION, startTime: START_TIME });
+  dashboard = new DashboardServer(configManager, logger, store, metrics, { version: VERSION, startTime: START_TIME }, usageStore);
   dashboard.start(dashboardPort);
 
   // Startup recovery: check for PRs that need attention after restart
@@ -279,7 +294,8 @@ function main(): void {
       }
     }
 
-    // Flush final audit entries before exit
+    // Close usage store and flush final audit entries before exit
+    usageStore?.close();
     auditLogger.stop();
     logger.info("Audit log flushed");
 

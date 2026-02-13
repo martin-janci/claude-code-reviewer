@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import type { ClaudeUsage } from "../types.js";
+import { extractUsage } from "../reviewer/claude.js";
 
 function resolveDescriptionSkillPath(): string | null {
   const candidates = [
@@ -13,16 +15,21 @@ function resolveDescriptionSkillPath(): string | null {
   return null;
 }
 
+interface DescriptionResult {
+  description: string | null;
+  usage?: ClaudeUsage;
+}
+
 /**
  * Generate a PR description from the diff and title using Claude CLI.
- * Returns the generated markdown or null on failure.
+ * Returns the generated markdown (and optional usage data) or null on failure.
  */
 export function generateDescription(
   diff: string,
   prTitle: string,
   timeoutMs: number,
-): Promise<string | null> {
-  const args = ["-p", "--output-format", "text"];
+): Promise<DescriptionResult> {
+  const args = ["-p", "--output-format", "json"];
 
   const skillPath = resolveDescriptionSkillPath();
   if (skillPath) {
@@ -40,18 +47,35 @@ export function generateDescription(
       if (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error("Auto-description generation failed:", message);
-        resolve(null);
+        resolve({ description: null });
         return;
       }
 
-      const body = stdout.trim();
+      // Parse JSON envelope from --output-format json
+      let body: string;
+      let usage: ClaudeUsage | undefined;
+      try {
+        const envelope = JSON.parse(stdout);
+        body = (typeof envelope.result === "string" ? envelope.result : "").trim();
+        if (envelope.is_error) {
+          console.error("Auto-description: Claude returned an error:", body);
+          resolve({ description: null });
+          return;
+        }
+        usage = extractUsage(envelope);
+      } catch {
+        // Fallback for old CLI versions without JSON output support
+        console.warn("Auto-description: Claude CLI did not return JSON — upgrade claude to enable usage tracking");
+        body = stdout.trim();
+      }
+
       if (!body) {
         console.warn("Auto-description returned empty output");
-        resolve(null);
+        resolve({ description: null, usage });
         return;
       }
 
-      resolve(body);
+      resolve({ description: body, usage });
     });
 
     if (child.stdin) {
