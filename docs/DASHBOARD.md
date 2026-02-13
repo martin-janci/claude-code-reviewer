@@ -35,6 +35,7 @@ The dashboard runs on a **separate HTTP server** from the webhook endpoint (port
 │                  │     │  POST /api/config/validate │
 │                  │     │  GET  /api/health  │
 │                  │     │  GET  /api/claude/version │
+│                  │     │  GET  /api/claude/auth    │
 │                  │     │  POST /api/claude/update  │
 │                  │     │  GET  /api/usage/summary  │
 │                  │     │  GET  /api/usage/recent   │
@@ -147,6 +148,24 @@ Response:
 {
   "before": "1.0.15 (Claude Code)",
   "after": "1.0.16 (Claude Code)"
+}
+```
+
+### `GET /api/claude/auth`
+
+Checks Claude CLI and GitHub CLI authentication status on demand.
+
+```bash
+curl http://localhost:3001/api/claude/auth \
+  -H "Authorization: Bearer my-secret-token"
+```
+
+Response:
+
+```json
+{
+  "claude": { "available": true, "authenticated": true },
+  "github": { "available": true, "authenticated": true, "username": "hanibalsk" }
 }
 ```
 

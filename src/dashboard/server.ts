@@ -8,6 +8,7 @@ import type { MetricsCollector } from "../metrics.js";
 import type { UsageStore } from "../usage/store.js";
 import type { RateLimitGuard } from "../rate-limit-guard.js";
 import { getDashboardHtml } from "./html.js";
+import { checkClaudeAuth, checkGhAuth } from "../auth-check.js";
 
 export class DashboardServer {
   private server: Server | null = null;
@@ -167,6 +168,19 @@ export class DashboardServer {
         const version = await this.getClaudeVersion();
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ version }));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    // GET /api/claude/auth — check Claude and GitHub CLI auth status
+    if (req.method === "GET" && path === "/api/claude/auth") {
+      try {
+        const [claude, github] = await Promise.all([checkClaudeAuth(), checkGhAuth()]);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ claude, github }));
       } catch (err) {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: String(err) }));

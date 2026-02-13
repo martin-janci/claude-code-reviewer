@@ -11,17 +11,7 @@ import type { RateLimitGuard } from "../rate-limit-guard.js";
 import { getPRDetails, postComment } from "../reviewer/github.js";
 import { executeAutofix } from "../features/autofix.js";
 import { PrometheusExporter } from "../prometheus.js";
-
-// Note: execFile is used directly for CLI checks (checkClaudeAuth, checkGhAuth).
-// If more endpoints need CLI validation, consider extracting to a shared helper module.
-
-interface AuthStatus {
-  available: boolean;
-  authenticated: boolean;
-  username?: string;
-  error?: string;
-  lastChecked: number;
-}
+import { type AuthStatus, checkClaudeAuth, checkGhAuth } from "../auth-check.js";
 
 function verifySignature(secret: string, payload: Buffer, signature: string): boolean {
   const expected = "sha256=" + createHmac("sha256", secret).update(payload).digest("hex");
@@ -92,74 +82,6 @@ function sanitizeConfig(config: AppConfig): Record<string, unknown> {
       autoLabel: config.features.autoLabel,
     },
   };
-}
-
-/**
- * Check Claude CLI availability and auth status.
- * Uses direct CLI invocation (no `which`) for Docker compatibility.
- * Note: `--version` doesn't require auth, so this only confirms availability.
- * Auth detection is best-effort via error message heuristics.
- */
-function checkClaudeAuth(): Promise<Omit<AuthStatus, "lastChecked">> {
-  return new Promise((resolve) => {
-    execFile("claude", ["--version"], { timeout: 3000 }, (err, stdout, stderr) => {
-      if (err) {
-        const errMsg = err.message + stderr;
-        // ENOENT = command not found
-        if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-          resolve({ available: false, authenticated: false, error: "claude CLI not found" });
-          return;
-        }
-        // Heuristic: error messages containing these strings suggest auth issues
-        // This is fragile but claude CLI has no dedicated auth status command
-        if (errMsg.includes("not authenticated") || errMsg.includes("login required")) {
-          resolve({ available: true, authenticated: false, error: "Not authenticated" });
-          return;
-        }
-        resolve({ available: false, authenticated: false, error: errMsg.slice(0, 100) });
-        return;
-      }
-
-      // Check stderr for warnings that might indicate broken/incompatible installation
-      if (stderr && stderr.trim()) {
-        const warning = stderr.slice(0, 100);
-        resolve({ available: true, authenticated: true, error: `Warning: ${warning}` });
-        return;
-      }
-
-      // If --version succeeds without warnings, CLI is available.
-      // Auth status is best-effort - we assume authenticated unless proven otherwise.
-      resolve({ available: true, authenticated: true });
-    });
-  });
-}
-
-/**
- * Check GitHub CLI availability and auth status.
- * Uses `gh auth status` which reliably reports auth state.
- */
-function checkGhAuth(): Promise<Omit<AuthStatus, "lastChecked">> {
-  return new Promise((resolve) => {
-    execFile("gh", ["auth", "status"], { timeout: 3000 }, (err, stdout, stderr) => {
-      if (err) {
-        // ENOENT = command not found
-        if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-          resolve({ available: false, authenticated: false, error: "gh CLI not found" });
-          return;
-        }
-        // gh auth status exits non-zero if not authenticated
-        const output = stdout + stderr;
-        resolve({ available: true, authenticated: false, error: output.slice(0, 100) });
-        return;
-      }
-      const usernameMatch = stdout.match(/Logged in to github\.com account (\S+)|as (\S+)/);
-      resolve({
-        available: true,
-        authenticated: true,
-        username: usernameMatch?.[1] || usernameMatch?.[2],
-      });
-    });
-  });
 }
 
 function getImportantSettings(config: AppConfig): Record<string, unknown> {

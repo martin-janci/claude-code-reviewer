@@ -13,6 +13,7 @@ src/
 ├── index.ts                     # Entry point, wiring, graceful shutdown
 ├── config.ts                    # YAML config loading + env var overrides
 ├── config-manager.ts            # Hot-reload config lifecycle (persistence, validation, callbacks)
+├── auth-check.ts                # Shared Claude/GitHub CLI auth checks
 ├── types.ts                     # All TypeScript interfaces and types
 ├── clone/
 │   └── manager.ts               # Bare clones + git worktrees for codebase access
@@ -96,7 +97,7 @@ GITHUB_TOKEN=ghp_xxx node dist/index.js  # Production
 | Auto-description | `features/auto-description.ts`, `.claude/skills/auto-description-prompt/skill.md` |
 | Auto-labeling | `features/auto-label.ts`, `reviewer/reviewer.ts` |
 | Dashboard | `dashboard/server.ts`, `dashboard/html.ts`, `config-manager.ts` |
-| Claude CLI update | `dashboard/server.ts` (`/api/claude/*`), `entrypoint.sh` (auto-update) |
+| Claude CLI update | `dashboard/server.ts` (`/api/claude/*`), `auth-check.ts`, `entrypoint.sh` (auto-update) |
 | Hot-reload | `config-manager.ts`, `index.ts` (onChange callbacks) |
 
 ## Commit Conventions

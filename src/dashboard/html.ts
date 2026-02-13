@@ -936,6 +936,19 @@ export function getDashboardHtml(): string {
             <button class="btn btn-sm" id="claude-update-btn" onclick="updateClaudeCli()">Update CLI</button>
           </div>
         </div>
+        <div class="field">
+          <label>Auth</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span id="claude-auth-status" style="font-size:13px;color:var(--text-muted)">Loading...</span>
+          </div>
+        </div>
+        <div class="field">
+          <label>GitHub</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span id="gh-auth-status" style="font-size:13px;color:var(--text-muted)">Loading...</span>
+            <button class="btn btn-sm" id="auth-check-btn" onclick="checkAuth()">Check Auth</button>
+          </div>
+        </div>
         <div id="claude-update-status" style="display:none;margin-top:12px;padding:12px;background:var(--surface2);border-radius:6px;font-size:13px;font-family:var(--mono)"></div>
       </div>
     </div>
@@ -1461,8 +1474,9 @@ export function getDashboardHtml(): string {
       document.getElementById('status-json').textContent = 'Error: ' + err.message;
     }
 
-    // Also load Claude CLI version and rate limit status
+    // Also load Claude CLI version, auth status, and rate limit status
     loadClaudeVersion();
+    loadAuthStatus();
     loadRateLimitStatus();
   };
 
@@ -1554,6 +1568,56 @@ export function getDashboardHtml(): string {
       el.style.color = 'var(--text-muted)';
     }
   }
+
+  async function loadAuthStatus() {
+    const claudeEl = document.getElementById('claude-auth-status');
+    const ghEl = document.getElementById('gh-auth-status');
+    try {
+      const res = await fetch('/api/claude/auth');
+      const data = await res.json();
+
+      // Claude auth
+      if (data.claude?.available && data.claude?.authenticated) {
+        claudeEl.innerHTML = '<span style="color:var(--success)">&#10003;</span> Authenticated';
+        claudeEl.style.color = 'var(--success)';
+      } else if (data.claude?.available) {
+        claudeEl.innerHTML = '<span style="color:var(--danger)">&#10007;</span> ' + esc(data.claude.error || 'Not authenticated');
+        claudeEl.style.color = 'var(--danger)';
+      } else {
+        claudeEl.innerHTML = '<span style="color:var(--danger)">&#10007;</span> ' + esc(data.claude?.error || 'Unavailable');
+        claudeEl.style.color = 'var(--danger)';
+      }
+
+      // GitHub auth
+      if (data.github?.available && data.github?.authenticated) {
+        ghEl.innerHTML = '<span style="color:var(--success)">&#10003;</span> ' + esc(data.github.username || 'Authenticated');
+        ghEl.style.color = 'var(--success)';
+      } else if (data.github?.available) {
+        ghEl.innerHTML = '<span style="color:var(--danger)">&#10007;</span> ' + esc(data.github.error || 'Not authenticated');
+        ghEl.style.color = 'var(--danger)';
+      } else {
+        ghEl.innerHTML = '<span style="color:var(--danger)">&#10007;</span> ' + esc(data.github?.error || 'Unavailable');
+        ghEl.style.color = 'var(--danger)';
+      }
+    } catch {
+      claudeEl.textContent = 'Error checking auth';
+      claudeEl.style.color = 'var(--text-muted)';
+      ghEl.textContent = 'Error checking auth';
+      ghEl.style.color = 'var(--text-muted)';
+    }
+  }
+
+  window.checkAuth = async function() {
+    const btn = document.getElementById('auth-check-btn');
+    btn.disabled = true;
+    btn.textContent = 'Checking...';
+    try {
+      await loadAuthStatus();
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Check Auth';
+    }
+  };
 
   window.updateClaudeCli = async function() {
     const btn = document.getElementById('claude-update-btn');
