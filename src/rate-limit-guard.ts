@@ -67,8 +67,11 @@ export class RateLimitGuard {
     this.resumesAt = new Date(Date.now() + cooldownSeconds * 1000).toISOString();
     this.pauseCount++;
 
-    // Clear existing timer
-    if (this.resumeTimer) clearTimeout(this.resumeTimer);
+    // Clear existing timer (e.g. upgrading from rate_limit → spending_limit)
+    if (this.resumeTimer) {
+      this.logger.info("Rate limit guard: replacing existing cooldown timer", { newKind: kind, newCooldownSeconds: cooldownSeconds });
+      clearTimeout(this.resumeTimer);
+    }
     this.resumeTimer = setTimeout(() => this.resume("timer"), cooldownSeconds * 1000);
 
     // Record event

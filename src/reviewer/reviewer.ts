@@ -36,6 +36,13 @@ function parseLegacyVerdict(body: string): ReviewVerdict {
  * Classify an error as transient (retryable) or permanent (skip retries).
  * Permanent errors: 404 Not Found, 403 Blocked, 422 Validation, explicit auth failures.
  * Everything else is transient.
+ *
+ * Rate limit detection relies on pattern matching against Claude CLI stderr output.
+ * Expected Claude API error patterns (as of 2025):
+ *   - 429: "rate_limit_error" / "rate limit" with optional "retry-after: <seconds>"
+ *   - 429 spending: includes "spending" / "budget" / "billing" keywords, or retry-after > 300s
+ *   - 529: "overloaded_error" / "overloaded"
+ * If the error format changes, unrecognized patterns fall through to "transient" (safe default).
  */
 function classifyError(err: unknown, phase: ErrorPhase): ErrorKind {
   const message = err instanceof Error ? err.message : String(err);
@@ -206,7 +213,9 @@ export class Reviewer {
       await this.locks.get(key);
     }
 
-    // Wait for rate limit guard (blocks if globally paused)
+    // Wait for rate limit guard (blocks if globally paused).
+    // Ordering: mutex → guard → concurrency slot. This ensures no concurrency
+    // slot is held while waiting on the guard, preventing slot leaks during pauses.
     if (this.rateLimitGuard) {
       await this.rateLimitGuard.acquire();
     }
