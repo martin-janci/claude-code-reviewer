@@ -223,7 +223,7 @@ export function parseStructuredReview(stdout: string): StructuredReview | null {
  */
 export function extractUsage(envelope: Record<string, unknown>): ClaudeUsage | undefined {
   // The JSON envelope exposes usage fields at the top level
-  if (typeof envelope.session_id !== "string") return undefined;
+  if (typeof envelope.session_id !== "string" || !envelope.session_id) return undefined;
 
   return {
     inputTokens: typeof envelope.input_tokens === "number" ? envelope.input_tokens : 0,

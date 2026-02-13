@@ -50,6 +50,12 @@ export interface MetricsSnapshot {
     totalCostUsd: number;
     cacheHitRate: number;
   };
+  rateLimit: {
+    paused: boolean;
+    pauseCount: number;
+    queueDepth: number;
+    cooldownRemainingSeconds: number;
+  };
 }
 
 const ROLLING_WINDOW = 100;
@@ -138,7 +144,7 @@ export class MetricsCollector {
     this._queueDepth = queueDepth;
   }
 
-  snapshot(uptimeSeconds: number, prStatusCounts: Partial<Record<PRStatus, number>>): MetricsSnapshot {
+  snapshot(uptimeSeconds: number, prStatusCounts: Partial<Record<PRStatus, number>>, rateLimitStatus?: { paused: boolean; pauseCount: number; queueDepth: number; cooldownRemainingSeconds: number }): MetricsSnapshot {
     const prTotal = Object.values(prStatusCounts).reduce((sum, n) => sum + (n ?? 0), 0);
 
     // Compute timing stats
@@ -189,6 +195,12 @@ export class MetricsCollector {
         totalCacheCreationTokens: this.cacheCreationTotal,
         totalCostUsd: this.costTotal,
         cacheHitRate,
+      },
+      rateLimit: rateLimitStatus ?? {
+        paused: false,
+        pauseCount: 0,
+        queueDepth: 0,
+        cooldownRemainingSeconds: 0,
       },
     };
   }

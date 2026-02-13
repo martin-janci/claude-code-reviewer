@@ -6,7 +6,9 @@ import type { Logger } from "../logger.js";
 import type { StateStore } from "../state/store.js";
 import type { MetricsCollector } from "../metrics.js";
 import type { UsageStore } from "../usage/store.js";
+import type { RateLimitGuard } from "../rate-limit-guard.js";
 import { getDashboardHtml } from "./html.js";
+import { checkClaudeAuth, checkGhAuth } from "../auth-check.js";
 
 export class DashboardServer {
   private server: Server | null = null;
@@ -19,6 +21,7 @@ export class DashboardServer {
     private metrics?: MetricsCollector,
     private healthInfo?: { version: string; startTime: number },
     private usageStore?: UsageStore,
+    private rateLimitGuard?: RateLimitGuard,
   ) {}
 
   start(port: number): void {
@@ -133,6 +136,14 @@ export class DashboardServer {
       const statusCounts = this.store?.getStatusCounts() ?? {};
       const allPRs = this.store?.getAll() ?? [];
 
+      const rlStatus = this.rateLimitGuard?.getStatus();
+      const rateLimitMetrics = rlStatus ? {
+        paused: rlStatus.state !== "active",
+        pauseCount: rlStatus.pauseCount,
+        queueDepth: rlStatus.queueDepth,
+        cooldownRemainingSeconds: rlStatus.cooldownRemainingSeconds,
+      } : undefined;
+
       const healthData = {
         status: "ok",
         version: info?.version ?? "unknown",
@@ -142,7 +153,7 @@ export class DashboardServer {
           byStatus: statusCounts,
         },
         metrics: this.metrics && info
-          ? this.metrics.snapshot(uptime, statusCounts)
+          ? this.metrics.snapshot(uptime, statusCounts, rateLimitMetrics)
           : null,
       };
 
@@ -157,6 +168,19 @@ export class DashboardServer {
         const version = await this.getClaudeVersion();
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ version }));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    // GET /api/claude/auth — check Claude and GitHub CLI auth status
+    if (req.method === "GET" && path === "/api/claude/auth") {
+      try {
+        const [claude, github] = await Promise.all([checkClaudeAuth(), checkGhAuth()]);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ claude, github }));
       } catch (err) {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: String(err) }));
@@ -189,6 +213,32 @@ export class DashboardServer {
       const records = this.usageStore.getRecentRecords(Math.min(limit, 200));
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(records));
+      return;
+    }
+
+    // GET /api/rate-limit — rate limit guard status
+    if (req.method === "GET" && path === "/api/rate-limit") {
+      if (!this.rateLimitGuard) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ state: "active", pausedSince: null, resumesAt: null, queueDepth: 0, pauseCount: 0, cooldownRemainingSeconds: 0, events: [] }));
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(this.rateLimitGuard.getStatus()));
+      return;
+    }
+
+    // POST /api/rate-limit/resume — manually resume from rate limit pause
+    if (req.method === "POST" && path === "/api/rate-limit/resume") {
+      if (!this.rateLimitGuard) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ state: "active" }));
+        return;
+      }
+      this.rateLimitGuard.resume("manual");
+      this.logger.info("Rate limit guard manually resumed via dashboard");
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(this.rateLimitGuard.getStatus()));
       return;
     }
 

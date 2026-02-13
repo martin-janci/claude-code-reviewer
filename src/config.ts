@@ -120,6 +120,17 @@ export function validateConfig(config: AppConfig): ConfigError[] {
     }
   }
 
+  // Rate limit config
+  if (config.rateLimit.defaultCooldownSeconds < 10) {
+    errors.push({ field: "rateLimit.defaultCooldownSeconds", message: "Must be >= 10", severity: "error" });
+  }
+  if (config.rateLimit.spendingLimitCooldownSeconds < 60) {
+    errors.push({ field: "rateLimit.spendingLimitCooldownSeconds", message: "Must be >= 60", severity: "error" });
+  }
+  if (config.rateLimit.maxEventHistory < 1) {
+    errors.push({ field: "rateLimit.maxEventHistory", message: "Must be >= 1", severity: "error" });
+  }
+
   // Usage tracking config
   if (config.features.usage.enabled) {
     if (!config.features.usage.dbPath) {
@@ -211,6 +222,7 @@ export const DEFAULTS: AppConfig = {
     usage: { enabled: true, dbPath: "data/usage.db", retentionDays: 90, sessionTtlSeconds: 270 },
   },
   dashboard: { port: 3001 },
+  rateLimit: { defaultCooldownSeconds: 120, spendingLimitCooldownSeconds: 3600, maxEventHistory: 50 },
 };
 
 export function loadConfig(path: string = "config.yaml", allowEmptyRepos = false): AppConfig {
@@ -244,6 +256,7 @@ export function loadConfig(path: string = "config.yaml", allowEmptyRepos = false
       usage: { ...DEFAULTS.features.usage, ...fileFeatures?.usage },
     },
     dashboard: { ...DEFAULTS.dashboard!, ...fileConfig.dashboard },
+    rateLimit: { ...DEFAULTS.rateLimit, ...fileConfig.rateLimit },
   };
 
   // Environment variable overrides
