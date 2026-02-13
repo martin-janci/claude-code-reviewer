@@ -15,6 +15,7 @@ import { setGhToken, getPRDetails } from "./reviewer/github.js";
 import { recoverPendingReviews } from "./startup-recovery.js";
 import { AuditLogger } from "./audit/logger.js";
 import { UsageStore } from "./usage/store.js";
+import { RateLimitGuard } from "./rate-limit-guard.js";
 
 let VERSION = "unknown";
 try {
@@ -214,7 +215,8 @@ function main(): void {
     }
   }
 
-  const reviewer = new Reviewer(config, store, logger, cloneManager, metrics, auditLogger, usageStore);
+  const rateLimitGuard = new RateLimitGuard(config.rateLimit.maxEventHistory, logger);
+  const reviewer = new Reviewer(config, store, logger, cloneManager, metrics, auditLogger, usageStore, rateLimitGuard);
 
   // Pass GitHub token to gh CLI wrapper
   if (config.github.token) {
@@ -238,7 +240,7 @@ function main(): void {
   }
 
   if (config.mode === "webhook" || config.mode === "both") {
-    webhook = new WebhookServer(config, reviewer, store, logger, cloneManager, metrics, auditLogger, { version: VERSION, startTime: START_TIME });
+    webhook = new WebhookServer(config, reviewer, store, logger, cloneManager, metrics, auditLogger, { version: VERSION, startTime: START_TIME }, rateLimitGuard);
     webhook.start();
     auditLogger.serverStarted("WebhookServer", config.webhook.port);
   } else {
@@ -258,7 +260,7 @@ function main(): void {
 
   // Start dashboard server on admin port
   const dashboardPort = config.dashboard?.port ?? 3001;
-  dashboard = new DashboardServer(configManager, logger, store, metrics, { version: VERSION, startTime: START_TIME }, usageStore);
+  dashboard = new DashboardServer(configManager, logger, store, metrics, { version: VERSION, startTime: START_TIME }, usageStore, rateLimitGuard);
   dashboard.start(dashboardPort);
 
   // Startup recovery: check for PRs that need attention after restart
@@ -281,6 +283,9 @@ function main(): void {
       healthServer.closeAllConnections();
       await closePromise;
     }
+
+    // Release rate limit guard waiters so in-flight reviews can drain
+    rateLimitGuard.shutdown();
 
     // Wait for in-flight reviews to complete (up to 60s)
     if (reviewer.inflight > 0) {

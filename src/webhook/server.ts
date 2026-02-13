@@ -7,6 +7,7 @@ import type { StateStore } from "../state/store.js";
 import type { MetricsCollector } from "../metrics.js";
 import type { Logger } from "../logger.js";
 import type { CloneManager } from "../clone/manager.js";
+import type { RateLimitGuard } from "../rate-limit-guard.js";
 import { getPRDetails, postComment } from "../reviewer/github.js";
 import { executeAutofix } from "../features/autofix.js";
 import { PrometheusExporter } from "../prometheus.js";
@@ -217,6 +218,7 @@ export class WebhookServer {
     private metrics?: MetricsCollector,
     private auditLogger?: import("../audit/logger.js").AuditLogger,
     private healthInfo?: { version: string; startTime: number },
+    private rateLimitGuard?: RateLimitGuard,
   ) {
     try {
       this.commentTriggerRegex = new RegExp(config.review.commentTrigger, "m");
@@ -294,7 +296,9 @@ export class WebhookServer {
       if (req.method === "GET" && (req.url === "/metrics" || req.url?.startsWith("/metrics?"))) {
         if (this.metrics && this.healthInfo) {
           const uptime = Math.floor((Date.now() - this.healthInfo.startTime) / 1000);
-          const snapshot = this.metrics.snapshot(uptime, this.store.getStatusCounts());
+          const rlStatus = this.rateLimitGuard?.getStatus();
+          const rlMetrics = rlStatus ? { paused: rlStatus.state !== "active", pauseCount: rlStatus.pauseCount, queueDepth: rlStatus.queueDepth, cooldownRemainingSeconds: rlStatus.cooldownRemainingSeconds } : undefined;
+          const snapshot = this.metrics.snapshot(uptime, this.store.getStatusCounts(), rlMetrics);
 
           // Check Accept header or query parameter for format preference
           const acceptHeader = req.headers["accept"] || "";
@@ -376,7 +380,11 @@ export class WebhookServer {
             lockedPRs: this.reviewer.lockKeys,
           },
           metrics: this.metrics && this.healthInfo
-            ? this.metrics.snapshot(uptime, statusCounts)
+            ? (() => {
+                const rl = this.rateLimitGuard?.getStatus();
+                const rlM = rl ? { paused: rl.state !== "active", pauseCount: rl.pauseCount, queueDepth: rl.queueDepth, cooldownRemainingSeconds: rl.cooldownRemainingSeconds } : undefined;
+                return this.metrics!.snapshot(uptime, statusCounts, rlM);
+              })()
             : null,
         };
 

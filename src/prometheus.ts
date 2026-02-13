@@ -34,6 +34,12 @@ export class PrometheusExporter {
   private costTotalGauge: Gauge;
   private cacheHitRateGauge: Gauge;
 
+  // Rate limit gauges
+  private rateLimitPausedGauge: Gauge;
+  private rateLimitPausesTotalGauge: Gauge;
+  private rateLimitQueueDepthGauge: Gauge;
+  private rateLimitCooldownGauge: Gauge;
+
   constructor() {
     this.registry = new Registry();
 
@@ -136,6 +142,31 @@ export class PrometheusExporter {
       help: "Prompt cache hit rate (0-1)",
       registers: [this.registry],
     });
+
+    // Rate limit gauges
+    this.rateLimitPausedGauge = new Gauge({
+      name: "claude_reviewer_rate_limit_paused",
+      help: "Whether the rate limit guard is currently paused (0 or 1)",
+      registers: [this.registry],
+    });
+
+    this.rateLimitPausesTotalGauge = new Gauge({
+      name: "claude_reviewer_rate_limit_pauses_total",
+      help: "Total number of rate limit pauses",
+      registers: [this.registry],
+    });
+
+    this.rateLimitQueueDepthGauge = new Gauge({
+      name: "claude_reviewer_rate_limit_queue_depth",
+      help: "Number of reviews queued behind rate limit guard",
+      registers: [this.registry],
+    });
+
+    this.rateLimitCooldownGauge = new Gauge({
+      name: "claude_reviewer_rate_limit_cooldown_remaining_seconds",
+      help: "Seconds remaining until rate limit cooldown expires",
+      registers: [this.registry],
+    });
   }
 
   /**
@@ -193,6 +224,14 @@ export class PrometheusExporter {
       this.tokensTotalGauge.labels("cache_creation").set(snapshot.usage.totalCacheCreationTokens);
       this.costTotalGauge.set(snapshot.usage.totalCostUsd);
       this.cacheHitRateGauge.set(snapshot.usage.cacheHitRate);
+    }
+
+    // Update rate limit gauges
+    if (snapshot.rateLimit) {
+      this.rateLimitPausedGauge.set(snapshot.rateLimit.paused ? 1 : 0);
+      this.rateLimitPausesTotalGauge.set(snapshot.rateLimit.pauseCount);
+      this.rateLimitQueueDepthGauge.set(snapshot.rateLimit.queueDepth);
+      this.rateLimitCooldownGauge.set(snapshot.rateLimit.cooldownRemainingSeconds);
     }
   }
 

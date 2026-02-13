@@ -892,7 +892,40 @@ export function getDashboardHtml(): string {
 
   <!-- Status Tab -->
   <div class="tab-panel" id="panel-status">
+    <div id="rate-limit-banner" style="display:none;padding:14px 20px;border-radius:var(--radius);margin-bottom:20px;font-size:14px;font-weight:500;display:none">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <span id="rate-limit-banner-text"></span>
+        <button class="btn btn-sm" onclick="resumeRateLimit()" id="rate-limit-resume-btn">Resume Now</button>
+      </div>
+    </div>
     <div class="status-grid" id="status-grid"></div>
+    <div class="section" id="rate-limit-section" style="display:none">
+      <div class="section-header">Rate Limit Guard</div>
+      <div class="section-body">
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:16px">
+          <div><span style="color:var(--text-muted);font-size:12px">State</span><br><strong id="rl-state">active</strong></div>
+          <div><span style="color:var(--text-muted);font-size:12px">Queue Depth</span><br><strong id="rl-queue">0</strong></div>
+          <div><span style="color:var(--text-muted);font-size:12px">Total Pauses</span><br><strong id="rl-pauses">0</strong></div>
+        </div>
+        <div id="rl-events-wrap" style="display:none">
+          <div style="font-size:13px;font-weight:500;margin-bottom:8px;color:var(--text-muted)">Event History</div>
+          <div style="overflow-x:auto">
+            <table style="width:100%;border-collapse:collapse;font-size:12px;font-family:var(--mono)">
+              <thead>
+                <tr style="border-bottom:1px solid var(--border);text-align:left">
+                  <th style="padding:6px 8px;color:var(--text-muted);font-weight:500">Time</th>
+                  <th style="padding:6px 8px;color:var(--text-muted);font-weight:500">Kind</th>
+                  <th style="padding:6px 8px;color:var(--text-muted);font-weight:500;text-align:right">Cooldown</th>
+                  <th style="padding:6px 8px;color:var(--text-muted);font-weight:500">Resumed At</th>
+                  <th style="padding:6px 8px;color:var(--text-muted);font-weight:500">Resumed By</th>
+                </tr>
+              </thead>
+              <tbody id="rl-events-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
     <div class="section">
       <div class="section-header">Claude CLI</div>
       <div class="section-body">
@@ -1428,8 +1461,85 @@ export function getDashboardHtml(): string {
       document.getElementById('status-json').textContent = 'Error: ' + err.message;
     }
 
-    // Also load Claude CLI version
+    // Also load Claude CLI version and rate limit status
     loadClaudeVersion();
+    loadRateLimitStatus();
+  };
+
+  async function loadRateLimitStatus() {
+    const banner = document.getElementById('rate-limit-banner');
+    const bannerText = document.getElementById('rate-limit-banner-text');
+    const section = document.getElementById('rate-limit-section');
+    try {
+      const res = await fetch('/api/rate-limit');
+      const data = await res.json();
+
+      // Update banner
+      if (data.state !== 'active') {
+        const isSpending = data.state === 'paused_spending_limit';
+        banner.style.display = 'block';
+        banner.style.background = isSpending ? 'rgba(255,107,107,0.15)' : 'rgba(252,196,25,0.15)';
+        banner.style.border = '1px solid ' + (isSpending ? 'var(--danger)' : 'var(--warning)');
+        banner.style.color = isSpending ? 'var(--danger)' : 'var(--warning)';
+        const label = isSpending ? 'Spending limit reached' : 'Rate limited';
+        const resumeAt = data.resumesAt ? new Date(data.resumesAt).toLocaleTimeString() : 'unknown';
+        bannerText.textContent = label + ' — auto-resuming at ' + resumeAt + ' (queue: ' + data.queueDepth + ')';
+      } else {
+        banner.style.display = 'none';
+      }
+
+      // Update section (always show if there are events)
+      const hasEvents = data.events && data.events.length > 0;
+      section.style.display = (data.state !== 'active' || hasEvents) ? 'block' : 'none';
+      document.getElementById('rl-state').textContent = data.state;
+      document.getElementById('rl-state').style.color = data.state === 'active' ? 'var(--success)' : 'var(--warning)';
+      document.getElementById('rl-queue').textContent = data.queueDepth;
+      document.getElementById('rl-pauses').textContent = data.pauseCount;
+
+      // Event history
+      const eventsWrap = document.getElementById('rl-events-wrap');
+      const tbody = document.getElementById('rl-events-tbody');
+      if (hasEvents) {
+        eventsWrap.style.display = 'block';
+        tbody.innerHTML = '';
+        data.events.slice().reverse().forEach(function(ev) {
+          const tr = document.createElement('tr');
+          tr.style.borderBottom = '1px solid var(--border)';
+          const kindColor = ev.kind === 'spending_limit' ? 'var(--danger)' : ev.kind === 'overloaded' ? 'var(--orange)' : 'var(--warning)';
+          tr.innerHTML = '<td style="padding:6px 8px">' + new Date(ev.timestamp).toLocaleString() + '</td>'
+            + '<td style="padding:6px 8px;color:' + kindColor + '">' + ev.kind + '</td>'
+            + '<td style="padding:6px 8px;text-align:right">' + ev.retryAfterSeconds + 's</td>'
+            + '<td style="padding:6px 8px">' + (ev.resumedAt ? new Date(ev.resumedAt).toLocaleTimeString() : (ev.resumed ? '-' : 'pending')) + '</td>'
+            + '<td style="padding:6px 8px">' + (ev.resumedBy || '-') + '</td>';
+          tbody.appendChild(tr);
+        });
+      } else {
+        eventsWrap.style.display = 'none';
+      }
+    } catch (err) {
+      banner.style.display = 'none';
+      section.style.display = 'none';
+    }
+  }
+
+  window.resumeRateLimit = async function() {
+    const btn = document.getElementById('rate-limit-resume-btn');
+    btn.disabled = true;
+    btn.textContent = 'Resuming...';
+    try {
+      const res = await fetch('/api/rate-limit/resume', { method: 'POST' });
+      if (res.ok) {
+        showToast('Rate limit guard resumed', 'success');
+        loadRateLimitStatus();
+      } else {
+        showToast('Failed to resume', 'error');
+      }
+    } catch (err) {
+      showToast('Resume failed: ' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Resume Now';
+    }
   };
 
   async function loadClaudeVersion() {

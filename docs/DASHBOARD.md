@@ -38,6 +38,8 @@ The dashboard runs on a **separate HTTP server** from the webhook endpoint (port
 │                  │     │  POST /api/claude/update  │
 │                  │     │  GET  /api/usage/summary  │
 │                  │     │  GET  /api/usage/recent   │
+│                  │     │  GET  /api/rate-limit     │
+│                  │     │  POST /api/rate-limit/resume │
 └──────────────────┘     └──────────────────┘
          │                        │
          └────────┬───────────────┘
@@ -195,6 +197,50 @@ curl http://localhost:3001/api/usage/recent?limit=10 \
   -H "Authorization: Bearer my-secret-token"
 ```
 
+### `GET /api/rate-limit`
+
+Returns the current rate limit guard state, queue depth, and event history.
+
+```bash
+curl http://localhost:3001/api/rate-limit \
+  -H "Authorization: Bearer my-secret-token"
+```
+
+Response:
+
+```json
+{
+  "state": "paused_rate_limit",
+  "pausedSince": "2025-01-15T10:30:00.000Z",
+  "resumesAt": "2025-01-15T10:32:00.000Z",
+  "queueDepth": 3,
+  "pauseCount": 2,
+  "cooldownRemainingSeconds": 85,
+  "events": [
+    {
+      "timestamp": "2025-01-15T10:30:00.000Z",
+      "kind": "rate_limit",
+      "retryAfterSeconds": 120,
+      "autoResumeAt": "2025-01-15T10:32:00.000Z",
+      "resumed": false
+    }
+  ]
+}
+```
+
+States: `active` (normal), `paused_rate_limit` (Claude API 429), `paused_spending_limit` (spending/billing limit hit).
+
+### `POST /api/rate-limit/resume`
+
+Manually resume from a rate limit pause. Releases all queued reviews immediately.
+
+```bash
+curl -X POST http://localhost:3001/api/rate-limit/resume \
+  -H "Authorization: Bearer my-secret-token"
+```
+
+Returns the updated guard status (same format as `GET /api/rate-limit`).
+
 ## Dashboard UI
 
 The UI has six tabs:
@@ -206,7 +252,7 @@ The UI has six tabs:
 | **Features** | Jira, auto-description, auto-label, Slack, audit, autofix (each with enable/disable toggle) |
 | **Repos** | Dynamic list of owner/repo entries with add/remove |
 | **Usage** | Token usage, cost tracking, prompt cache hit rates per repo, recent invocations |
-| **Status** | Read-only health, uptime, PR state counts, metrics, Claude CLI version + update button |
+| **Status** | Read-only health, uptime, PR state counts, rate limit guard status with resume button, event history, Claude CLI version + update button |
 
 ### UI Features
 

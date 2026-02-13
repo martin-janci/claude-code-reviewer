@@ -46,6 +46,14 @@ review:
     - "**/*.env*"
     - "**/secrets/**"
 
+# --- Rate Limit Guard ---
+# Detects Claude API rate limits (429) and spending limits, pauses all new reviews,
+# queues incoming work, and auto-resumes after cooldown. Dashboard shows status + manual resume.
+rateLimit:
+  defaultCooldownSeconds: 120      # fallback when Claude doesn't provide retry-after
+  spendingLimitCooldownSeconds: 3600  # spending limit cooldown (1 hour)
+  maxEventHistory: 50               # how many rate limit events to keep for dashboard
+
 # --- Optional Features (all disabled by default) ---
 
 features:
