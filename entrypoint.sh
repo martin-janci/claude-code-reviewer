@@ -33,6 +33,27 @@ if [ "${CLAUDE_AUTO_UPDATE}" = "true" ]; then
   fi
 fi
 
+# --- Persist .claude.json inside the volume via symlink ---
+# Claude CLI writes to /home/node/.claude.json but that's outside the volume.
+# Symlink it into the volume so it survives container restarts.
+if [ -f "/home/node/.claude/.claude.json" ] && [ ! -L "/home/node/.claude.json" ]; then
+  # Volume has a saved copy, create symlink
+  rm -f /home/node/.claude.json
+  ln -s /home/node/.claude/.claude.json /home/node/.claude.json
+  echo "[entrypoint] Symlinked .claude.json from volume"
+elif [ ! -e "/home/node/.claude/.claude.json" ]; then
+  # First run or fresh volume — restore from backup if available, then symlink
+  LATEST_BACKUP=$(ls -t /home/node/.claude/backups/.claude.json.backup.* 2>/dev/null | head -1)
+  if [ -n "$LATEST_BACKUP" ]; then
+    cp "$LATEST_BACKUP" /home/node/.claude/.claude.json
+    chown node:node /home/node/.claude/.claude.json
+    echo "[entrypoint] Restored .claude.json from backup: $(basename "$LATEST_BACKUP")"
+  fi
+  rm -f /home/node/.claude.json
+  ln -s /home/node/.claude/.claude.json /home/node/.claude.json
+  echo "[entrypoint] Symlinked .claude.json into volume"
+fi
+
 # --- Version logging ---
 echo "[entrypoint] Claude CLI version: $(su-exec node claude --version 2>/dev/null || echo 'not found')"
 
