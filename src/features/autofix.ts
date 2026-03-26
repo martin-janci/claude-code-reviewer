@@ -1,4 +1,6 @@
-import { execFile } from "node:child_process";
+import { exec, execFile } from "node:child_process";
+import { mkdirSync, writeFileSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
 import { type Logger } from "../logger.js";
 import type { AppConfig, PullRequest } from "../types.js";
 
@@ -25,63 +27,65 @@ export async function executeAutofix(
 
   log.info("Starting autofix session");
 
-  // Build Claude CLI command with edit permissions and limited turns
+  // Build Claude CLI args — use -p (print mode) with stdin for the prompt
   const args = [
+    "-p",
     "--dangerously-skip-permissions",
     "--max-turns",
     String(config.features.autofix.maxTurns),
-    "--session-type",
-    "one-time",
   ];
 
   // Prepare prompt: analyze the PR's review findings and apply fixes
   const prompt = buildAutofixPrompt(owner, repo, number);
 
+  // Write prompt to temp file and redirect via shell (same pattern as reviewer)
+  const promptDir = "/tmp/claude-prompts";
+  mkdirSync(promptDir, { recursive: true });
+  const promptFile = join(promptDir, `autofix-${Date.now()}.txt`);
+  writeFileSync(promptFile, prompt);
+
+  const shellCmd = `claude ${args.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(" ")} < '${promptFile}'`;
+  log.info("Invoking claude CLI for autofix", { args: args.join(" "), timeoutMs: config.features.autofix.timeoutMs, cwd: worktreePath });
+
   return new Promise<AutofixResult>((resolve) => {
-    const child = execFile(
-      "claude",
-      [...args, prompt],
-      {
-        timeout: config.features.autofix.timeoutMs,
-        cwd: worktreePath,
-        maxBuffer: 10 * 1024 * 1024, // 10MB
-      },
-      (err, stdout, stderr) => {
-        if (err) {
-          if ((err as NodeJS.ErrnoException).code === "ETIMEDOUT") {
-            log.error("Autofix session timed out");
-            resolve({ success: false, filesChanged: 0, error: "Timeout" });
-            return;
-          }
-          log.error("Autofix session failed", { error: String(err), stderr });
-          resolve({ success: false, filesChanged: 0, error: String(err) });
+    exec(shellCmd, {
+      encoding: "utf-8",
+      maxBuffer: 10 * 1024 * 1024,
+      timeout: config.features.autofix.timeoutMs,
+      cwd: worktreePath,
+    }, (err, stdout, stderr) => {
+      // Clean up temp file
+      try { unlinkSync(promptFile); } catch { /* ignore */ }
+
+      if (err) {
+        if ((err as NodeJS.ErrnoException).code === "ETIMEDOUT" || err.killed) {
+          log.error("Autofix session timed out");
+          resolve({ success: false, filesChanged: 0, error: "Timeout" });
           return;
         }
+        log.error("Autofix session failed", { error: String(err), stderr });
+        resolve({ success: false, filesChanged: 0, error: String(err) });
+        return;
+      }
 
-        log.info("Autofix session completed", { stdout: stdout.slice(0, 500) });
+      log.info("Autofix session completed", { stdout: stdout.slice(0, 500) });
 
-        // Create a commit with the fixes (returns actual file count from git diff)
-        createFixCommit(worktreePath, owner, repo, number, log)
-          .then((result) => {
-            if (!result) {
-              resolve({ success: false, filesChanged: 0, error: "No changes to commit" });
-              return;
-            }
+      // Create a commit with the fixes (returns actual file count from git diff)
+      createFixCommit(worktreePath, owner, repo, number, log)
+        .then((result) => {
+          if (!result) {
+            resolve({ success: false, filesChanged: 0, error: "No changes to commit" });
+            return;
+          }
 
-            // Determine target branch based on autoApply setting
-            const fixBranch = config.features.autofix.autoApply ? null : `autofix/pr-${number}`;
-            resolve({ success: true, commitSha: result.sha, filesChanged: result.filesChanged, fixBranch: fixBranch ?? undefined });
-          })
-          .catch((commitErr) => {
-            log.error("Failed to create fix commit", { error: String(commitErr) });
-            resolve({ success: false, filesChanged: 0, error: String(commitErr) });
-          });
-      },
-    );
-
-    // Log Claude's progress in real-time
-    child.stdout?.on("data", (chunk) => {
-      log.debug("Claude output", { output: String(chunk).slice(0, 200) });
+          // Determine target branch based on autoApply setting
+          const fixBranch = config.features.autofix.autoApply ? null : `autofix/pr-${number}`;
+          resolve({ success: true, commitSha: result.sha, filesChanged: result.filesChanged, fixBranch: fixBranch ?? undefined });
+        })
+        .catch((commitErr) => {
+          log.error("Failed to create fix commit", { error: String(commitErr) });
+          resolve({ success: false, filesChanged: 0, error: String(commitErr) });
+        });
     });
   });
 }
