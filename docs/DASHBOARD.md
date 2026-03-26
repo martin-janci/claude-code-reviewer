@@ -41,6 +41,9 @@ The dashboard runs on a **separate HTTP server** from the webhook endpoint (port
 │                  │     │  GET  /api/usage/recent   │
 │                  │     │  GET  /api/rate-limit     │
 │                  │     │  POST /api/rate-limit/resume │
+│                  │     │  GET  /api/config/secret     │  ← reveal secret
+│                  │     │  POST /api/restart           │  ← graceful restart
+│  GET  /favicon.ico │   │                              │
 └──────────────────┘     └──────────────────┘
          │                        │
          └────────┬───────────────┘
@@ -249,6 +252,43 @@ Response:
 
 States: `active` (normal), `paused_rate_limit` (Claude API 429), `paused_spending_limit` (spending/billing limit hit).
 
+### `GET /api/config/secret`
+
+Reveals the real value of a sensitive field (for the "show" button in the dashboard). Only works for fields in the `SENSITIVE_FIELDS` list.
+
+```bash
+curl "http://localhost:3001/api/config/secret?field=github.token" \
+  -H "Authorization: Bearer my-secret-token"
+```
+
+Response:
+
+```json
+{
+  "field": "github.token",
+  "value": "ghp_xxxxxxxxxxxx"
+}
+```
+
+### `POST /api/restart`
+
+Triggers a graceful service restart via `process.exit(0)`. The container restart policy (Docker `restart: unless-stopped` or Kubernetes `restartPolicy: Always`) will automatically revive the process. The response is sent before exit, with a 15-second delay to allow the dashboard UI to reload.
+
+```bash
+curl -X POST http://localhost:3001/api/restart \
+  -H "Authorization: Bearer my-secret-token"
+```
+
+Response:
+
+```json
+{
+  "status": "restarting"
+}
+```
+
+> **Note:** This endpoint is platform-agnostic — it works identically on Docker and Kubernetes without requiring Docker socket access.
+
 ### `POST /api/rate-limit/resume`
 
 Manually resume from a rate limit pause. Releases all queued reviews immediately.
@@ -277,7 +317,8 @@ The UI has six tabs:
 
 - **Env-var locks**: Fields overridden by environment variables are disabled with a lock icon showing which env var takes precedence
 - **Restart badges**: Fields requiring a restart show an orange "restart required" badge
-- **Secret inputs**: Password fields with show/hide toggle; secrets display as `$$REDACTED_b7e2c4a9$$` sentinel value
+- **Secret reveal**: Password fields with show/hide toggle; clicking "show" fetches the real value from `GET /api/config/secret` (secrets display as redacted by default)
+- **Restart button**: When a config change requires a restart, a banner appears with a "Restart Now" button that calls `POST /api/restart`
 - **Inline validation**: Errors shown immediately on save
 - **Env-override warnings**: If you edit a field that's overridden by an env var, the save response includes a warning explaining the change is saved to `config.yaml` but won't take effect until the env var is removed
 
@@ -349,7 +390,10 @@ Environment variable overrides always take precedence over config file values. T
 
 ## Docker
 
-When running in Docker, expose the dashboard port alongside the webhook port:
+When running in Docker, expose the dashboard port alongside the webhook port.
+
+> **Config persistence:** The config manager writes directly to the config file (not via atomic rename), so Docker bind-mounted `config.yaml` files work correctly.
+
 
 ```bash
 docker run -p 3000:3000 -p 3001:3001 \
