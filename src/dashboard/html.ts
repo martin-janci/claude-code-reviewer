@@ -348,6 +348,67 @@ export function getDashboardHtml(): string {
 
   .banner.visible { display: block; }
 
+  .login-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: var(--bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+  }
+
+  .login-overlay.hidden { display: none; }
+
+  .login-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 32px;
+    max-width: 400px;
+    width: 100%;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  }
+
+  .login-card h2 {
+    font-size: 20px;
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+
+  .login-card p {
+    color: var(--text-muted);
+    font-size: 14px;
+    margin-bottom: 24px;
+  }
+
+  .login-card input {
+    margin-bottom: 16px;
+  }
+
+  .login-card .btn {
+    width: 100%;
+  }
+
+  .logout-btn {
+    margin-left: auto;
+    padding: 6px 12px;
+    font-size: 13px;
+    cursor: pointer;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    transition: all 0.15s;
+  }
+
+  .logout-btn:hover {
+    background: var(--border);
+  }
+
   .status-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
@@ -394,9 +455,20 @@ export function getDashboardHtml(): string {
 </head>
 <body>
 
+<div class="login-overlay" id="login-overlay">
+  <div class="login-card">
+    <h2>Dashboard Login</h2>
+    <p>Enter the dashboard token to continue</p>
+    <input type="password" id="login-token-input" placeholder="Enter token">
+    <button class="btn btn-primary" onclick="submitLogin()">Login</button>
+    <div id="login-error" class="error-msg" style="display:none;margin-top:12px"></div>
+  </div>
+</div>
+
 <div class="header">
   <h1>Claude Code Reviewer</h1>
   <span class="version" id="version"></span>
+  <button class="logout-btn" id="logout-btn" onclick="logout()" style="display:none">Logout</button>
 </div>
 
 <div class="tabs">
@@ -970,6 +1042,8 @@ export function getDashboardHtml(): string {
   let envOverrides = new Set();
   let restartRequiredFields = [];
   let dirty = false;
+  let authToken = null;
+  let authRequired = false;
 
   // Tab switching
   document.querySelectorAll('.tab').forEach(tab => {
@@ -995,12 +1069,99 @@ export function getDashboardHtml(): string {
   document.addEventListener('input', () => { dirty = true; });
   document.addEventListener('change', () => { dirty = true; });
 
-  // Load config on page load
-  loadConfig();
+  // Auth helper function
+  async function authFetch(url, opts) {
+    opts = opts || {};
+    opts.headers = opts.headers || {};
+    if (authToken) {
+      opts.headers['Authorization'] = 'Bearer ' + authToken;
+    }
+    const res = await fetch(url, opts);
+    if (res.status === 401) {
+      // Token invalid or required
+      showLoginScreen();
+      throw new Error('Unauthorized - please login');
+    }
+    return res;
+  }
+
+  function showLoginScreen() {
+    authRequired = true;
+    authToken = null;
+    localStorage.removeItem('dashboardToken');
+    document.getElementById('login-overlay').classList.remove('hidden');
+    document.getElementById('logout-btn').style.display = 'none';
+  }
+
+  function hideLoginScreen() {
+    document.getElementById('login-overlay').classList.add('hidden');
+    document.getElementById('logout-btn').style.display = authRequired ? 'block' : 'none';
+  }
+
+  window.submitLogin = async function() {
+    const input = document.getElementById('login-token-input');
+    const errorEl = document.getElementById('login-error');
+    const token = input.value.trim();
+
+    if (!token) {
+      errorEl.textContent = 'Please enter a token';
+      errorEl.style.display = 'block';
+      return;
+    }
+
+    // Test the token
+    authToken = token;
+    try {
+      const res = await authFetch('/api/health');
+      if (res.ok) {
+        localStorage.setItem('dashboardToken', token);
+        errorEl.style.display = 'none';
+        input.value = '';
+        hideLoginScreen();
+        loadConfig();
+      }
+    } catch (err) {
+      authToken = null;
+      errorEl.textContent = 'Invalid token';
+      errorEl.style.display = 'block';
+    }
+  };
+
+  window.logout = function() {
+    authToken = null;
+    localStorage.removeItem('dashboardToken');
+    showLoginScreen();
+  };
+
+
+  // Check auth before loading config
+  initAuth();
+
+  async function initAuth() {
+    const storedToken = localStorage.getItem('dashboardToken');
+    if (storedToken) {
+      authToken = storedToken;
+    }
+
+    // Test if auth is required by trying to access /api/health
+    try {
+      const res = await authFetch('/api/health');
+      if (res.ok) {
+        // Success - auth not required or token is valid
+        authRequired = true; // Token was accepted
+        hideLoginScreen();
+        loadConfig();
+        return;
+      }
+    } catch (err) {
+      // Auth failed - show login screen
+      showLoginScreen();
+    }
+  }
 
   async function loadConfig() {
     try {
-      const res = await fetch('/api/config');
+      const res = await authFetch('/api/config');
       const data = await res.json();
       currentConfig = data.config;
       envOverrides = new Set(data.envOverrides || []);
@@ -1261,7 +1422,7 @@ export function getDashboardHtml(): string {
   window.saveConfig = async function() {
     const cfg = buildConfig();
     try {
-      const res = await fetch('/api/config', {
+      const res = await authFetch('/api/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(cfg),
@@ -1342,8 +1503,8 @@ export function getDashboardHtml(): string {
     const days = document.getElementById('usage-range').value || '30';
     try {
       const [summaryRes, recentRes] = await Promise.all([
-        fetch('/api/usage/summary?days=' + days),
-        fetch('/api/usage/recent?limit=50'),
+        authFetch('/api/usage/summary?days=' + days),
+        authFetch('/api/usage/recent?limit=50'),
       ]);
 
       if (!summaryRes.ok || !recentRes.ok) {
@@ -1445,7 +1606,7 @@ export function getDashboardHtml(): string {
 
   window.loadStatus = async function() {
     try {
-      const res = await fetch('/api/health');
+      const res = await authFetch('/api/health');
       const data = await res.json();
       document.getElementById('version').textContent = 'v' + (data.version || 'unknown');
 
@@ -1485,7 +1646,7 @@ export function getDashboardHtml(): string {
     const bannerText = document.getElementById('rate-limit-banner-text');
     const section = document.getElementById('rate-limit-section');
     try {
-      const res = await fetch('/api/rate-limit');
+      const res = await authFetch('/api/rate-limit');
       const data = await res.json();
 
       // Update banner
@@ -1541,7 +1702,7 @@ export function getDashboardHtml(): string {
     btn.disabled = true;
     btn.textContent = 'Resuming...';
     try {
-      const res = await fetch('/api/rate-limit/resume', { method: 'POST' });
+      const res = await authFetch('/api/rate-limit/resume', { method: 'POST' });
       if (res.ok) {
         showToast('Rate limit guard resumed', 'success');
         loadRateLimitStatus();
@@ -1559,7 +1720,7 @@ export function getDashboardHtml(): string {
   async function loadClaudeVersion() {
     const el = document.getElementById('claude-version');
     try {
-      const res = await fetch('/api/claude/version');
+      const res = await authFetch('/api/claude/version');
       const data = await res.json();
       el.textContent = data.version || 'unknown';
       el.style.color = 'var(--text)';
@@ -1573,7 +1734,7 @@ export function getDashboardHtml(): string {
     const claudeEl = document.getElementById('claude-auth-status');
     const ghEl = document.getElementById('gh-auth-status');
     try {
-      const res = await fetch('/api/claude/auth');
+      const res = await authFetch('/api/claude/auth');
       const data = await res.json();
 
       // Claude auth
@@ -1616,6 +1777,8 @@ export function getDashboardHtml(): string {
     btn.textContent = 'Checking...';
     try {
       await loadAuthStatus();
+    } catch (err) {
+      // Auth error already handled by authFetch
     } finally {
       btn.disabled = false;
       btn.textContent = 'Check Auth';
@@ -1632,7 +1795,7 @@ export function getDashboardHtml(): string {
     statusEl.textContent = 'Running npm install -g @anthropic-ai/claude-code ...';
 
     try {
-      const res = await fetch('/api/claude/update', { method: 'POST' });
+      const res = await authFetch('/api/claude/update', { method: 'POST' });
       const data = await res.json();
       if (!res.ok) {
         statusEl.style.color = 'var(--danger)';
@@ -1704,8 +1867,7 @@ export function getDashboardHtml(): string {
     return el ? el.checked : false;
   }
 
-  // Auto-load status tab version info
-  loadStatus();
+  // Note: Config and status are loaded after auth check in checkAuth()
 })();
 </script>
 </body>
