@@ -105,6 +105,15 @@ export class DashboardServer {
       return;
     }
 
+    // POST /api/restart — graceful restart (exit 0, Docker/K8s restarts the container)
+    if (req.method === "POST" && path === "/api/restart") {
+      this.logger.info("Restart requested via dashboard");
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true, message: "Restarting..." }));
+      setTimeout(() => process.exit(0), 500);
+      return;
+    }
+
     // POST /api/config/validate — dry-run validation
     if (req.method === "POST" && path === "/api/config/validate") {
       const body = await this.readBody(req);

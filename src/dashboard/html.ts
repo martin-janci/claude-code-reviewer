@@ -411,6 +411,7 @@ export function getDashboardHtml(): string {
 <div class="content">
   <div class="banner" id="restart-banner">
     Some changes require a service restart to take effect.
+    <button class="btn" style="margin-left:12px;padding:4px 12px;font-size:0.85em" onclick="restartService()">Restart Now</button>
   </div>
 
   <!-- General Tab -->
@@ -1287,6 +1288,31 @@ export function getDashboardHtml(): string {
       }
     } catch (err) {
       showToast('Save failed: ' + err.message, 'error');
+    }
+  };
+
+  window.restartService = async function() {
+    if (!confirm('Restart the service now?')) return;
+    try {
+      const res = await fetch('/api/restart', { method: 'POST' });
+      const result = await res.json();
+      if (result.success) {
+        showToast('Restarting service...', 'success');
+        document.getElementById('restart-banner').classList.remove('visible');
+        // Poll until service is back
+        setTimeout(async () => {
+          for (let i = 0; i < 30; i++) {
+            try {
+              const r = await fetch('/api/config');
+              if (r.ok) { location.reload(); return; }
+            } catch {}
+            await new Promise(r => setTimeout(r, 2000));
+          }
+          showToast('Service did not come back — check logs', 'error');
+        }, 2000);
+      }
+    } catch (err) {
+      showToast('Restart failed: ' + err.message, 'error');
     }
   };
 
