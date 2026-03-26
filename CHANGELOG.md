@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.23.0
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.22.0...v1.23.0)
+
+### 🚀 Enhancements
+
+- **dashboard:** Url hash routing for tabs ([738749e](https://github.com/martin-janci/claude-code-reviewer/commit/738749e))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.22.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.21.0...v1.22.0)
