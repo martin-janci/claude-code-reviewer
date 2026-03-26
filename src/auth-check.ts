@@ -55,22 +55,19 @@ export function checkClaudeAuth(): Promise<Omit<AuthStatus, "lastChecked">> {
 }
 
 /**
- * Check GitHub CLI availability and auth status.
- * Uses `gh auth status` which reliably reports auth state.
+ * Check GitHub auth status.
+ * Tries (in order):
+ *   1. `gh auth status` CLI (if installed)
+ *   2. GITHUB_TOKEN / GH_TOKEN env var validated against GitHub API
  */
 export function checkGhAuth(): Promise<Omit<AuthStatus, "lastChecked">> {
   return new Promise((resolve) => {
     execFile("gh", ["auth", "status"], { timeout: 3000 }, (err, stdout, stderr) => {
       if (err) {
         const code = (err as NodeJS.ErrnoException).code;
-        // ENOENT = command not found
-        if (code === "ENOENT") {
-          resolve({ available: false, authenticated: false, error: "gh CLI not found" });
-          return;
-        }
-        // EACCES = permission denied (exists but not executable)
-        if (code === "EACCES") {
-          resolve({ available: false, authenticated: false, error: "gh CLI not executable (permission denied)" });
+        // gh CLI not available — fall back to token-based check
+        if (code === "ENOENT" || code === "EACCES") {
+          checkGhToken().then(resolve);
           return;
         }
         // gh auth status exits non-zero if not authenticated
@@ -86,4 +83,27 @@ export function checkGhAuth(): Promise<Omit<AuthStatus, "lastChecked">> {
       });
     });
   });
+}
+
+/**
+ * Validate a GitHub token (from GITHUB_TOKEN or GH_TOKEN env) against the API.
+ */
+async function checkGhToken(): Promise<Omit<AuthStatus, "lastChecked">> {
+  const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+  if (!token) {
+    return { available: false, authenticated: false, error: "gh CLI not found and no GITHUB_TOKEN set" };
+  }
+  try {
+    const res = await fetch("https://api.github.com/user", {
+      headers: { Authorization: `token ${token}`, "User-Agent": "claude-code-reviewer" },
+      signal: AbortSignal.timeout(3000),
+    });
+    if (res.ok) {
+      const data = (await res.json()) as { login?: string };
+      return { available: true, authenticated: true, username: data.login };
+    }
+    return { available: true, authenticated: false, error: `Token invalid (HTTP ${res.status})` };
+  } catch (e) {
+    return { available: true, authenticated: false, error: `Token check failed: ${(e as Error).message?.slice(0, 80)}` };
+  }
 }

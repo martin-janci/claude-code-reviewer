@@ -55,20 +55,20 @@ export class DashboardServer {
   }
 
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    // Auth check — reject early before any further processing
-    if (!this.isAuthorized(req)) {
-      res.writeHead(401, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Unauthorized" }));
-      return;
-    }
-
     const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
     const path = url.pathname;
 
-    // Serve dashboard page
+    // Serve dashboard page (login page handles auth client-side)
     if (req.method === "GET" && (path === "/" || path === "/index.html")) {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(getDashboardHtml());
+      return;
+    }
+
+    // Auth check for all API endpoints
+    if (!this.isAuthorized(req)) {
+      res.writeHead(401, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Unauthorized" }));
       return;
     }
 

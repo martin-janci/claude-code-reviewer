@@ -1045,17 +1045,37 @@ export function getDashboardHtml(): string {
   let authToken = null;
   let authRequired = false;
 
-  // Tab switching
+  // Tab switching with URL hash routing
+  function switchTab(name) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    const tabEl = document.querySelector('.tab[data-tab="' + name + '"]');
+    const panelEl = document.getElementById('panel-' + name);
+    if (!tabEl || !panelEl) return;
+    tabEl.classList.add('active');
+    panelEl.classList.add('active');
+    if (name === 'status') loadStatus();
+    if (name === 'usage') loadUsage();
+  }
+
   document.querySelectorAll('.tab').forEach(tab => {
     tab.addEventListener('click', () => {
-      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-      tab.classList.add('active');
-      document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
-      if (tab.dataset.tab === 'status') loadStatus();
-      if (tab.dataset.tab === 'usage') loadUsage();
+      const name = tab.dataset.tab;
+      history.pushState(null, '', '#' + name);
+      switchTab(name);
     });
   });
+
+  // Restore tab from URL hash on load and back/forward
+  window.addEventListener('popstate', () => {
+    const hash = location.hash.replace('#', '');
+    if (hash) switchTab(hash);
+  });
+
+  (function initTabFromHash() {
+    const hash = location.hash.replace('#', '');
+    if (hash) switchTab(hash);
+  })();
 
   // Unsaved changes warning
   window.addEventListener('beforeunload', (e) => {
