@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.24.1
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.24.0...v1.24.1)
+
+### 🩹 Fixes
+
+- **autofix:** Use --dangerously-skip-permissions flag ([f368d17](https://github.com/martin-janci/claude-code-reviewer/commit/f368d17))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.24.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.23.1...v1.24.0)
