@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.24.5
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.24.4...v1.24.5)
+
+### 🩹 Fixes
+
+- **dashboard:** Increase restart delay to 15s ([33eb2d7](https://github.com/martin-janci/claude-code-reviewer/commit/33eb2d7))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.24.4
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.24.3...v1.24.4)
