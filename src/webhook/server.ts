@@ -727,8 +727,9 @@ export class WebhookServer {
           });
           this.logger.error("Fix branch push failed", { pr: `${owner}/${repo}#${prNumber}`, branch: fixBranch, error: String(pushErr) });
         } else {
-          const compareUrl = `../../compare/${fixBranch}`;
-          const successMsg = `✅ **Autofix completed and pushed to separate branch**\n\n🌿 Branch: [\`${fixBranch}\`](../../tree/${fixBranch})\n📦 Commit: [\`${commitSha.slice(0, 7)}\`](../../commit/${commitSha})\n📁 Files changed: ${filesChanged}\n🔍 [View changes](${compareUrl})\n\n**Next steps:**\n1. Review the changes in the [\`${fixBranch}\`](../../tree/${fixBranch}) branch\n2. If satisfied, merge into this PR: \`git merge ${fixBranch}\`\n3. Or cherry-pick specific commits: \`git cherry-pick ${commitSha.slice(0, 7)}\``;
+          const repoUrl = `https://github.com/${owner}/${repo}`;
+          const compareUrl = `${repoUrl}/compare/${fixBranch}`;
+          const successMsg = `✅ **Autofix completed and pushed to separate branch**\n\n🌿 Branch: [\`${fixBranch}\`](${repoUrl}/tree/${fixBranch})\n📦 Commit: [\`${commitSha.slice(0, 7)}\`](${repoUrl}/commit/${commitSha})\n📁 Files changed: ${filesChanged}\n🔍 [View changes](${compareUrl})\n\n**Next steps:**\n1. Review the changes in the [\`${fixBranch}\`](${repoUrl}/tree/${fixBranch}) branch\n2. If satisfied, merge into this PR: \`git merge ${fixBranch}\`\n3. Or cherry-pick specific commits: \`git cherry-pick ${commitSha.slice(0, 7)}\``;
           postComment(owner, repo, prNumber, successMsg).catch((commentErr) => {
             this.logger.error("Failed to post success comment", { pr: `${owner}/${repo}#${prNumber}`, error: String(commentErr) });
           });
