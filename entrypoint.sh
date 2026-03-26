@@ -38,6 +38,8 @@ echo "[entrypoint] Claude CLI version: $(su-exec node claude --version 2>/dev/nu
 
 # Configure git for node user
 su-exec node git config --global advice.detachedHead false
+su-exec node git config --global user.email "bot@claude-reviewer.ai"
+su-exec node git config --global user.name "Claude Code Reviewer"
 
 # Configure git to use gh CLI for GitHub authentication
 if command -v gh >/dev/null 2>&1; then
