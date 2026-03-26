@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.24.2
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.24.1...v1.24.2)
+
+### 🩹 Fixes
+
+- **autofix:** Rewrite CLI invocation for claude 2.x ([759748b](https://github.com/martin-janci/claude-code-reviewer/commit/759748b))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.24.1
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.24.0...v1.24.1)
