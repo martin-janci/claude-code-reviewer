@@ -452,6 +452,7 @@ export function getDashboardHtml(): string {
     font-family: var(--mono);
   }
 </style>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27><text y=%27.9em%27 font-size=%2790%27>🤖</text></svg>">
 </head>
 <body>
 
@@ -483,6 +484,7 @@ export function getDashboardHtml(): string {
 <div class="content">
   <div class="banner" id="restart-banner">
     Some changes require a service restart to take effect.
+    <button onclick="restartService()" style="margin-left:12px;padding:4px 16px;background:#e74c3c;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:600;">Restart Now</button>
   </div>
 
   <!-- General Tab -->
@@ -1072,10 +1074,11 @@ export function getDashboardHtml(): string {
     if (hash) switchTab(hash);
   });
 
-  (function initTabFromHash() {
+  // Deferred so loadUsage/loadStatus are defined before switchTab runs
+  setTimeout(function initTabFromHash() {
     const hash = location.hash.replace('#', '');
     if (hash) switchTab(hash);
-  })();
+  }, 0);
 
   // Unsaved changes warning
   window.addEventListener('beforeunload', (e) => {
@@ -1886,6 +1889,21 @@ export function getDashboardHtml(): string {
     const el = document.getElementById(id);
     return el ? el.checked : false;
   }
+
+  window.restartService = async function() {
+    if (!confirm('Restart the service?')) return;
+    try {
+      const r = await authFetch('/api/restart', { method: 'POST' });
+      if (r.ok) {
+        document.getElementById('restart-banner').innerHTML = 'Restarting… page will reload in 5s.';
+        setTimeout(() => location.reload(), 5000);
+      } else {
+        alert('Restart failed: ' + r.status);
+      }
+    } catch (e) {
+      alert('Restart error: ' + e);
+    }
+  };
 
   // Note: Config and status are loaded after auth check in checkAuth()
 })();

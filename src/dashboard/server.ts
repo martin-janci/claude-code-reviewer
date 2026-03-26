@@ -65,6 +65,13 @@ export class DashboardServer {
       return;
     }
 
+    // Favicon — no auth needed
+    if (req.method === "GET" && path === "/favicon.ico") {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
     // Auth check for all API endpoints
     if (!this.isAuthorized(req)) {
       res.writeHead(401, { "Content-Type": "application/json" });
@@ -265,6 +272,15 @@ export class DashboardServer {
       } finally {
         this.updateInProgress = false;
       }
+      return;
+    }
+
+    // POST /api/restart — graceful restart via process.exit (container restart policy revives)
+    if (req.method === "POST" && path === "/api/restart") {
+      this.logger.info("Restart requested via dashboard");
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "restarting" }));
+      setTimeout(() => process.exit(0), 500);
       return;
     }
 

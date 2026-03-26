@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, renameSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { parse } from "yaml";
 import type { AppConfig } from "./types.js";
 import type { Logger } from "./logger.js";
@@ -289,9 +289,10 @@ export class ConfigManager {
 
   private persistConfig(config: AppConfig): void {
     const yaml = serializeConfig(config, this.originalYaml);
-    const tmpPath = this.configPath + ".tmp";
-    writeFileSync(tmpPath, yaml, "utf-8");
-    renameSync(tmpPath, this.configPath);
+    // Write directly to config file instead of atomic rename.
+    // Atomic rename (write tmp + rename) fails with EBUSY on Docker/K8s
+    // bind-mounted files because the mount tracks the original inode.
+    writeFileSync(this.configPath, yaml, "utf-8");
     // Update stored original YAML to reflect what's now on disk
     this.originalYaml = yaml;
   }
