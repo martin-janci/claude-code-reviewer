@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.24.3
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.24.2...v1.24.3)
+
+### 🩹 Fixes
+
+- **entrypoint:** Configure git identity for autofix commits ([fe16561](https://github.com/martin-janci/claude-code-reviewer/commit/fe16561))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.24.2
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.24.1...v1.24.2)
