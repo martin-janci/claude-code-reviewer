@@ -92,6 +92,15 @@ export class ConfigManager {
     };
   }
 
+  /** Reveal the actual value of a sensitive field. */
+  revealField(field: string): string {
+    if (!SENSITIVE_FIELDS.includes(field as any)) {
+      throw new Error(`Field "${field}" is not a sensitive field`);
+    }
+    const value = getByPath(this.config as unknown as Record<string, unknown>, field);
+    return typeof value === "string" ? value : "";
+  }
+
   /**
    * Apply a partial config update.
    * - Deep-merges with current config

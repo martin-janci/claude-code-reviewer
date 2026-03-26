@@ -1316,10 +1316,36 @@ export function getDashboardHtml(): string {
     }
   };
 
-  window.togglePassword = function(id) {
+  const idToField = {
+    'cfg-github-token': 'github.token',
+    'cfg-webhook-secret': 'webhook.secret',
+    'cfg-features-jira-token': 'features.jira.token',
+    'cfg-features-jira-email': 'features.jira.email',
+    'cfg-features-slack-webhookUrl': 'features.slack.webhookUrl',
+    'cfg-dashboard-token': 'dashboard.token',
+  };
+
+  window.togglePassword = async function(id) {
     const el = document.getElementById(id);
     const btn = el.nextElementSibling;
     if (el.type === 'password') {
+      // If still showing redacted sentinel, fetch real value
+      if (el.value.startsWith('$$REDACTED')) {
+        const field = idToField[id];
+        if (field) {
+          try {
+            const res = await fetch('/api/config/reveal', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ field }),
+            });
+            const data = await res.json();
+            if (data.value !== undefined) {
+              el.value = data.value;
+            }
+          } catch {}
+        }
+      }
       el.type = 'text';
       btn.textContent = 'hide';
     } else {

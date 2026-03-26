@@ -105,6 +105,26 @@ export class DashboardServer {
       return;
     }
 
+    // POST /api/config/reveal — return unredacted value of a sensitive field
+    if (req.method === "POST" && path === "/api/config/reveal") {
+      const body = await this.readBody(req);
+      if (!body) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Empty request body" }));
+        return;
+      }
+      try {
+        const { field } = JSON.parse(body);
+        const value = this.configManager.revealField(field);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ value }));
+      } catch (err) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+      }
+      return;
+    }
+
     // POST /api/restart — graceful restart (exit 0, Docker/K8s restarts the container)
     if (req.method === "POST" && path === "/api/restart") {
       this.logger.info("Restart requested via dashboard");
