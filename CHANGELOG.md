@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.24.0
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.23.1...v1.24.0)
+
+### 🚀 Enhancements
+
+- **dashboard:** Reveal secrets via show button ([67fb381](https://github.com/martin-janci/claude-code-reviewer/commit/67fb381))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.23.1
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.23.0...v1.23.1)
