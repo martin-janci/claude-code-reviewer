@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.24.4
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.24.3...v1.24.4)
+
+### 🩹 Fixes
+
+- **autofix:** Use absolute GitHub URLs in success comment ([cc65ced](https://github.com/martin-janci/claude-code-reviewer/commit/cc65ced))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.24.3
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.24.2...v1.24.3)
