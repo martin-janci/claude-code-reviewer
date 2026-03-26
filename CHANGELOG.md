@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.23.1
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.23.0...v1.23.1)
+
+### 🩹 Fixes
+
+- **dashboard:** Bind-mount config write, restart endpoint, favicon ([4a7a6e9](https://github.com/martin-janci/claude-code-reviewer/commit/4a7a6e9))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.23.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.22.0...v1.23.0)
