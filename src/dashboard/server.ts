@@ -299,7 +299,7 @@ export class DashboardServer {
       this.logger.info("Restart requested via dashboard");
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ status: "restarting" }));
-      setTimeout(() => process.exit(0), 500);
+      setTimeout(() => process.exit(0), 15000);
       return;
     }
 
