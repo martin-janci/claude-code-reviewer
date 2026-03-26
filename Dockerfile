@@ -5,7 +5,8 @@
 FROM dhi.io/node:20-alpine3.22-dev AS build
 WORKDIR /build
 COPY package.json package-lock.json* tsconfig.json ./
-RUN npm ci --ignore-scripts
+RUN npm ci --ignore-scripts \
+    && npm rebuild better-sqlite3
 COPY src/ ./src/
 RUN npm run build
 

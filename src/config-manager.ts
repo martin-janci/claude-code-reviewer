@@ -291,7 +291,13 @@ export class ConfigManager {
     const yaml = serializeConfig(config, this.originalYaml);
     const tmpPath = this.configPath + ".tmp";
     writeFileSync(tmpPath, yaml, "utf-8");
-    renameSync(tmpPath, this.configPath);
+    try {
+      renameSync(tmpPath, this.configPath);
+    } catch {
+      // Atomic rename fails on Docker bind mounts (EBUSY/EXDEV) — fall back to direct write
+      writeFileSync(this.configPath, yaml, "utf-8");
+      try { require("node:fs").unlinkSync(tmpPath); } catch { /* ignore */ }
+    }
     // Update stored original YAML to reflect what's now on disk
     this.originalYaml = yaml;
   }

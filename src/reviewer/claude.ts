@@ -285,7 +285,7 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
   userPrompt += `## Diff\n\`\`\`diff\n${diff}\n\`\`\`\n\n`;
   userPrompt += `## Output Requirements\nOutput ONLY a JSON object matching this schema — no markdown, no fences, no extra text:\n${JSON_SCHEMA}\n\nVerdict rules:\n- REQUEST_CHANGES if any finding has "blocking": true\n- APPROVE if no issues or only non-blocking suggestions\n- COMMENT for non-blocking observations worth noting\n\nResolutions array: only include when re-reviewing (previous findings were provided). Omit the field entirely on first reviews.`;
 
-  const args = ["-p", "--output-format", "json"];
+  const args = ["-p", "--output-format", "json", "--dangerously-skip-permissions"];
 
   if (sessionId) {
     args.push("--resume", sessionId);
