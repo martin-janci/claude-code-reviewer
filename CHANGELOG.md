@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.22.0
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.21.0...v1.22.0)
+
+### 🚀 Enhancements
+
+- **dashboard:** Add token authentication gate to frontend ([af40df3](https://github.com/martin-janci/claude-code-reviewer/commit/af40df3))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.21.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.20.0...v1.21.0)
