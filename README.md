@@ -198,6 +198,7 @@ For Kubernetes deployment, local development, and detailed configuration, see [S
 - ✅ **Manual Trigger** — Post `/review` comment to force re-review
 - ✅ **Review Verification** — Detects deleted/dismissed reviews and re-queues
 - ✅ **Graceful Error Handling** — Exponential backoff and retry logic
+- ✅ **Usage Tracking** — Model name, token counts, cost, and session metrics with prompt caching visibility
 
 ### Optional Features
 - 🔧 **Autofix** — `/fix` command to automatically apply fixes to review findings

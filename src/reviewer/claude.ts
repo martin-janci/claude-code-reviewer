@@ -222,15 +222,21 @@ export function parseStructuredReview(stdout: string): StructuredReview | null {
  * Maps snake_case API fields to camelCase ClaudeUsage.
  */
 export function extractUsage(envelope: Record<string, unknown>): ClaudeUsage | undefined {
-  // The JSON envelope exposes usage fields at the top level
+  // The JSON envelope has top-level fields (session_id, total_cost_usd, num_turns, duration_ms,
+  // duration_api_ms, model) and a nested `usage` object for token counts.
   if (typeof envelope.session_id !== "string" || !envelope.session_id) return undefined;
 
+  // Token counts live under envelope.usage (nested object in current CLI versions)
+  const u = (envelope.usage !== null && typeof envelope.usage === "object")
+    ? envelope.usage as Record<string, unknown>
+    : {};
+
   return {
-    inputTokens: typeof envelope.input_tokens === "number" ? envelope.input_tokens : 0,
-    outputTokens: typeof envelope.output_tokens === "number" ? envelope.output_tokens : 0,
-    cacheCreationInputTokens: typeof envelope.cache_creation_input_tokens === "number" ? envelope.cache_creation_input_tokens : 0,
-    cacheReadInputTokens: typeof envelope.cache_read_input_tokens === "number" ? envelope.cache_read_input_tokens : 0,
-    totalCostUsd: typeof envelope.cost_usd === "number" ? envelope.cost_usd : 0,
+    inputTokens: typeof u.input_tokens === "number" ? u.input_tokens : 0,
+    outputTokens: typeof u.output_tokens === "number" ? u.output_tokens : 0,
+    cacheCreationInputTokens: typeof u.cache_creation_input_tokens === "number" ? u.cache_creation_input_tokens : 0,
+    cacheReadInputTokens: typeof u.cache_read_input_tokens === "number" ? u.cache_read_input_tokens : 0,
+    totalCostUsd: typeof envelope.total_cost_usd === "number" ? envelope.total_cost_usd : 0,
     model: typeof envelope.model === "string" ? envelope.model : "unknown",
     numTurns: typeof envelope.num_turns === "number" ? envelope.num_turns : 0,
     durationMs: typeof envelope.duration_ms === "number" ? envelope.duration_ms : 0,
@@ -239,7 +245,135 @@ export function extractUsage(envelope: Record<string, unknown>): ClaudeUsage | u
   };
 }
 
-export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
+/**
+ * Execute a single Claude CLI invocation.
+ * Internal helper — use reviewDiff() for the public API with retry logic.
+ */
+function executeClaudeReview(
+  userPrompt: string,
+  args: string[],
+  options: Pick<ReviewOptions, "cwd" | "timeoutMs" | "logger">,
+): Promise<ReviewResult> {
+  const { cwd, timeoutMs, logger: log } = options;
+
+  // Write prompt to temp file and redirect stdin via shell — more reliable
+  // than Node.js child.stdin.write() which can race with process startup.
+  const promptDir = "/tmp/claude-prompts";
+  mkdirSync(promptDir, { recursive: true });
+  const promptFile = join(promptDir, `review-${Date.now()}.txt`);
+  writeFileSync(promptFile, userPrompt);
+
+  const shellCmd = `claude ${args.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(" ")} < '${promptFile}'`;
+
+  if (log) {
+    log.info("Invoking claude CLI", { args: args.join(" "), timeoutMs: timeoutMs ?? 300_000, cwd: cwd ?? "none", promptBytes: Buffer.byteLength(userPrompt) });
+  } else {
+    console.log(`Invoking claude CLI: args=[${args.join(" ")}], timeout=${timeoutMs ?? 300_000}ms, cwd=${cwd ?? "none"}, prompt=${Buffer.byteLength(userPrompt)} bytes`);
+  }
+  const startTime = Date.now();
+
+  return new Promise((resolve) => {
+    exec(shellCmd, {
+      encoding: "utf-8",
+      maxBuffer: 10 * 1024 * 1024,
+      timeout: timeoutMs ?? 300_000,
+      cwd: cwd ?? undefined,
+    }, (err, stdout, stderr) => {
+      // Clean up temp file
+      try { unlinkSync(promptFile); } catch {}
+
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      if (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const errLog = log ?? console;
+        if (log) {
+          log.error("Claude CLI failed", { elapsedS: elapsed, error: message, stderr: stderr?.trim().slice(0, 500), stdout: stdout?.trim().slice(0, 500) });
+        } else {
+          console.error(`Claude CLI failed after ${elapsed}s: ${message}`);
+          if (stderr?.trim()) console.error("Claude stderr:", stderr.trim());
+          if (stdout?.trim()) console.error("Claude stdout:", stdout.trim().slice(0, 2000));
+          console.error("Prompt preview:", userPrompt.slice(0, 200));
+        }
+        resolve({ body: message, success: false });
+        return;
+      }
+
+      // Parse JSON envelope from --output-format json
+      // Claude CLI returns an array of message objects. The last item (type="result")
+      // contains the result text, usage, cost. The first item (type="system") has the model name.
+      let body: string;
+      let usage: ClaudeUsage | undefined;
+      try {
+        const parsed = JSON.parse(stdout);
+        const items = Array.isArray(parsed) ? parsed : [parsed];
+        const envelope = items.find((i: Record<string, unknown>) => i.type === "result") ?? items[items.length - 1];
+        const systemItem = items.find((i: Record<string, unknown>) => i.type === "system");
+        // Merge model from system item into envelope for extractUsage
+        if (systemItem && typeof systemItem.model === "string" && !envelope.model) {
+          envelope.model = systemItem.model;
+        }
+        // Fallback: extract model name from modelUsage keys (older CLI versions return single object without model field)
+        if (!envelope.model && envelope.modelUsage && typeof envelope.modelUsage === "object") {
+          const modelKeys = Object.keys(envelope.modelUsage as Record<string, unknown>);
+          if (modelKeys.length > 0) {
+            // Pick the model with the most output tokens (primary model)
+            const mu = envelope.modelUsage as Record<string, Record<string, unknown>>;
+            let bestModel = modelKeys[0];
+            let bestOutput = 0;
+            for (const mk of modelKeys) {
+              const out = typeof mu[mk]?.outputTokens === "number" ? mu[mk].outputTokens as number : 0;
+              if (out > bestOutput) { bestOutput = out; bestModel = mk; }
+            }
+            envelope.model = bestModel;
+          }
+        }
+        body = (typeof envelope.result === "string" ? envelope.result : "").trim();
+        if (envelope.is_error) {
+          resolve({ body: body || "Claude returned an error", success: false });
+          return;
+        }
+        usage = extractUsage(envelope);
+      } catch {
+        // Fallback for old CLI versions without JSON output support
+        if (log) log.warn("Claude CLI did not return JSON — upgrade claude to enable usage tracking and prompt caching");
+        body = stdout.trim();
+      }
+
+      const structured = parseStructuredReview(body);
+
+      // Log cache stats when available
+      if (usage && log) {
+        const total = usage.inputTokens + usage.cacheCreationInputTokens + usage.cacheReadInputTokens;
+        const hitRate = total > 0 ? usage.cacheReadInputTokens / total : 0;
+        log.info("Claude usage", {
+          model: usage.model,
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          cacheRead: usage.cacheReadInputTokens,
+          cacheWrite: usage.cacheCreationInputTokens,
+          cost: usage.totalCostUsd,
+          cacheHitRate: Math.round(hitRate * 100) + "%",
+          sessionId: usage.sessionId,
+        });
+      }
+
+      if (log) {
+        log.info("Claude CLI completed", { elapsedS: elapsed, outputBytes: body.length, structured: !!structured, verdict: structured?.verdict, findings: structured?.findings.length });
+      } else {
+        console.log(`Claude CLI completed in ${elapsed}s (${body.length} bytes output)`);
+        if (structured) {
+          console.log(`Parsed structured review: verdict=${structured.verdict}, ${structured.findings.length} finding(s)`);
+        } else {
+          console.warn("Claude output was not valid structured JSON — using freeform fallback");
+        }
+      }
+
+      resolve({ body, success: true, structured: structured ?? undefined, usage });
+    });
+  });
+}
+
+export async function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
   const { diff, prTitle, context, cwd, timeoutMs, maxTurns, logger: log, focusPaths, securityPaths, sessionId } = options;
 
   let userPrompt = `## PR Title: ${prTitle}\n\n`;
@@ -304,94 +438,30 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
     args.push("--max-turns", String(maxTurns));
   }
 
-  // Write prompt to temp file and redirect stdin via shell — more reliable
-  // than Node.js child.stdin.write() which can race with process startup.
-  const promptDir = "/tmp/claude-prompts";
-  mkdirSync(promptDir, { recursive: true });
-  const promptFile = join(promptDir, `review-${Date.now()}.txt`);
-  writeFileSync(promptFile, userPrompt);
+  // Execute the review with the first attempt
+  const result = await executeClaudeReview(userPrompt, args, { cwd, timeoutMs, logger: log });
 
-  const shellCmd = `claude ${args.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(" ")} < '${promptFile}'`;
+  // Detect stale session error and retry without --resume
+  if (!result.success && sessionId && result.body.includes("No conversation found with session ID")) {
+    if (log) {
+      log.warn("Stale session detected, retrying with fresh session", { staleSessionId: sessionId });
+    } else {
+      console.warn(`Stale session ${sessionId} detected — retrying with fresh session`);
+    }
 
-  if (log) {
-    log.info("Invoking claude CLI", { args: args.join(" "), timeoutMs: timeoutMs ?? 300_000, cwd: cwd ?? "none", promptBytes: Buffer.byteLength(userPrompt) });
-  } else {
-    console.log(`Invoking claude CLI: args=[${args.join(" ")}], timeout=${timeoutMs ?? 300_000}ms, cwd=${cwd ?? "none"}, prompt=${Buffer.byteLength(userPrompt)} bytes`);
-  }
-  const startTime = Date.now();
+    // Remove --resume flag and retry
+    const argsWithoutResume = args.filter((arg, i, arr) => arg !== "--resume" && arr[i - 1] !== "--resume");
+    const retryResult = await executeClaudeReview(userPrompt, argsWithoutResume, { cwd, timeoutMs, logger: log });
 
-  return new Promise((resolve) => {
-    exec(shellCmd, {
-      encoding: "utf-8",
-      maxBuffer: 10 * 1024 * 1024,
-      timeout: timeoutMs ?? 300_000,
-      cwd: cwd ?? undefined,
-    }, (err, stdout, stderr) => {
-      // Clean up temp file
-      try { unlinkSync(promptFile); } catch {}
-
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      if (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        const errLog = log ?? console;
-        if (log) {
-          log.error("Claude CLI failed", { elapsedS: elapsed, error: message, stderr: stderr?.trim().slice(0, 500), stdout: stdout?.trim().slice(0, 500) });
-        } else {
-          console.error(`Claude CLI failed after ${elapsed}s: ${message}`);
-          if (stderr?.trim()) console.error("Claude stderr:", stderr.trim());
-          if (stdout?.trim()) console.error("Claude stdout:", stdout.trim().slice(0, 2000));
-          console.error("Prompt preview:", userPrompt.slice(0, 200));
-        }
-        resolve({ body: message, success: false });
-        return;
-      }
-
-      // Parse JSON envelope from --output-format json
-      let body: string;
-      let usage: ClaudeUsage | undefined;
-      try {
-        const envelope = JSON.parse(stdout);
-        body = (typeof envelope.result === "string" ? envelope.result : "").trim();
-        if (envelope.is_error) {
-          resolve({ body: body || "Claude returned an error", success: false });
-          return;
-        }
-        usage = extractUsage(envelope);
-      } catch {
-        // Fallback for old CLI versions without JSON output support
-        if (log) log.warn("Claude CLI did not return JSON — upgrade claude to enable usage tracking and prompt caching");
-        body = stdout.trim();
-      }
-
-      const structured = parseStructuredReview(body);
-
-      // Log cache stats when available
-      if (usage && log) {
-        const total = usage.inputTokens + usage.cacheCreationInputTokens + usage.cacheReadInputTokens;
-        const hitRate = total > 0 ? usage.cacheReadInputTokens / total : 0;
-        log.info("Claude usage", {
-          inputTokens: usage.inputTokens,
-          outputTokens: usage.outputTokens,
-          cacheRead: usage.cacheReadInputTokens,
-          cacheWrite: usage.cacheCreationInputTokens,
-          cost: usage.totalCostUsd,
-          cacheHitRate: Math.round(hitRate * 100) + "%",
-          sessionId: usage.sessionId,
-        });
-      }
-
+    // Mark the usage record to indicate session was stale (usage.sessionId will be the new one)
+    if (retryResult.success && retryResult.usage) {
       if (log) {
-        log.info("Claude CLI completed", { elapsedS: elapsed, outputBytes: body.length, structured: !!structured, verdict: structured?.verdict, findings: structured?.findings.length });
-      } else {
-        console.log(`Claude CLI completed in ${elapsed}s (${body.length} bytes output)`);
-        if (structured) {
-          console.log(`Parsed structured review: verdict=${structured.verdict}, ${structured.findings.length} finding(s)`);
-        } else {
-          console.warn("Claude output was not valid structured JSON — using freeform fallback");
-        }
+        log.info("Fresh session succeeded after stale session retry", { newSessionId: retryResult.usage.sessionId });
       }
+    }
 
-      resolve({ body, success: true, structured: structured ?? undefined, usage });
-    });
-  });
+    return retryResult;
+  }
+
+  return result;
 }

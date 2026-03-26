@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.21.0
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.20.0...v1.21.0)
+
+### 🚀 Enhancements
+
+- Graceful stale session recovery — auto-retry without `--resume` when Claude session expires
+- Model name tracking from Claude CLI `modelUsage` keys (supports both old single-object and new array response formats)
+
+### 🩹 Fixes
+
+- Fix `total_cost_usd` field name in usage extraction (was `cost_usd`)
+- Fix Claude CLI JSON response parsing — support both array format (newer CLI) and single object format (v2.1.84+)
+- Add model name to usage log output
+
+### ❤️ Contributors
+
+- Martin Janči ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.20.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.19.0...v1.20.0)

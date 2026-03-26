@@ -7,7 +7,7 @@ import type { StateStore } from "../state/store.js";
 import type { MetricsCollector } from "../metrics.js";
 import type { UsageStore } from "../usage/store.js";
 import type { RateLimitGuard } from "../rate-limit-guard.js";
-import { getDashboardHtml } from "./html.js";
+import { getDashboardHtml, getLoginHtml } from "./html.js";
 import { checkClaudeAuth, checkGhAuth } from "../auth-check.js";
 
 export class DashboardServer {
@@ -55,15 +55,54 @@ export class DashboardServer {
   }
 
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    // Auth check — reject early before any further processing
-    if (!this.isAuthorized(req)) {
+    const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
+    const path = url.pathname;
+    const authorized = this.isAuthorized(req);
+
+    // GET /health — unauthenticated liveness probe (alias for /api/health)
+    if (req.method === "GET" && path === "/health") {
+      const info = this.healthInfo;
+      const uptime = info ? Math.floor((Date.now() - info.startTime) / 1000) : 0;
+      const statusCounts = this.store?.getStatusCounts() ?? {};
+      const allPRs = this.store?.getAll() ?? [];
+
+      const rlStatus = this.rateLimitGuard?.getStatus();
+      const rateLimitMetrics = rlStatus ? {
+        paused: rlStatus.state !== "active",
+        pauseCount: rlStatus.pauseCount,
+        queueDepth: rlStatus.queueDepth,
+        cooldownRemainingSeconds: rlStatus.cooldownRemainingSeconds,
+      } : undefined;
+
+      const healthData = {
+        status: "ok",
+        version: info?.version ?? "unknown",
+        uptime,
+        state: {
+          totalPRs: allPRs.length,
+          byStatus: statusCounts,
+        },
+        metrics: this.metrics && info
+          ? this.metrics.snapshot(uptime, statusCounts, rateLimitMetrics)
+          : null,
+      };
+
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(healthData, null, 2));
+      return;
+    }
+
+    // For browser navigation to '/', serve login page when not authorized
+    if (!authorized) {
+      if (req.method === "GET" && (path === "/" || path === "/index.html")) {
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(getLoginHtml());
+        return;
+      }
       res.writeHead(401, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Unauthorized" }));
       return;
     }
-
-    const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
-    const path = url.pathname;
 
     // Serve dashboard page
     if (req.method === "GET" && (path === "/" || path === "/index.html")) {

@@ -397,6 +397,7 @@ export function getDashboardHtml(): string {
 <div class="header">
   <h1>Claude Code Reviewer</h1>
   <span class="version" id="version"></span>
+  <button class="btn btn-sm" onclick="logout()" style="margin-left:8px">Logout</button>
 </div>
 
 <div class="tabs">
@@ -967,6 +968,29 @@ export function getDashboardHtml(): string {
 
 <script>
 (function() {
+  function getToken() {
+    return localStorage.getItem('dashboard_token') || '';
+  }
+
+  function authFetch(url, opts) {
+    const token = getToken();
+    const headers = Object.assign({}, opts && opts.headers);
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+    return fetch(url, Object.assign({}, opts, { headers })).then(function(res) {
+      if (res.status === 401) {
+        localStorage.removeItem('dashboard_token');
+        location.href = '/';
+        throw new Error('Unauthorized');
+      }
+      return res;
+    });
+  }
+
+  window.logout = function() {
+    localStorage.removeItem('dashboard_token');
+    location.href = '/';
+  };
+
   let currentConfig = null;
   let envOverrides = new Set();
   let restartRequiredFields = [];
@@ -1001,7 +1025,7 @@ export function getDashboardHtml(): string {
 
   async function loadConfig() {
     try {
-      const res = await fetch('/api/config');
+      const res = await authFetch('/api/config');
       const data = await res.json();
       currentConfig = data.config;
       envOverrides = new Set(data.envOverrides || []);
@@ -1262,7 +1286,7 @@ export function getDashboardHtml(): string {
   window.saveConfig = async function() {
     const cfg = buildConfig();
     try {
-      const res = await fetch('/api/config', {
+      const res = await authFetch('/api/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(cfg),
@@ -1294,7 +1318,7 @@ export function getDashboardHtml(): string {
   window.restartService = async function() {
     if (!confirm('Restart the service now?')) return;
     try {
-      const res = await fetch('/api/restart', { method: 'POST' });
+      const res = await authFetch('/api/restart', { method: 'POST' });
       const result = await res.json();
       if (result.success) {
         showToast('Restarting service...', 'success');
@@ -1303,7 +1327,7 @@ export function getDashboardHtml(): string {
         setTimeout(async () => {
           for (let i = 0; i < 30; i++) {
             try {
-              const r = await fetch('/api/config');
+              const r = await authFetch('/api/config');
               if (r.ok) { location.reload(); return; }
             } catch {}
             await new Promise(r => setTimeout(r, 2000));
@@ -1334,13 +1358,14 @@ export function getDashboardHtml(): string {
         const field = idToField[id];
         if (field) {
           try {
-            const res = await fetch('/api/config/reveal', {
+            const res = await authFetch('/api/config/reveal', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ field }),
             });
             const data = await res.json();
             if (data.value !== undefined) {
+              el.dataset.redacted = el.value;
               el.value = data.value;
             }
           } catch {}
@@ -1351,6 +1376,9 @@ export function getDashboardHtml(): string {
     } else {
       el.type = 'password';
       btn.textContent = 'show';
+      if (el.dataset.redacted) {
+        el.value = el.dataset.redacted;
+      }
     }
   };
 
@@ -1394,8 +1422,8 @@ export function getDashboardHtml(): string {
     const days = document.getElementById('usage-range').value || '30';
     try {
       const [summaryRes, recentRes] = await Promise.all([
-        fetch('/api/usage/summary?days=' + days),
-        fetch('/api/usage/recent?limit=50'),
+        authFetch('/api/usage/summary?days=' + days),
+        authFetch('/api/usage/recent?limit=50'),
       ]);
 
       if (!summaryRes.ok || !recentRes.ok) {
@@ -1497,7 +1525,7 @@ export function getDashboardHtml(): string {
 
   window.loadStatus = async function() {
     try {
-      const res = await fetch('/api/health');
+      const res = await authFetch('/api/health');
       const data = await res.json();
       document.getElementById('version').textContent = 'v' + (data.version || 'unknown');
 
@@ -1537,7 +1565,7 @@ export function getDashboardHtml(): string {
     const bannerText = document.getElementById('rate-limit-banner-text');
     const section = document.getElementById('rate-limit-section');
     try {
-      const res = await fetch('/api/rate-limit');
+      const res = await authFetch('/api/rate-limit');
       const data = await res.json();
 
       // Update banner
@@ -1593,7 +1621,7 @@ export function getDashboardHtml(): string {
     btn.disabled = true;
     btn.textContent = 'Resuming...';
     try {
-      const res = await fetch('/api/rate-limit/resume', { method: 'POST' });
+      const res = await authFetch('/api/rate-limit/resume', { method: 'POST' });
       if (res.ok) {
         showToast('Rate limit guard resumed', 'success');
         loadRateLimitStatus();
@@ -1611,7 +1639,7 @@ export function getDashboardHtml(): string {
   async function loadClaudeVersion() {
     const el = document.getElementById('claude-version');
     try {
-      const res = await fetch('/api/claude/version');
+      const res = await authFetch('/api/claude/version');
       const data = await res.json();
       el.textContent = data.version || 'unknown';
       el.style.color = 'var(--text)';
@@ -1625,7 +1653,7 @@ export function getDashboardHtml(): string {
     const claudeEl = document.getElementById('claude-auth-status');
     const ghEl = document.getElementById('gh-auth-status');
     try {
-      const res = await fetch('/api/claude/auth');
+      const res = await authFetch('/api/claude/auth');
       const data = await res.json();
 
       // Claude auth
@@ -1684,7 +1712,7 @@ export function getDashboardHtml(): string {
     statusEl.textContent = 'Running npm install -g @anthropic-ai/claude-code ...';
 
     try {
-      const res = await fetch('/api/claude/update', { method: 'POST' });
+      const res = await authFetch('/api/claude/update', { method: 'POST' });
       const data = await res.json();
       if (!res.ok) {
         statusEl.style.color = 'var(--danger)';
@@ -1758,6 +1786,148 @@ export function getDashboardHtml(): string {
 
   // Auto-load status tab version info
   loadStatus();
+})();
+</script>
+</body>
+</html>`;
+}
+
+export function getLoginHtml(): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Code Reviewer - Login</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --border: #2e3347;
+    --text: #e1e4ed;
+    --text-muted: #8b90a0;
+    --accent: #6c8cff;
+    --accent-hover: #8aa4ff;
+    --danger: #ff6b6b;
+    --radius: 8px;
+    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .login-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 40px;
+    width: 100%;
+    max-width: 380px;
+  }
+  h1 { font-size: 20px; font-weight: 600; margin-bottom: 8px; }
+  p { color: var(--text-muted); font-size: 13px; margin-bottom: 28px; }
+  label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; }
+  input[type="password"] {
+    width: 100%;
+    padding: 10px 14px;
+    background: #0f1117;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 14px;
+    outline: none;
+    margin-bottom: 16px;
+  }
+  input[type="password"]:focus { border-color: var(--accent); }
+  button {
+    width: 100%;
+    padding: 10px 14px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  button:hover { background: var(--accent-hover); }
+  button:disabled { opacity: 0.6; cursor: not-allowed; }
+  .error { color: var(--danger); font-size: 13px; margin-top: 12px; min-height: 18px; }
+</style>
+</head>
+<body>
+<div class="login-card">
+  <h1>Claude Code Reviewer</h1>
+  <p>Enter your dashboard token to continue.</p>
+  <label for="token-input">Token</label>
+  <input type="password" id="token-input" placeholder="Dashboard token" autofocus>
+  <button id="login-btn" onclick="doLogin()">Login</button>
+  <div class="error" id="error-msg"></div>
+</div>
+<script>
+(async function() {
+  async function loadDashboard(token) {
+    const dashRes = await fetch('/', { headers: { 'Authorization': 'Bearer ' + token } });
+    if (dashRes.ok) {
+      const html = await dashRes.text();
+      document.open();
+      document.write(html);
+      document.close();
+      return true;
+    }
+    return false;
+  }
+
+  // If token already stored, try to use it immediately
+  const stored = localStorage.getItem('dashboard_token');
+  if (stored) {
+    try {
+      const res = await fetch('/api/health', { headers: { 'Authorization': 'Bearer ' + stored } });
+      if (res.ok) {
+        if (await loadDashboard(stored)) return;
+      }
+    } catch {}
+    localStorage.removeItem('dashboard_token');
+  }
+
+  document.getElementById('token-input').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') doLogin();
+  });
+
+  window.doLogin = async function() {
+    const input = document.getElementById('token-input');
+    const btn = document.getElementById('login-btn');
+    const errorEl = document.getElementById('error-msg');
+    const token = input.value.trim();
+
+    if (!token) { errorEl.textContent = 'Please enter a token.'; return; }
+
+    btn.disabled = true;
+    btn.textContent = 'Verifying...';
+    errorEl.textContent = '';
+
+    try {
+      const res = await fetch('/api/health', { headers: { 'Authorization': 'Bearer ' + token } });
+      if (res.ok) {
+        localStorage.setItem('dashboard_token', token);
+        if (await loadDashboard(token)) return;
+        errorEl.textContent = 'Unexpected error loading dashboard.';
+      } else {
+        errorEl.textContent = 'Invalid token. Please try again.';
+      }
+    } catch (err) {
+      errorEl.textContent = 'Login failed: ' + err.message;
+    }
+
+    btn.disabled = false;
+    btn.textContent = 'Login';
+  };
 })();
 </script>
 </body>
