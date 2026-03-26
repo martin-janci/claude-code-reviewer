@@ -1474,10 +1474,28 @@ export function getDashboardHtml(): string {
     }
   };
 
-  window.togglePassword = function(id) {
+    const secretFieldMap = {
+    'cfg-webhook-secret': 'webhook.secret',
+    'cfg-github-token': 'github.token',
+    'cfg-features-jira-token': 'features.jira.token',
+    'cfg-features-jira-email': 'features.jira.email',
+    'cfg-features-slack-webhookUrl': 'features.slack.webhookUrl',
+  };
+
+  window.togglePassword = async function(id) {
     const el = document.getElementById(id);
     const btn = el.nextElementSibling;
     if (el.type === 'password') {
+      // Reveal: fetch real value if currently showing redacted sentinel
+      if (el.value.startsWith('$$REDACTED') && secretFieldMap[id]) {
+        try {
+          const res = await authFetch('/api/config/secret?field=' + encodeURIComponent(secretFieldMap[id]));
+          if (res.ok) {
+            const data = await res.json();
+            el.value = data.value;
+          }
+        } catch (e) { /* keep redacted */ }
+      }
       el.type = 'text';
       btn.textContent = 'hide';
     } else {

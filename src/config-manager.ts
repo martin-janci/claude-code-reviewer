@@ -70,6 +70,13 @@ export class ConfigManager {
     return this.config;
   }
 
+  /** Returns the real value of a sensitive field (for dashboard reveal). */
+  getSecretValue(field: string): string | null {
+    if (!SENSITIVE_FIELDS.includes(field as any)) return null;
+    const value = getByPath(this.config as unknown as Record<string, unknown>, field);
+    return typeof value === "string" && value !== "" ? value : null;
+  }
+
   /** Returns config with sensitive fields redacted + env override metadata. */
   getRedactedConfig(): {
     config: Record<string, unknown>;

@@ -275,6 +275,25 @@ export class DashboardServer {
       return;
     }
 
+    // GET /api/config/secret?field=xxx — reveal a single sensitive field value
+    if (req.method === "GET" && path === "/api/config/secret") {
+      const field = url.searchParams.get("field");
+      if (!field) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing field parameter" }));
+        return;
+      }
+      const value = this.configManager.getSecretValue(field);
+      if (value === null) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Not a sensitive field or empty" }));
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ field, value }));
+      return;
+    }
+
     // POST /api/restart — graceful restart via process.exit (container restart policy revives)
     if (req.method === "POST" && path === "/api/restart") {
       this.logger.info("Restart requested via dashboard");
