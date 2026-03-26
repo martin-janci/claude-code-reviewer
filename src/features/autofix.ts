@@ -27,7 +27,7 @@ export async function executeAutofix(
 
   // Build Claude CLI command with edit permissions and limited turns
   const args = [
-    "--dangerously-allow-tool-risky-edits",
+    "--dangerously-skip-permissions",
     "--max-turns",
     String(config.features.autofix.maxTurns),
     "--session-type",
