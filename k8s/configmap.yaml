@@ -15,9 +15,29 @@ data:
       path: /webhook
 
     repos:
-      - owner: your-org
-        repo: your-repo
-      # Add more repos here
+      # Main repositories
+      - owner: papayapos
+        repo: papayapos-backend
+      - owner: papayapos
+        repo: papayapos
+      - owner: papayapos
+        repo: papayapos-common
+
+      # POS repositories
+      - owner: papayapos
+        repo: pos-frontend
+
+      # Integration repositories
+      - owner: papayapos
+        repo: papayapos-android
+      - owner: papayapos
+        repo: papaya-automated-tests
+      - owner: papayapos
+        repo: ekasapay
+      - owner: papayapos
+        repo: ekasa
+      - owner: papayapos
+        repo: cloud-config-container
 
     review:
       maxDiffLines: 5000
@@ -35,7 +55,7 @@ data:
       cloneDir: data/clones
       cloneTimeoutMs: 120000
       reviewTimeoutMs: 600000
-      reviewMaxTurns: 30
+      reviewMaxTurns: 70
       staleWorktreeMinutes: 60
       excludePaths: []
       dryRun: false

@@ -26,5 +26,5 @@ commonAnnotations:
 
 # Images can be customized here
 images:
-  - name: ghcr.io/papayapos/claude-code-reviewer
+  - name: ghcr.io/papayapos/papaya-reviewer
     newTag: latest

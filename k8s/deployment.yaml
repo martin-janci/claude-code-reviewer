@@ -17,33 +17,31 @@ spec:
       labels:
         app: claude-reviewer
     spec:
-      # Init container: copy auth credentials from Secret into writable PVC
+      # Init container: seed config.yaml from ConfigMap to PVC on first run
       initContainers:
-      - name: init-claude-auth
-        image: dhi.io/node:20-alpine3.22-dev
+      - name: init-config
+        image: busybox:1.36
         command: ["sh", "-c"]
         args:
         - |
-          echo "[init] Copying Claude auth credentials into PVC..."
-          if [ -d /auth-secret ] && [ "$(ls -A /auth-secret 2>/dev/null)" ]; then
-            cp -rf /auth-secret/* /home/node/.claude/ 2>/dev/null || true
-            chown -R 1000:1000 /home/node/.claude/
-            echo "[init] Auth credentials copied."
+          if [ ! -f /app/data/config.yaml ]; then
+            echo "[init] Seeding config.yaml from ConfigMap to data PVC..."
+            cp /configmap/config.yaml /app/data/config.yaml
+            echo "[init] Config seeded."
           else
-            echo "[init] No auth credentials found in secret, skipping."
+            echo "[init] Config already exists on PVC, skipping seed."
           fi
         volumeMounts:
-        - name: claude-config
-          mountPath: /home/node/.claude
-        - name: claude-auth-secret
-          mountPath: /auth-secret
+        - name: config-template
+          mountPath: /configmap/config.yaml
+          subPath: config.yaml
           readOnly: true
-        securityContext:
-          runAsUser: 0  # Root needed for chown
+        - name: data
+          mountPath: /app/data
 
       containers:
       - name: reviewer
-        image: ghcr.io/papayapos/claude-code-reviewer:latest
+        image: ghcr.io/papayapos/papaya-reviewer:latest
         imagePullPolicy: Always
 
         ports:
@@ -68,46 +66,53 @@ spec:
               name: claude-reviewer-secrets
               key: WEBHOOK_SECRET
 
+        - name: JIRA_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: claude-reviewer-secrets
+              key: JIRA_TOKEN
+
+        - name: JIRA_EMAIL
+          valueFrom:
+            secretKeyRef:
+              name: claude-reviewer-secrets
+              key: JIRA_EMAIL
+
+        - name: JIRA_BASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: claude-reviewer-secrets
+              key: JIRA_BASE_URL
+
         # Claude CLI auto-update (set to "true" to enable)
         - name: CLAUDE_AUTO_UPDATE
           value: "false"
 
-        # Optional secrets (uncomment if needed)
-        # - name: JIRA_TOKEN
-        #   valueFrom:
-        #     secretKeyRef:
-        #       name: claude-reviewer-secrets
-        #       key: JIRA_TOKEN
-
-        # - name: JIRA_EMAIL
-        #   valueFrom:
-        #     secretKeyRef:
-        #       name: claude-reviewer-secrets
-        #       key: JIRA_EMAIL
-
-        # - name: JIRA_BASE_URL
-        #   valueFrom:
-        #     secretKeyRef:
-        #       name: claude-reviewer-secrets
-        #       key: JIRA_BASE_URL
-
-        # - name: SLACK_WEBHOOK_URL
-        #   valueFrom:
-        #     secretKeyRef:
-        #       name: claude-reviewer-secrets
-        #       key: SLACK_WEBHOOK_URL
-
         volumeMounts:
-        - name: config
+        # Config is served from the data PVC (writable — dashboard can edit it)
+        - name: data
           mountPath: /app/config.yaml
           subPath: config.yaml
-          readOnly: true
 
         - name: data
           mountPath: /app/data
 
-        - name: claude-config
+        # Claude CLI credentials persisted across restarts via PVC subPath
+        - name: data
           mountPath: /home/node/.claude
+          subPath: claude-home
+
+        - name: data
+          mountPath: /home/node/.claude.json
+          subPath: claude-home/.claude.json
+
+        - name: claude-root
+          mountPath: /root/.claude
+
+        # Claude OAuth session (injected via Secret, read-only)
+        - name: claude-session
+          mountPath: /root/.config/Claude
+          readOnly: true
 
         resources:
           requests:
@@ -136,27 +141,32 @@ spec:
           failureThreshold: 3
 
         securityContext:
-          runAsNonRoot: true
-          runAsUser: 1000
+          runAsNonRoot: false
+          runAsUser: 0  # Root — needed by claude CLI
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: false  # Needs write for /app/data
 
+      imagePullSecrets:
+      - name: docker-auths
+
       volumes:
-      - name: config
+      # ConfigMap used only by init container for first-run seeding
+      - name: config-template
         configMap:
           name: claude-reviewer-config
 
+      # All persistent data: review state, clones, config, Claude credentials
       - name: data
         persistentVolumeClaim:
           claimName: claude-reviewer-data
 
-      - name: claude-config
-        persistentVolumeClaim:
-          claimName: claude-reviewer-claude-config
+      # Claude CLI home for root user (ephemeral — only used for claude CLI internals)
+      - name: claude-root
+        emptyDir: {}
 
-      - name: claude-auth-secret
+      # Claude OAuth session files (from Secret)
+      - name: claude-session
         secret:
-          secretName: claude-reviewer-claude-auth
-          optional: true  # Omit secret if Claude CLI doesn't require auth credentials
+          secretName: claude-session
 
       restartPolicy: Always

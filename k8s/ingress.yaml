@@ -4,18 +4,19 @@ metadata:
   name: claude-reviewer
   namespace: claude-reviewer
   annotations:
-    # Adjust these based on your ingress controller
-    # nginx.ingress.kubernetes.io/rewrite-target: /
-    # cert-manager.io/cluster-issuer: letsencrypt-prod
-    # nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    cert-manager.io/issuer: letsencrypt-production
+    nginx.ingress.kubernetes.io/proxy-body-size: "6000m"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "700"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "700"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "700"
 spec:
-  ingressClassName: nginx  # Change to your ingress class
-  # tls:
-  # - hosts:
-  #   - claude-reviewer.your-domain.com
-  #   secretName: claude-reviewer-tls
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - github.claude-reviewer.papayapos.dev
+    secretName: wildcard-tls-production
   rules:
-  - host: claude-reviewer.your-domain.com  # Change this
+  - host: github.claude-reviewer.papayapos.dev
     http:
       paths:
       - path: /webhook
@@ -25,3 +26,10 @@ spec:
             name: claude-reviewer
             port:
               number: 3000
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: claude-reviewer
+            port:
+              number: 3001
