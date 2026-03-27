@@ -222,15 +222,19 @@ export function parseStructuredReview(stdout: string): StructuredReview | null {
  * Maps snake_case API fields to camelCase ClaudeUsage.
  */
 export function extractUsage(envelope: Record<string, unknown>): ClaudeUsage | undefined {
-  // The JSON envelope exposes usage fields at the top level
   if (typeof envelope.session_id !== "string" || !envelope.session_id) return undefined;
 
+  // CLI >=2.1.x nests token counts under envelope.usage{}; older versions exposed them at top level
+  const u = envelope.usage && typeof envelope.usage === "object" ? envelope.usage as Record<string, unknown> : envelope;
+
   return {
-    inputTokens: typeof envelope.input_tokens === "number" ? envelope.input_tokens : 0,
-    outputTokens: typeof envelope.output_tokens === "number" ? envelope.output_tokens : 0,
-    cacheCreationInputTokens: typeof envelope.cache_creation_input_tokens === "number" ? envelope.cache_creation_input_tokens : 0,
-    cacheReadInputTokens: typeof envelope.cache_read_input_tokens === "number" ? envelope.cache_read_input_tokens : 0,
-    totalCostUsd: typeof envelope.cost_usd === "number" ? envelope.cost_usd : 0,
+    inputTokens: typeof u.input_tokens === "number" ? u.input_tokens : 0,
+    outputTokens: typeof u.output_tokens === "number" ? u.output_tokens : 0,
+    cacheCreationInputTokens: typeof u.cache_creation_input_tokens === "number" ? u.cache_creation_input_tokens : 0,
+    cacheReadInputTokens: typeof u.cache_read_input_tokens === "number" ? u.cache_read_input_tokens : 0,
+    // CLI >=2.1.x uses total_cost_usd; older used cost_usd
+    totalCostUsd: typeof envelope.total_cost_usd === "number" ? envelope.total_cost_usd
+      : typeof envelope.cost_usd === "number" ? envelope.cost_usd : 0,
     model: typeof envelope.model === "string" ? envelope.model : "unknown",
     numTurns: typeof envelope.num_turns === "number" ? envelope.num_turns : 0,
     durationMs: typeof envelope.duration_ms === "number" ? envelope.duration_ms : 0,
