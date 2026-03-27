@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.25.1
+
+[compare changes](https://github.com/papayapos/papaya-reviewer/compare/v1.25.0...v1.25.1)
+
+### 🩹 Fixes
+
+- **claude:** Parse usage from nested envelope.usage{} for CLI >=2.1.x ([238f228](https://github.com/papayapos/papaya-reviewer/commit/238f228))
+
+### 🤖 CI
+
+- Switch Docker build to GHCR (ghcr.io) ([f8e6ffd](https://github.com/papayapos/papaya-reviewer/commit/f8e6ffd))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+- Martin Janči <martin.janci@papayapos.sk>
+
 ## v1.25.0
 
 
