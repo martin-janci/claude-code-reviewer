@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.24.6
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.24.5...v1.24.6)
+
+### 🩹 Fixes
+
+- **claude:** Parse usage from nested envelope.usage{} for CLI >=2.1.x ([3d76013](https://github.com/martin-janci/claude-code-reviewer/commit/3d76013))
+
+### 📖 Documentation
+
+- **dashboard:** Add restart, secret reveal, and bind-mount docs ([1f73e17](https://github.com/martin-janci/claude-code-reviewer/commit/1f73e17))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.24.5
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.24.4...v1.24.5)
