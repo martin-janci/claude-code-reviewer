@@ -1,5 +1,33 @@
 # Changelog
 
+## v1.25.2
+
+[compare changes](https://github.com/papayapos/papaya-reviewer/compare/v1.25.1...v1.25.2)
+
+### 🩹 Fixes
+
+- **claude:** Parse usage from nested envelope.usage{} for CLI >=2.1.x ([3d76013](https://github.com/papayapos/papaya-reviewer/commit/3d76013))
+- **autofix:** Add --tools flag and pass findings from state ([8c9ebee](https://github.com/papayapos/papaya-reviewer/commit/8c9ebee))
+
+### 📖 Documentation
+
+- **plans:** Add agent-seed design document ([18f0e91](https://github.com/papayapos/papaya-reviewer/commit/18f0e91))
+- **plans:** Add agent-seed implementation plan ([4c5a482](https://github.com/papayapos/papaya-reviewer/commit/4c5a482))
+
+### 🏡 Chore
+
+- **release:** V1.24.6 ([347399c](https://github.com/papayapos/papaya-reviewer/commit/347399c))
+- **k8s:** Sync manifests with live cluster state ([dac8fea](https://github.com/papayapos/papaya-reviewer/commit/dac8fea))
+- Merge papayapos/main (v1.25.1) ([366b0bd](https://github.com/papayapos/papaya-reviewer/commit/366b0bd))
+
+### ✅ Tests
+
+- Add unit tests for Claude CLI output parsing and UsageStore ([e0ed8cf](https://github.com/papayapos/papaya-reviewer/commit/e0ed8cf))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.25.1
 
 [compare changes](https://github.com/papayapos/papaya-reviewer/compare/v1.25.0...v1.25.1)
