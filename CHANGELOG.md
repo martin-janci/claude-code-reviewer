@@ -1,5 +1,33 @@
 # Changelog
 
+## v1.24.8
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.24.7...v1.24.8)
+
+### 🩹 Fixes
+
+- **claude:** Parse usage from nested envelope.usage{} for CLI >=2.1.x ([238f228](https://github.com/martin-janci/claude-code-reviewer/commit/238f228))
+- **reviewer:** Classify Claude spending-limit message as spending_limit error kind ([877d2ac](https://github.com/martin-janci/claude-code-reviewer/commit/877d2ac))
+
+### 🏡 Chore
+
+- Remove workflow for initial push ([a6c12be](https://github.com/martin-janci/claude-code-reviewer/commit/a6c12be))
+- Remove workflow for initial push" ([03f86bc](https://github.com/martin-janci/claude-code-reviewer/commit/03f86bc))
+- **release:** V1.25.0 ([604c2b1](https://github.com/martin-janci/claude-code-reviewer/commit/604c2b1))
+- **release:** V1.25.1 ([319fb33](https://github.com/martin-janci/claude-code-reviewer/commit/319fb33))
+- Merge papayapos/main (v1.25.1) ([366b0bd](https://github.com/martin-janci/claude-code-reviewer/commit/366b0bd))
+- **release:** V1.25.2 ([dd3d467](https://github.com/martin-janci/claude-code-reviewer/commit/dd3d467))
+
+### 🤖 CI
+
+- Add Docker build workflow for private registry ([a2dbb8e](https://github.com/martin-janci/claude-code-reviewer/commit/a2dbb8e))
+- Switch Docker build to GHCR (ghcr.io) ([f8e6ffd](https://github.com/martin-janci/claude-code-reviewer/commit/f8e6ffd))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+- Martin Janči <martin.janci@papayapos.sk>
+
 ## v1.24.7
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.24.6...v1.24.7)
