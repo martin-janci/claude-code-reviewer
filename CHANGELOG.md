@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.24.8
+
+[compare changes](https://github.com/papayapos/papaya-reviewer/compare/v1.25.2...v1.24.8)
+
+### 🩹 Fixes
+
+- **reviewer:** Classify Claude spending-limit message as spending_limit error kind ([877d2ac](https://github.com/papayapos/papaya-reviewer/commit/877d2ac))
+
+### 🏡 Chore
+
+- **release:** V1.24.7 ([53c9d34](https://github.com/papayapos/papaya-reviewer/commit/53c9d34))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.24.7
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.24.6...v1.24.7)
