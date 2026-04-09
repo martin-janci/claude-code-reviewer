@@ -59,6 +59,10 @@ function classifyError(err: unknown, phase: ErrorPhase): ErrorKind {
   // Permanent: authentication failures
   if (/401|unauthorized|authentication/i.test(message)) return "permanent";
 
+  // Spending limit: Claude.ai subscription daily/hourly cap
+  // Claude CLI returns is_error with "You've hit your limit · resets Xpm (UTC)"
+  if (/hit your limit|resets \d+[ap]m/i.test(message)) return "spending_limit";
+
   // Rate limit: Claude API 429 — distinguish spending limit from rate limit
   if (/rate limit/i.test(message)) {
     if (/spending|budget|billing/i.test(message)) return "spending_limit";
