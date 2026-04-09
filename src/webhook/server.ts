@@ -759,8 +759,14 @@ export class WebhookServer {
       // Prepare worktree for this PR
       const worktreePath = await this.cloneManager.prepareForPR(owner, repo, prNumber, pr.headSha);
 
+      // Pass the latest review findings from state so Claude doesn't need to fetch them via Bash
+      const prState = this.store.get(owner, repo, prNumber);
+      const latestFindings = prState?.reviews.length
+        ? prState.reviews[prState.reviews.length - 1].findings
+        : undefined;
+
       // Execute autofix
-      const result = await executeAutofix(this.config, pr, worktreePath, this.logger);
+      const result = await executeAutofix(this.config, pr, worktreePath, this.logger, latestFindings);
 
       if (!result.success) {
         const errorMsg = `❌ **Autofix failed**: ${result.error ?? "Unknown error"}`;

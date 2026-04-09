@@ -337,7 +337,18 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       if (err) {
         const message = err instanceof Error ? err.message : String(err);
-        const errLog = log ?? console;
+
+        // Session not found — retry without --resume (Claude CLI GC'd the session)
+        if (sessionId && (stderr?.includes("No conversation found with session ID") || message.includes("No conversation found with session ID"))) {
+          if (log) {
+            log.warn("Claude CLI session not found — retrying without --resume", { sessionId, elapsedS: elapsed });
+          } else {
+            console.warn(`Claude CLI session ${sessionId} not found — retrying without --resume`);
+          }
+          resolve(reviewDiff({ ...options, sessionId: undefined }));
+          return;
+        }
+
         if (log) {
           log.error("Claude CLI failed", { elapsedS: elapsed, error: message, stderr: stderr?.trim().slice(0, 500), stdout: stdout?.trim().slice(0, 500) });
         } else {
