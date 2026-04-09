@@ -1,146 +1,45 @@
 # Changelog
 
-## v1.25.2
+## v1.24.7
 
-[compare changes](https://github.com/papayapos/papaya-reviewer/compare/v1.25.1...v1.25.2)
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.24.6...v1.24.7)
 
 ### 🩹 Fixes
 
-- **claude:** Parse usage from nested envelope.usage{} for CLI >=2.1.x ([3d76013](https://github.com/papayapos/papaya-reviewer/commit/3d76013))
-- **autofix:** Add --tools flag and pass findings from state ([8c9ebee](https://github.com/papayapos/papaya-reviewer/commit/8c9ebee))
+- **autofix:** Add --tools flag and pass findings from state ([8c9ebee](https://github.com/martin-janci/claude-code-reviewer/commit/8c9ebee))
 
 ### 📖 Documentation
 
-- **plans:** Add agent-seed design document ([18f0e91](https://github.com/papayapos/papaya-reviewer/commit/18f0e91))
-- **plans:** Add agent-seed implementation plan ([4c5a482](https://github.com/papayapos/papaya-reviewer/commit/4c5a482))
+- **plans:** Add agent-seed design document ([18f0e91](https://github.com/martin-janci/claude-code-reviewer/commit/18f0e91))
+- **plans:** Add agent-seed implementation plan ([4c5a482](https://github.com/martin-janci/claude-code-reviewer/commit/4c5a482))
 
 ### 🏡 Chore
 
-- **release:** V1.24.6 ([347399c](https://github.com/papayapos/papaya-reviewer/commit/347399c))
-- **k8s:** Sync manifests with live cluster state ([dac8fea](https://github.com/papayapos/papaya-reviewer/commit/dac8fea))
-- Merge papayapos/main (v1.25.1) ([366b0bd](https://github.com/papayapos/papaya-reviewer/commit/366b0bd))
+- **k8s:** Sync manifests with live cluster state ([dac8fea](https://github.com/martin-janci/claude-code-reviewer/commit/dac8fea))
 
 ### ✅ Tests
 
-- Add unit tests for Claude CLI output parsing and UsageStore ([e0ed8cf](https://github.com/papayapos/papaya-reviewer/commit/e0ed8cf))
+- Add unit tests for Claude CLI output parsing and UsageStore ([e0ed8cf](https://github.com/martin-janci/claude-code-reviewer/commit/e0ed8cf))
 
 ### ❤️ Contributors
 
 - Martin-janci ([@martin-janci](http://github.com/martin-janci))
 
-## v1.25.1
+## v1.24.6
 
-[compare changes](https://github.com/papayapos/papaya-reviewer/compare/v1.25.0...v1.25.1)
-
-### 🩹 Fixes
-
-- **claude:** Parse usage from nested envelope.usage{} for CLI >=2.1.x ([238f228](https://github.com/papayapos/papaya-reviewer/commit/238f228))
-
-### 🤖 CI
-
-- Switch Docker build to GHCR (ghcr.io) ([f8e6ffd](https://github.com/papayapos/papaya-reviewer/commit/f8e6ffd))
-
-### ❤️ Contributors
-
-- Martin-janci ([@martin-janci](http://github.com/martin-janci))
-<<<<<<< HEAD
-=======
-- Martin Janči <martin.janci@papayapos.sk>
-
-## v1.25.0
-
-
-### 🚀 Enhancements
-
-- Add changelog and release automation ([5ae0b4e](https://github.com/papayapos/papaya-reviewer/commit/5ae0b4e))
-- Add metrics collector for review statistics ([8de7f69](https://github.com/papayapos/papaya-reviewer/commit/8de7f69))
-- Expose /metrics endpoint with review statistics ([3d358a7](https://github.com/papayapos/papaya-reviewer/commit/3d358a7))
-- Add structured PR reviews with inline comments via Reviews API ([bc82784](https://github.com/papayapos/papaya-reviewer/commit/bc82784))
-- Add one-shot CLI review mode via --pr flag ([43c74ea](https://github.com/papayapos/papaya-reviewer/commit/43c74ea))
-- Structured PR reviews with inline comments and resolution tracking ([#4](https://github.com/papayapos/papaya-reviewer/pull/4))
-- Add operator skills and intelligent PR management features ([#5](https://github.com/papayapos/papaya-reviewer/pull/5))
-- Add observability and review quality improvements (Phase 1 & 2) ([8da9e53](https://github.com/papayapos/papaya-reviewer/commit/8da9e53))
-- Implement feature plugin architecture (Phase 3) ([#7](https://github.com/papayapos/papaya-reviewer/pull/7))
-- Enhance /health endpoint with settings and auth status ([#8](https://github.com/papayapos/papaya-reviewer/pull/8))
-- Add audit logging for operational tracking ([#9](https://github.com/papayapos/papaya-reviewer/pull/9))
-- Enhance review formatting with icons and better structure ([#10](https://github.com/papayapos/papaya-reviewer/pull/10))
-- Add autofix command for automatic issue resolution ([#11](https://github.com/papayapos/papaya-reviewer/pull/11))
-- Print version on startup ([c832443](https://github.com/papayapos/papaya-reviewer/commit/c832443))
-- Add Kubernetes deployment manifests ([3ab2b2f](https://github.com/papayapos/papaya-reviewer/commit/3ab2b2f))
-- Kubernetes and docker improvements ([#12](https://github.com/papayapos/papaya-reviewer/pull/12))
-- Add web configuration dashboard with hot-reload ([#13](https://github.com/papayapos/papaya-reviewer/pull/13))
-- Installable & updatable Claude CLI ([#14](https://github.com/papayapos/papaya-reviewer/pull/14))
-- Add usage tracking with prompt caching and session reuse ([#15](https://github.com/papayapos/papaya-reviewer/pull/15))
-- Add usage tracking, rate limit guard, and dashboard auth status ([#17](https://github.com/papayapos/papaya-reviewer/pull/17))
-- **dashboard:** Add token authentication gate to frontend ([af40df3](https://github.com/papayapos/papaya-reviewer/commit/af40df3))
-- **dashboard:** Url hash routing for tabs ([738749e](https://github.com/papayapos/papaya-reviewer/commit/738749e))
-- **dashboard:** Reveal secrets via show button ([67fb381](https://github.com/papayapos/papaya-reviewer/commit/67fb381))
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.24.5...v1.24.6)
 
 ### 🩹 Fixes
 
-- Include version and uptime in health endpoint response ([70d0d6e](https://github.com/papayapos/papaya-reviewer/commit/70d0d6e))
-- Address review findings on metrics implementation ([cf26945](https://github.com/papayapos/papaya-reviewer/commit/cf26945))
-- Address review findings on formatter and diff parser ([a2b1656](https://github.com/papayapos/papaya-reviewer/commit/a2b1656))
-- Backfill new fields on V2 state load and remove dead code ([31d973b](https://github.com/papayapos/papaya-reviewer/commit/31d973b))
-- Bug fixes, Docker reliability, and review false positive reduction ([#6](https://github.com/papayapos/papaya-reviewer/pull/6))
-- Improve reliability and observability ([743f4e0](https://github.com/papayapos/papaya-reviewer/commit/743f4e0))
-- **dashboard:** Bind-mount config write, restart endpoint, favicon ([4a7a6e9](https://github.com/papayapos/papaya-reviewer/commit/4a7a6e9))
-- **autofix:** Use --dangerously-skip-permissions flag ([f368d17](https://github.com/papayapos/papaya-reviewer/commit/f368d17))
-- **autofix:** Rewrite CLI invocation for claude 2.x ([759748b](https://github.com/papayapos/papaya-reviewer/commit/759748b))
-- **entrypoint:** Configure git identity for autofix commits ([fe16561](https://github.com/papayapos/papaya-reviewer/commit/fe16561))
-- **autofix:** Use absolute GitHub URLs in success comment ([cc65ced](https://github.com/papayapos/papaya-reviewer/commit/cc65ced))
-- **dashboard:** Increase restart delay to 15s ([33eb2d7](https://github.com/papayapos/papaya-reviewer/commit/33eb2d7))
+- **claude:** Parse usage from nested envelope.usage{} for CLI >=2.1.x ([3d76013](https://github.com/martin-janci/claude-code-reviewer/commit/3d76013))
 
 ### 📖 Documentation
 
-- Add comprehensive setup guide and configuration template ([914e667](https://github.com/papayapos/papaya-reviewer/commit/914e667))
-- Clarify Claude volume mounts for root and node users ([ce5950b](https://github.com/papayapos/papaya-reviewer/commit/ce5950b))
-- **dashboard:** Add restart, secret reveal, and bind-mount docs ([1f73e17](https://github.com/papayapos/papaya-reviewer/commit/1f73e17))
-
-### 🏡 Chore
-
-- **release:** V1.1.0 ([4c04668](https://github.com/papayapos/papaya-reviewer/commit/4c04668))
-- **release:** V1.2.0 ([14f1325](https://github.com/papayapos/papaya-reviewer/commit/14f1325))
-- **release:** V1.3.0 ([9298a41](https://github.com/papayapos/papaya-reviewer/commit/9298a41))
-- **release:** V1.4.0 ([c8fe81a](https://github.com/papayapos/papaya-reviewer/commit/c8fe81a))
-- **release:** V1.5.0 ([6166656](https://github.com/papayapos/papaya-reviewer/commit/6166656))
-- **release:** V1.7.4 ([cc03ad0](https://github.com/papayapos/papaya-reviewer/commit/cc03ad0))
-- **release:** V1.8.0 ([08d6691](https://github.com/papayapos/papaya-reviewer/commit/08d6691))
-- **release:** V1.9.0 ([a100c2a](https://github.com/papayapos/papaya-reviewer/commit/a100c2a))
-- **release:** V1.9.1 ([145fd87](https://github.com/papayapos/papaya-reviewer/commit/145fd87))
-- **release:** V1.10.0 ([6d1fe3c](https://github.com/papayapos/papaya-reviewer/commit/6d1fe3c))
-- **release:** V1.11.0 ([fd579e2](https://github.com/papayapos/papaya-reviewer/commit/fd579e2))
-- **release:** V1.12.0 ([f5b1f09](https://github.com/papayapos/papaya-reviewer/commit/f5b1f09))
-- **release:** V1.13.0 ([8149ffb](https://github.com/papayapos/papaya-reviewer/commit/8149ffb))
-- **release:** V1.14.0 ([abd828a](https://github.com/papayapos/papaya-reviewer/commit/abd828a))
-- **release:** V1.15.0 ([0414796](https://github.com/papayapos/papaya-reviewer/commit/0414796))
-- **release:** V1.16.0 ([64733b5](https://github.com/papayapos/papaya-reviewer/commit/64733b5))
-- **release:** V1.18.0 ([d96300d](https://github.com/papayapos/papaya-reviewer/commit/d96300d))
-- **release:** V1.19.0 ([8a398a9](https://github.com/papayapos/papaya-reviewer/commit/8a398a9))
-- **release:** V1.20.0 ([4354fd7](https://github.com/papayapos/papaya-reviewer/commit/4354fd7))
-- **release:** V1.21.0 ([359f7e7](https://github.com/papayapos/papaya-reviewer/commit/359f7e7))
-- **release:** V1.22.0 ([d42ebd2](https://github.com/papayapos/papaya-reviewer/commit/d42ebd2))
-- **release:** V1.23.0 ([035a62a](https://github.com/papayapos/papaya-reviewer/commit/035a62a))
-- **release:** V1.23.1 ([89f3e99](https://github.com/papayapos/papaya-reviewer/commit/89f3e99))
-- **release:** V1.24.0 ([8a02d3d](https://github.com/papayapos/papaya-reviewer/commit/8a02d3d))
-- **release:** V1.24.1 ([e9c5391](https://github.com/papayapos/papaya-reviewer/commit/e9c5391))
-- **release:** V1.24.2 ([1b41c6f](https://github.com/papayapos/papaya-reviewer/commit/1b41c6f))
-- **release:** V1.24.3 ([1b3917e](https://github.com/papayapos/papaya-reviewer/commit/1b3917e))
-- **release:** V1.24.4 ([7fc03fa](https://github.com/papayapos/papaya-reviewer/commit/7fc03fa))
-- **release:** V1.24.5 ([9e528c4](https://github.com/papayapos/papaya-reviewer/commit/9e528c4))
-- Remove workflow for initial push ([a6c12be](https://github.com/papayapos/papaya-reviewer/commit/a6c12be))
-- Remove workflow for initial push" ([03f86bc](https://github.com/papayapos/papaya-reviewer/commit/03f86bc))
-
-### 🤖 CI
-
-- Remove Docker job from release workflow ([e2f6d53](https://github.com/papayapos/papaya-reviewer/commit/e2f6d53))
-- Add Docker build workflow for private registry ([a2dbb8e](https://github.com/papayapos/papaya-reviewer/commit/a2dbb8e))
+- **dashboard:** Add restart, secret reveal, and bind-mount docs ([1f73e17](https://github.com/martin-janci/claude-code-reviewer/commit/1f73e17))
 
 ### ❤️ Contributors
 
 - Martin-janci ([@martin-janci](http://github.com/martin-janci))
-- Martin Janči ([@martin-janci](http://github.com/martin-janci))
->>>>>>> papayapos/main
 
 ## v1.24.5
 
