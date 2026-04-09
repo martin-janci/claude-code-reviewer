@@ -1,5 +1,30 @@
 # Changelog
 
+## v1.24.7
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.24.6...v1.24.7)
+
+### 🩹 Fixes
+
+- **autofix:** Add --tools flag and pass findings from state ([8c9ebee](https://github.com/martin-janci/claude-code-reviewer/commit/8c9ebee))
+
+### 📖 Documentation
+
+- **plans:** Add agent-seed design document ([18f0e91](https://github.com/martin-janci/claude-code-reviewer/commit/18f0e91))
+- **plans:** Add agent-seed implementation plan ([4c5a482](https://github.com/martin-janci/claude-code-reviewer/commit/4c5a482))
+
+### 🏡 Chore
+
+- **k8s:** Sync manifests with live cluster state ([dac8fea](https://github.com/martin-janci/claude-code-reviewer/commit/dac8fea))
+
+### ✅ Tests
+
+- Add unit tests for Claude CLI output parsing and UsageStore ([e0ed8cf](https://github.com/martin-janci/claude-code-reviewer/commit/e0ed8cf))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.24.6
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.24.5...v1.24.6)
