@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.24.9
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.24.8...v1.24.9)
+
+### 🩹 Fixes
+
+- **auth:** Use HOME=/home/node so claude CLI reads from PVC credentials ([450d187](https://github.com/martin-janci/claude-code-reviewer/commit/450d187))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.24.8
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.24.7...v1.24.8)
