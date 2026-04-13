@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.24.9
+
+[compare changes](https://github.com/papayapos/papaya-reviewer/compare/v1.24.8...v1.24.9)
+
+### 🩹 Fixes
+
+- **auth:** Use HOME=/home/node so claude CLI reads from PVC credentials ([c66fb91](https://github.com/papayapos/papaya-reviewer/commit/c66fb91))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.24.8
 
 [compare changes](https://github.com/papayapos/papaya-reviewer/compare/v1.25.2...v1.24.8)
