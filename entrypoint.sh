@@ -1,8 +1,10 @@
 #!/bin/sh
 set -e
 
-# Add Claude CLI to PATH
+# Add Claude CLI to PATH and set HOME to node user's home so claude CLI
+# reads credentials from the persistent PVC (~/.claude, ~/.claude.json) instead of /root
 export PATH="/home/node/.local/bin:$PATH"
+export HOME="/home/node"
 
 # --- PVC initialization ---
 # If .claude is empty or missing key content (fresh PVC mount), seed from baked-in defaults

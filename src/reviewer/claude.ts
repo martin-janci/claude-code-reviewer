@@ -349,15 +349,27 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
           return;
         }
 
+        // Extract Claude-specific error from stdout JSON if available.
+        // Claude CLI may exit non-zero but still emit a structured JSON envelope
+        // (e.g. spending limit: {"is_error":true,"result":"You've hit your limit · resets 7am (UTC)"}).
+        // Using the envelope result as body lets classifyError() match the actual cause.
+        let errorBody = message;
+        try {
+          const envelope = JSON.parse(stdout);
+          if (envelope.is_error && typeof envelope.result === "string" && envelope.result) {
+            errorBody = envelope.result;
+          }
+        } catch { /* stdout wasn't JSON — fall back to exec error message */ }
+
         if (log) {
-          log.error("Claude CLI failed", { elapsedS: elapsed, error: message, stderr: stderr?.trim().slice(0, 500), stdout: stdout?.trim().slice(0, 500) });
+          log.error("Claude CLI failed", { elapsedS: elapsed, error: message, errorBody, stderr: stderr?.trim().slice(0, 500), stdout: stdout?.trim().slice(0, 500) });
         } else {
           console.error(`Claude CLI failed after ${elapsed}s: ${message}`);
           if (stderr?.trim()) console.error("Claude stderr:", stderr.trim());
           if (stdout?.trim()) console.error("Claude stdout:", stdout.trim().slice(0, 2000));
           console.error("Prompt preview:", userPrompt.slice(0, 200));
         }
-        resolve({ body: message, success: false });
+        resolve({ body: errorBody, success: false });
         return;
       }
 
