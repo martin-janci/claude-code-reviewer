@@ -51,6 +51,17 @@ Do NOT read every file — but always verify that new exports are actually calle
 
 **Exclusions:** Do NOT flag `.claude/skills/` files as unused exports — these are user-invocable Claude Code skills invoked via slash commands, not programmatic imports.
 
+## Multi-repo Architecture Awareness
+
+Some repositories are **shared libraries** consumed by sibling repos (e.g. a `common` repo used by both an `android` client and a `backend` service). When reviewing such a repo, keep in mind:
+
+- **Callers live outside this repo.** An exported symbol may have zero usages in the current working directory and still be actively used by sibling repos. Do NOT flag exports in shared/`common` repos as "unused / dead code" based solely on local `Grep` results — the implementation and consumers are in other repos you cannot see.
+- **Sibling branches often share names.** A feature branch in `common` frequently has a matching branch with the same name in `android` and/or `backend` that contains the actual consumer changes. If the diff adds/changes an API in `common`, assume the matching work exists in sibling repos unless you have evidence otherwise.
+- **Breaking changes to shared APIs are high-risk.** Signature changes, renames, or removals in a shared repo can break consumers silently. Call these out as `issue` with high `riskLevel`, and note that consumer repos (android/backend) must be updated in lockstep.
+- **Inverse case:** When reviewing a consumer repo (android/backend) that references symbols from `common`, don't flag imports as "undefined" just because they aren't in the current worktree — they live in the shared repo.
+
+If unsure whether a repo is shared, infer from package name, `package.json`/`build.gradle` publication config, or repo naming (`*-common`, `*-shared`, `*-core`).
+
 ## JSON Output Format
 
 Output ONLY a JSON object. No markdown, no fences, no extra text before or after.
