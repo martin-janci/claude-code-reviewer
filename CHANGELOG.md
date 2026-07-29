@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.25.0
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.24.9...v1.25.0)
+
+### 🚀 Enhancements
+
+- **review:** Mandatory test coverage assessment with author debate flow ([7e6cd5b](https://github.com/martin-janci/claude-code-reviewer/commit/7e6cd5b))
+
+### 🩹 Fixes
+
+- **auth:** Use HOME=/home/node so claude CLI reads from PVC credentials ([c66fb91](https://github.com/martin-janci/claude-code-reviewer/commit/c66fb91))
+
+### 📖 Documentation
+
+- Design spec for mandatory test coverage in reviews ([21f5942](https://github.com/martin-janci/claude-code-reviewer/commit/21f5942))
+
+### 🏡 Chore
+
+- **release:** V1.24.8 ([5a13afd](https://github.com/martin-janci/claude-code-reviewer/commit/5a13afd))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.24.9
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.24.8...v1.24.9)
