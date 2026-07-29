@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.26.0
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.25.0...v1.26.0)
+
+### 🚀 Enhancements
+
+- **code-review:** Add multi-repo architecture awareness ([350ac96](https://github.com/martin-janci/claude-code-reviewer/commit/350ac96))
+
+### 🏡 Chore
+
+- **release:** V1.24.9 ([ff0b1ed](https://github.com/martin-janci/claude-code-reviewer/commit/ff0b1ed))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.25.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.24.9...v1.25.0)
