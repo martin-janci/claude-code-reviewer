@@ -639,6 +639,10 @@ export class Reviewer {
       focusPaths: pr.overrides?.focusPaths,
       securityPaths: securityPaths.length > 0 ? securityPaths : undefined,
       sessionId,
+      requireTests: this.config.review.requireTests,
+      testBlockingImportance: this.config.review.testBlockingImportance,
+      // Cap exemptions passed to the prompt to bound its size
+      testExemptions: state.testExemptions?.slice(-20),
     });
     timings.claude_review_ms = Date.now() - claudeT0;
 

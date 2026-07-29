@@ -1,4 +1,10 @@
-import type { ConventionalLabel, ReviewFinding, StructuredReview, RiskLevel } from "../types.js";
+import type { ConventionalLabel, ReviewFinding, StructuredReview, RiskLevel, TestImportance } from "../types.js";
+
+/** Invisible marker on inline missing-test comments — lets the webhook recognize test-finding threads. */
+export const TEST_FINDING_MARKER = "<!-- claude-review:test-finding -->";
+
+/** Invisible marker on bot debate replies — prevents the bot from reacting to its own replies. */
+export const TEST_DEBATE_MARKER = "<!-- claude-review:test-debate -->";
 
 export interface JiraLink {
   key: string;
@@ -8,6 +14,14 @@ export interface JiraLink {
 }
 
 const RISK_EMOJI: Record<RiskLevel, string> = {
+  low: "🟢",
+  medium: "🟡",
+  high: "🟠",
+  critical: "🔴",
+};
+
+const TEST_IMPORTANCE_EMOJI: Record<TestImportance, string> = {
+  none: "⚪",
   low: "🟢",
   medium: "🟡",
   high: "🟠",
@@ -82,6 +96,30 @@ export function formatReviewBody(
     parts.push("");
   }
 
+  // Test coverage assessment
+  if (structured.testCoverage) {
+    const tc = structured.testCoverage;
+    const emoji = TEST_IMPORTANCE_EMOJI[tc.importance] ?? "⚪";
+    parts.push(`### 🧪 Test Coverage`);
+    parts.push("");
+    if (tc.importance === "none") {
+      parts.push(`${emoji} **Importance: NONE** (exempt) — ${tc.rationale}`);
+    } else {
+      const testsStatus = tc.testsIncluded ? "✅ tests included" : "⚠️ no tests in this PR";
+      parts.push(`${emoji} **Importance: ${tc.importance.toUpperCase()}** — ${testsStatus}`);
+      parts.push("");
+      parts.push(`> ${tc.rationale}`);
+      if (tc.suggestedTests && tc.suggestedTests.length > 0) {
+        parts.push("");
+        parts.push(`**Suggested tests:**`);
+        for (const t of tc.suggestedTests) {
+          parts.push(`- [ ] ${t}`);
+        }
+      }
+    }
+    parts.push("");
+  }
+
   // Jira link (before summary)
   if (jira) {
     if (jira.valid && jira.summary) {
@@ -124,8 +162,9 @@ export function formatReviewBody(
         const blocking = f.blocking ? " 🚫 **blocking**" : "";
         const isNew = f.isNew ? " 🆕" : "";
         const security = f.securityRelated ? " 🔐" : "";
+        const test = f.testRelated ? " 🧪" : "";
         const confidence = f.confidence !== undefined && f.confidence < 100 ? ` (${f.confidence}% confidence)` : "";
-        parts.push(`- \`${f.path}:${f.line}\` — ${truncate(f.body, 120)}${blocking}${security}${isNew}${confidence}`);
+        parts.push(`- \`${f.path}:${f.line}\` — ${truncate(f.body, 120)}${blocking}${security}${test}${isNew}${confidence}`);
       }
       parts.push("");
     }
@@ -144,8 +183,9 @@ export function formatReviewBody(
       const emoji = SEVERITY_EMOJI[f.severity] ?? "";
       const isNew = f.isNew ? " 🆕" : "";
       const security = f.securityRelated ? " 🔐" : "";
+      const test = f.testRelated ? " 🧪" : "";
       const blocking = f.blocking ? " 🚫 **blocking**" : "";
-      parts.push(`${emoji} **${f.severity}${blocking}${security}${isNew}:** \`${f.path}:${f.line}\``);
+      parts.push(`${emoji} **${f.severity}${blocking}${security}${test}${isNew}:** \`${f.path}:${f.line}\``);
       parts.push("");
       parts.push(f.body);
       parts.push("");
@@ -201,8 +241,11 @@ export function formatInlineComment(finding: ReviewFinding): string {
   const blockingStr = finding.blocking ? " 🚫 **blocking**" : "";
   const isNew = finding.isNew ? " 🆕" : "";
   const security = finding.securityRelated ? " 🔐" : "";
+  const test = finding.testRelated ? " 🧪" : "";
   const confidence = finding.confidence !== undefined && finding.confidence < 100 ? ` *(${finding.confidence}% confidence)*` : "";
-  return `${emoji} **${finding.severity}${blockingStr}${security}${isNew}:** ${finding.body}${confidence}`;
+  // The invisible marker lets the webhook recognize replies to missing-test findings (debate flow)
+  const marker = finding.testRelated ? `\n\n${TEST_FINDING_MARKER}` : "";
+  return `${emoji} **${finding.severity}${blockingStr}${security}${test}${isNew}:** ${finding.body}${confidence}${marker}`;
 }
 
 function countBySeverity(findings: ReviewFinding[]): Record<string, number> {

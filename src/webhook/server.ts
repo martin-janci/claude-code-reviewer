@@ -1,15 +1,17 @@
 import { createServer, type Server } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { execFile } from "node:child_process";
-import type { AppConfig, PullRequest, ReviewOverrides } from "../types.js";
+import type { AppConfig, PullRequest, ReviewOverrides, TestExemption } from "../types.js";
 import type { Reviewer } from "../reviewer/reviewer.js";
 import type { StateStore } from "../state/store.js";
 import type { MetricsCollector } from "../metrics.js";
 import type { Logger } from "../logger.js";
 import type { CloneManager } from "../clone/manager.js";
 import type { RateLimitGuard } from "../rate-limit-guard.js";
-import { getPRDetails, postComment } from "../reviewer/github.js";
+import { getPRDetails, postComment, getReviewComment, listReviewCommentReplies, replyToReviewComment, getReviewThreads, resolveReviewThread } from "../reviewer/github.js";
 import { executeAutofix } from "../features/autofix.js";
+import { evaluateTestObjection, type TestDebateThread } from "../features/test-debate.js";
+import { TEST_FINDING_MARKER, TEST_DEBATE_MARKER } from "../reviewer/formatter.js";
 import { PrometheusExporter } from "../prometheus.js";
 import { type AuthStatus, checkClaudeAuth, checkGhAuth } from "../auth-check.js";
 
@@ -104,12 +106,15 @@ function getImportantSettings(config: AppConfig): Record<string, unknown> {
       maxConcurrentReviews: config.review.maxConcurrentReviews,
       confidenceThreshold: config.review.confidenceThreshold,
       dryRun: config.review.dryRun,
+      requireTests: config.review.requireTests,
+      testBlockingImportance: config.review.testBlockingImportance,
     },
     features: {
       jira: config.features.jira.enabled,
       autoDescription: config.features.autoDescription.enabled,
       autoLabel: config.features.autoLabel.enabled,
       slack: config.features.slack.enabled,
+      testDebate: config.features.testDebate.enabled,
     },
   };
 }
@@ -130,6 +135,8 @@ export class WebhookServer {
   private authRefreshInterval: NodeJS.Timeout | null = null;
   private readonly AUTH_CACHE_TTL_MS = 60_000; // 60 seconds
   private prometheusExporter?: PrometheusExporter;
+  // Per-thread guard so rapid replies don't produce concurrent debate sessions
+  private debateInFlight = new Set<string>();
 
   constructor(
     private config: AppConfig,
@@ -352,7 +359,7 @@ export class WebhookServer {
           const body = rawBody.toString("utf-8");
 
           const event = req.headers["x-github-event"] as string;
-          if (event !== "pull_request" && event !== "issue_comment" && event !== "push") {
+          if (event !== "pull_request" && event !== "issue_comment" && event !== "pull_request_review_comment" && event !== "push") {
             this.logger.info("Webhook: ignored event type", { event });
             res.writeHead(200);
             res.end("Ignored event");
@@ -378,6 +385,12 @@ export class WebhookServer {
           // Handle issue_comment events (PR comment triggers)
           if (event === "issue_comment") {
             this.handleIssueComment(payload, res);
+            return;
+          }
+
+          // Handle inline review comment replies (test-finding debate)
+          if (event === "pull_request_review_comment") {
+            this.handleReviewCommentReply(payload, res);
             return;
           }
 
@@ -610,6 +623,202 @@ export class WebhookServer {
     this.triggerCommentReview(owner, repo, prNumber, overrides).catch((err) => {
       this.logger.error("Webhook comment-trigger error", { pr: `${owner}/${repo}#${prNumber}`, error: String(err) });
     });
+  }
+
+  /**
+   * Handle pull_request_review_comment events: when a PR author replies to one of
+   * our missing-test findings, judge their objection and answer in the thread.
+   */
+  private handleReviewCommentReply(payload: any, res: any): void {
+    // Only newly created comments
+    if (payload.action !== "created") {
+      res.writeHead(200);
+      res.end("Ignored comment action");
+      return;
+    }
+
+    const comment = payload.comment;
+    const prData = payload.pull_request;
+    const repoData = payload.repository;
+    if (!comment || !prData?.number || !repoData?.full_name) {
+      res.writeHead(400);
+      res.end("Missing comment, pull_request, or repository in payload");
+      return;
+    }
+    const [owner, repo] = repoData.full_name.split("/");
+
+    // Check if this repo is tracked
+    const isTracked = this.config.repos.some(
+      (r) => r.owner === owner && r.repo === repo,
+    );
+    if (!isTracked) {
+      res.writeHead(200);
+      res.end("Repo not tracked");
+      return;
+    }
+
+    if (!this.config.features.testDebate.enabled) {
+      res.writeHead(200);
+      res.end("Test debate disabled");
+      return;
+    }
+
+    // Only replies inside a thread — top-level review comments are our own findings
+    if (!comment.in_reply_to_id) {
+      res.writeHead(200);
+      res.end("Not a thread reply");
+      return;
+    }
+
+    // Loop guards: never react to bots or to our own debate replies.
+    // (Findings are only ever thread roots, so replies never carry TEST_FINDING_MARKER
+    // unless a human quote-replied one — which must still be processed.)
+    const body: string = comment.body ?? "";
+    if (comment.user?.type === "Bot" || body.includes(TEST_DEBATE_MARKER)) {
+      res.writeHead(200);
+      res.end("Ignored bot/own comment");
+      return;
+    }
+
+    const prNumber: number = prData.number;
+    const commenter: string = comment.user?.login ?? "unknown";
+    this.logger.info("Webhook: review comment reply", { pr: `${owner}/${repo}#${prNumber}`, commenter, inReplyTo: comment.in_reply_to_id });
+
+    res.writeHead(202);
+    res.end("Accepted");
+
+    this.processTestDebate(
+      owner,
+      repo,
+      prNumber,
+      prData.title ?? "",
+      comment.in_reply_to_id,
+      { id: comment.id, body, author: commenter },
+    ).catch((err) => {
+      this.logger.error("Webhook test-debate error", { pr: `${owner}/${repo}#${prNumber}`, error: String(err) });
+    });
+  }
+
+  private async processTestDebate(
+    owner: string,
+    repo: string,
+    prNumber: number,
+    prTitle: string,
+    rootCommentId: number,
+    trigger: { id: number; body: string; author: string },
+  ): Promise<void> {
+    const label = `${owner}/${repo}#${prNumber}`;
+    const lockKey = `${label}:${rootCommentId}`;
+    if (this.debateInFlight.has(lockKey)) {
+      this.logger.info("Test debate already in flight for thread — skipping", { pr: label, rootCommentId });
+      return;
+    }
+    this.debateInFlight.add(lockKey);
+
+    try {
+      // The thread root must be one of our missing-test findings
+      const root = await getReviewComment(owner, repo, rootCommentId);
+      if (!root.body.includes(TEST_FINDING_MARKER)) {
+        return;
+      }
+
+      // Already conceded for this location — nothing left to debate
+      const state = this.store.get(owner, repo, prNumber);
+      if (state?.testExemptions?.some((ex) => ex.path === root.path && ex.line === root.line)) {
+        this.logger.info("Test debate: exemption already recorded — staying silent", { pr: label, path: root.path, line: root.line });
+        return;
+      }
+
+      // Round cap: stop arguing after maxRounds bot replies in this thread
+      const replies = await listReviewCommentReplies(owner, repo, prNumber, root.id);
+      const botRounds = replies.filter((r) => r.body.includes(TEST_DEBATE_MARKER)).length;
+      const maxRounds = this.config.features.testDebate.maxRounds;
+      if (botRounds >= maxRounds) {
+        this.logger.info("Test debate: max rounds reached — leaving thread to humans", { pr: label, rootCommentId, botRounds, maxRounds });
+        return;
+      }
+
+      // The triggering reply may not be in the listing yet (eventual consistency)
+      if (!replies.some((r) => r.id === trigger.id)) {
+        replies.push({ id: trigger.id, body: trigger.body, path: root.path, line: root.line, user: trigger.author, inReplyToId: root.id, diffHunk: "" });
+      }
+
+      // Optional codebase access so Claude can verify coverage claims.
+      // Skip while a review holds this PR's worktree to avoid disturbing it.
+      let cwd: string | undefined;
+      if (this.cloneManager && !this.reviewer.lockKeys.includes(label)) {
+        try {
+          const pr = await getPRDetails(owner, repo, prNumber);
+          cwd = await this.cloneManager.prepareForPR(owner, repo, prNumber, pr.headSha);
+        } catch (err) {
+          this.logger.warn("Test debate: worktree preparation failed — judging without codebase access", { pr: label, error: String(err) });
+        }
+      }
+
+      const thread: TestDebateThread = {
+        prNumber,
+        prTitle,
+        owner,
+        repo,
+        findingBody: root.body,
+        path: root.path,
+        line: root.line,
+        diffHunk: root.diffHunk,
+        replies: replies.map((r) => ({
+          author: r.user,
+          body: r.body,
+          fromBot: r.body.includes(TEST_DEBATE_MARKER),
+        })),
+        authorLogin: trigger.author,
+      };
+
+      const result = await evaluateTestObjection(this.config, thread, cwd, this.logger);
+      if (!result.success || !result.decision || !result.reply) {
+        // Stay silent on failure — a broken reply is worse than none
+        return;
+      }
+
+      const statusLine = result.decision === "concede"
+        ? "_Accepted — this finding will be treated as `wont_fix` and won't be re-flagged in future reviews._"
+        : "_The finding stays open. If you still disagree, reply with more context — or a maintainer can resolve the thread to override._";
+      const replyBody = `${result.reply}\n\n${statusLine}\n\n${TEST_DEBATE_MARKER}`;
+      await replyToReviewComment(owner, repo, prNumber, root.id, replyBody);
+      this.logger.info("Test debate reply posted", { pr: label, rootCommentId, decision: result.decision, confidence: result.confidence });
+
+      if (result.decision === "concede") {
+        // Persist the exemption so future reviews don't re-flag this location
+        try {
+          const fresh = this.store.getOrCreate(owner, repo, prNumber, {});
+          const exemption: TestExemption = {
+            path: root.path,
+            line: root.line,
+            reason: result.reason ?? "Author justification accepted",
+            concededAt: new Date().toISOString(),
+          };
+          const exemptions = [...(fresh.testExemptions ?? []), exemption].slice(-50);
+          this.store.update(owner, repo, prNumber, { testExemptions: exemptions });
+        } catch (err) {
+          this.logger.warn("Test debate: failed to record exemption", { pr: label, error: String(err) });
+        }
+
+        // Resolve the review thread — the debate is settled
+        try {
+          const threads = await getReviewThreads(owner, repo, prNumber);
+          const match = threads.find((t) => !t.isResolved && t.body === root.body)
+            ?? threads.find((t) => !t.isResolved && t.path === root.path && t.line === root.line && t.body.includes(TEST_FINDING_MARKER));
+          if (match) {
+            await resolveReviewThread(match.id);
+            this.logger.info("Test debate: thread resolved after concession", { pr: label, threadId: match.id });
+          }
+        } catch (err) {
+          this.logger.warn("Test debate: failed to resolve thread after concession", { pr: label, error: String(err) });
+        }
+      }
+    } catch (err) {
+      this.logger.error("Test debate processing error", { pr: label, rootCommentId, error: String(err) });
+    } finally {
+      this.debateInFlight.delete(lockKey);
+    }
   }
 
   private async triggerCommentReview(owner: string, repo: string, prNumber: number, overrides?: ReviewOverrides): Promise<void> {

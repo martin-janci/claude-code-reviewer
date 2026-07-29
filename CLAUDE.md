@@ -23,7 +23,8 @@ src/
 ├── features/
 │   ├── jira.ts                  # Jira key extraction + REST API validation
 │   ├── auto-description.ts      # PR description generation via Claude CLI
-│   └── auto-label.ts            # Label computation from verdict/severity/diff paths
+│   ├── auto-label.ts            # Label computation from verdict/severity/diff paths
+│   └── test-debate.ts           # Judges author objections to missing-test findings
 ├── polling/
 │   └── poller.ts                # Non-overlapping poll loop with reconciliation
 ├── reviewer/
@@ -96,6 +97,7 @@ GITHUB_TOKEN=ghp_xxx node dist/index.js  # Production
 | Jira integration | `features/jira.ts`, `reviewer/formatter.ts` (JiraLink), `reviewer/reviewer.ts` |
 | Auto-description | `features/auto-description.ts`, `.claude/skills/auto-description-prompt/skill.md` |
 | Auto-labeling | `features/auto-label.ts`, `reviewer/reviewer.ts` |
+| Test coverage / debate | `.claude/skills/code-review/skill.md` (Test Coverage section), `features/test-debate.ts`, `webhook/server.ts` (`processTestDebate`), `types.ts` (TestCoverage, TestExemption) |
 | Dashboard | `dashboard/server.ts`, `dashboard/html.ts`, `config-manager.ts` |
 | Claude CLI update | `dashboard/server.ts` (`/api/claude/*`), `auth-check.ts`, `entrypoint.sh` (auto-update) |
 | Hot-reload | `config-manager.ts`, `index.ts` (onChange callbacks) |
@@ -129,7 +131,8 @@ This project enforces [Conventional Commits](https://www.conventionalcommits.org
 - **Webhook responses:** Send HTTP response immediately (202), then process asynchronously
 - **Config defaults:** All defaults live in `DEFAULTS` constant in `config.ts`
 - **CLI wrappers:** Both `gh` and `claude` are invoked via `child_process.execFile` with timeouts
-- **Features:** Optional features (Jira, auto-description, auto-label) are disabled by default and configured under `features:` in `config.yaml`. Each feature is non-fatal — errors are logged but never block the review pipeline.
+- **Features:** Optional features (Jira, auto-description, auto-label) are disabled by default and configured under `features:` in `config.yaml`. Each feature is non-fatal — errors are logged but never block the review pipeline. Exception: `testDebate` is enabled by default because it backs the mandatory test-coverage policy (`review.requireTests`).
+- **Test coverage:** Every review assesses test coverage (`review.requireTests`, default on). Missing tests at/above `review.testBlockingImportance` become blocking `issue` findings tagged `testRelated`, with concrete suggested tests. Author replies disputing a test finding trigger the test-debate flow (webhook mode): concede → resolve thread + record a `TestExemption` in state; hold → reasoned push-back reply, capped at `features.testDebate.maxRounds`.
 
 ## Testing
 
