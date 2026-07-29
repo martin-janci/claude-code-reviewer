@@ -43,6 +43,9 @@ export interface ReviewConfig {
   confidenceThreshold: number;
   // Security paths for elevated scrutiny
   securityPaths: string[];
+  // Mandatory test coverage assessment
+  requireTests: boolean;
+  testBlockingImportance: "medium" | "high" | "critical";
 }
 
 export interface JiraConfig {
@@ -101,6 +104,12 @@ export interface UsageConfig {
   sessionTtlSeconds: number; // default: 270 (4.5 min, under 5-min cache TTL)
 }
 
+export interface TestDebateConfig {
+  enabled: boolean; // Reply to PR authors who dispute missing-test findings (webhook mode only)
+  maxRounds: number; // Max bot replies per review thread before going silent
+  timeoutMs: number;
+}
+
 export interface FeaturesConfig {
   jira: JiraConfig;
   autoDescription: AutoDescriptionConfig;
@@ -109,6 +118,7 @@ export interface FeaturesConfig {
   audit: AuditConfig;
   autofix: AutofixConfig;
   usage: UsageConfig;
+  testDebate: TestDebateConfig;
 }
 
 export interface DashboardConfig {
@@ -157,6 +167,7 @@ export interface ReviewFinding {
   confidence?: number; // 0-100, for filtering low-confidence findings
   isNew?: boolean; // For incremental reviews: true if finding is new since last review
   securityRelated?: boolean; // True if finding relates to security
+  testRelated?: boolean; // True for missing-test findings (drives 🧪 marker + debate flow)
 }
 
 export interface ResolutionEntry {
@@ -178,10 +189,20 @@ export interface PRSummary {
   riskFactors?: string[]; // Why it's risky
 }
 
+export type TestImportance = "none" | "low" | "medium" | "high" | "critical";
+
+export interface TestCoverage {
+  importance: TestImportance; // How important tests are for this PR ("none" = exempt)
+  rationale: string; // Why this importance level / why exempt
+  testsIncluded: boolean; // PR adds or updates tests
+  suggestedTests?: string[]; // Concrete tests the developer should add
+}
+
 export interface StructuredReview {
   verdict: ReviewVerdict;
   summary: string;
   prSummary?: PRSummary; // New: structured PR summary
+  testCoverage?: TestCoverage; // Mandatory test coverage assessment
   findings: ReviewFinding[];
   overall?: string;
   resolutions?: ResolutionEntry[];
@@ -226,6 +247,14 @@ export interface FeatureExecution {
   durationMs?: number;
   error?: string;
   timestamp: string;
+}
+
+/** A missing-test finding the author disputed and the bot conceded. */
+export interface TestExemption {
+  path: string;
+  line: number | null;
+  reason: string; // The author's accepted justification (summarized)
+  concededAt: string;
 }
 
 export interface PRState {
@@ -280,6 +309,9 @@ export interface PRState {
   descriptionGenerated: boolean;
   labelsApplied: string[];
   featureExecutions: FeatureExecution[];
+
+  // Test debate: conceded missing-test exemptions (optional — absent on older state files)
+  testExemptions?: TestExemption[];
 }
 
 export interface ReviewDecision {

@@ -39,6 +39,8 @@ review:
   dryRun: false                      # if true, run reviews but don't post to GitHub (env: DRY_RUN)
   maxConcurrentReviews: 3            # max parallel reviews across all PRs (1-10 recommended)
   confidenceThreshold: 0             # filter findings below this confidence (0-100, 0 = show all)
+  requireTests: true                 # mandatory test coverage assessment in every review
+  testBlockingImportance: high       # missing tests at/above this importance block the PR (medium | high | critical)
   securityPaths:                     # paths requiring elevated security scrutiny
     - "**/auth/**"
     - "**/crypto/**"
@@ -101,6 +103,16 @@ features:
     dbPath: data/usage.db      # path to SQLite database
     retentionDays: 90          # delete records older than this
     sessionTtlSeconds: 270     # session reuse TTL (4.5 min — 90% of Claude's 5-min prompt cache TTL, 30s buffer for latency)
+
+  # Test debate: when a PR author replies to a missing-test finding arguing a test
+  # is not required, judge the objection — push back if the test is a must-have,
+  # concede (resolve thread + remember the exemption) if the author is right.
+  # Enabled by default: it backs the mandatory test policy and only runs in webhook
+  # mode when authors actually dispute findings. Requires review.requireTests.
+  testDebate:
+    enabled: true
+    maxRounds: 2                             # max bot replies per thread before leaving it to humans
+    timeoutMs: 120000                        # timeout for the debate judgment session (2 min)
 
   # Autofix: automatically apply fixes for review findings via /fix comment
   autofix:

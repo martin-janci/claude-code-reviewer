@@ -1,7 +1,7 @@
 import { exec, execFile } from "node:child_process";
 import { existsSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { resolve, join } from "node:path";
-import type { ReviewResult, ReviewVerdict, StructuredReview, ConventionalLabel, ReviewFinding, FindingResolution, ResolutionEntry, PRSummary, RiskLevel, ClaudeUsage } from "../types.js";
+import type { ReviewResult, ReviewVerdict, StructuredReview, ConventionalLabel, ReviewFinding, FindingResolution, ResolutionEntry, PRSummary, RiskLevel, ClaudeUsage, TestCoverage, TestImportance, TestExemption } from "../types.js";
 import type { Logger } from "../logger.js";
 
 // Resolve skill path: check Docker location first, then project-relative
@@ -33,22 +33,33 @@ export interface ReviewOptions {
   focusPaths?: string[];
   securityPaths?: string[]; // Paths that touch security-sensitive areas
   sessionId?: string; // Resume a previous session for prompt cache reuse
+  requireTests?: boolean; // Mandatory test coverage assessment (default true)
+  testBlockingImportance?: "medium" | "high" | "critical"; // Importance at/above which missing tests block
+  testExemptions?: TestExemption[]; // Previously conceded missing-test exemptions
 }
 
 const VALID_VERDICTS = new Set<string>(["APPROVE", "REQUEST_CHANGES", "COMMENT"]);
 const VALID_LABELS = new Set<string>(["issue", "suggestion", "nitpick", "question", "praise"]);
 const VALID_RISK_LEVELS = new Set<string>(["low", "medium", "high", "critical"]);
+const VALID_TEST_IMPORTANCE = new Set<string>(["none", "low", "medium", "high", "critical"]);
 
 const JSON_SCHEMA = `{
   "verdict": "APPROVE | REQUEST_CHANGES | COMMENT",
   "summary": "Brief one-line summary of the review.",
+  "testCoverage": {
+    "importance": "none | low | medium | high | critical",
+    "rationale": "Why this importance level (or why exempt).",
+    "testsIncluded": false,
+    "suggestedTests": ["concrete test case the developer should add"]
+  },
   "findings": [
     {
       "severity": "issue | suggestion | nitpick | question | praise",
       "blocking": true,
       "path": "src/foo.ts",
       "line": 42,
-      "body": "Explanation of the finding."
+      "body": "Explanation of the finding.",
+      "testRelated": false
     }
   ],
   "resolutions": [
@@ -105,6 +116,26 @@ function validateStructuredReview(obj: unknown): StructuredReview | null {
     }
   }
 
+  // Test coverage (optional — graceful degradation like prSummary)
+  let testCoverage: TestCoverage | undefined;
+  if (o.testCoverage && typeof o.testCoverage === "object") {
+    const tc = o.testCoverage as Record<string, unknown>;
+    if (
+      typeof tc.importance === "string" && VALID_TEST_IMPORTANCE.has(tc.importance) &&
+      typeof tc.rationale === "string" && tc.rationale.trim() &&
+      typeof tc.testsIncluded === "boolean"
+    ) {
+      testCoverage = {
+        importance: tc.importance as TestImportance,
+        rationale: tc.rationale.trim(),
+        testsIncluded: tc.testsIncluded,
+        suggestedTests: Array.isArray(tc.suggestedTests)
+          ? tc.suggestedTests.filter((t): t is string => typeof t === "string" && !!t.trim())
+          : undefined,
+      };
+    }
+  }
+
   // Findings
   if (!Array.isArray(o.findings)) return null;
   const findings: ReviewFinding[] = [];
@@ -128,6 +159,9 @@ function validateStructuredReview(obj: unknown): StructuredReview | null {
     }
     if (typeof fi.securityRelated === "boolean") {
       finding.securityRelated = fi.securityRelated;
+    }
+    if (typeof fi.testRelated === "boolean") {
+      finding.testRelated = fi.testRelated;
     }
     if (typeof fi.isNew === "boolean") {
       finding.isNew = fi.isNew;
@@ -160,7 +194,7 @@ function validateStructuredReview(obj: unknown): StructuredReview | null {
   // Overall (optional)
   const overall = typeof o.overall === "string" && o.overall.trim() ? o.overall.trim() : undefined;
 
-  return { verdict, summary, prSummary, findings, overall, resolutions };
+  return { verdict, summary, prSummary, testCoverage, findings, overall, resolutions };
 }
 
 /**
@@ -244,7 +278,7 @@ export function extractUsage(envelope: Record<string, unknown>): ClaudeUsage | u
 }
 
 export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
-  const { diff, prTitle, context, cwd, timeoutMs, maxTurns, logger: log, focusPaths, securityPaths, sessionId } = options;
+  const { diff, prTitle, context, cwd, timeoutMs, maxTurns, logger: log, focusPaths, securityPaths, sessionId, requireTests, testBlockingImportance, testExemptions } = options;
 
   let userPrompt = `## PR Title: ${prTitle}\n\n`;
 
@@ -284,6 +318,22 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
     userPrompt += `- Cryptographic weaknesses\n`;
     userPrompt += `- Access control issues\n\n`;
     userPrompt += `Mark security-related findings with \`"securityRelated": true\` in the JSON output.\n\n`;
+  }
+
+  if (requireTests === false) {
+    userPrompt += `## Test Coverage\nTest coverage assessment is DISABLED for this repository. Omit the \`testCoverage\` field and do not raise missing-test findings.\n\n`;
+  } else {
+    const threshold = testBlockingImportance ?? "high";
+    userPrompt += `## Test Coverage (Mandatory)\nAssess test coverage per the Test Coverage section of your instructions and ALWAYS include the \`testCoverage\` field in your JSON output.\n`;
+    userPrompt += `- Blocking threshold: missing tests at importance \`${threshold}\` or above are \`"severity": "issue"\`, \`"blocking": true\`, \`"testRelated": true\`.\n`;
+    userPrompt += `- Every missing-test finding must include a \`Suggested tests:\` list telling the developer exactly which tests to write.\n`;
+    if (testExemptions && testExemptions.length > 0) {
+      userPrompt += `\n### Accepted Test Exemptions\nThe author previously justified skipping tests at these locations and the justification was accepted. Do NOT re-flag them unless the code there materially changed; report them as "wont_fix" in resolutions if referenced:\n`;
+      for (const ex of testExemptions) {
+        userPrompt += `- \`${ex.path}${ex.line != null ? `:${ex.line}` : ""}\` — ${ex.reason}\n`;
+      }
+    }
+    userPrompt += `\n`;
   }
 
   userPrompt += `## Diff\n\`\`\`diff\n${diff}\n\`\`\`\n\n`;

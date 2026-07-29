@@ -87,6 +87,21 @@ export function validateConfig(config: AppConfig): ConfigError[] {
     errors.push({ field: "review.confidenceThreshold", message: "Must be between 0 and 100", severity: "error" });
   }
 
+  // Test coverage
+  if (!["medium", "high", "critical"].includes(config.review.testBlockingImportance)) {
+    errors.push({ field: "review.testBlockingImportance", message: `Must be one of: medium, high, critical (got "${config.review.testBlockingImportance}")`, severity: "error" });
+  }
+
+  // Test debate config
+  if (config.features.testDebate.enabled) {
+    if (config.features.testDebate.maxRounds < 1) {
+      errors.push({ field: "features.testDebate.maxRounds", message: "Must be >= 1", severity: "error" });
+    }
+    if (config.features.testDebate.timeoutMs < 10_000) {
+      errors.push({ field: "features.testDebate.timeoutMs", message: "Must be >= 10000 (10s)", severity: "error" });
+    }
+  }
+
   // Slack config
   if (config.features.slack.enabled && !config.features.slack.webhookUrl) {
     errors.push({ field: "features.slack.webhookUrl", message: "Required when slack.enabled is true", severity: "error" });
@@ -211,6 +226,8 @@ export const DEFAULTS: AppConfig = {
     maxConcurrentReviews: 3,
     confidenceThreshold: 0, // 0 = show all findings, 80 = filter low-confidence
     securityPaths: ["**/auth/**", "**/crypto/**", "**/security/**", "**/*.env*", "**/secrets/**"],
+    requireTests: true,
+    testBlockingImportance: "high",
   },
   features: {
     jira: { enabled: false, baseUrl: "", token: "", email: "", projectKeys: [] },
@@ -220,6 +237,9 @@ export const DEFAULTS: AppConfig = {
     audit: { enabled: false, maxEntries: 10000, filePath: "data/audit.json", includeMetadata: true, minSeverity: "info" },
     autofix: { enabled: false, commandTrigger: "^\\s*/fix\\s*$", autoApply: false, maxTurns: 10, timeoutMs: 300_000 },
     usage: { enabled: true, dbPath: "data/usage.db", retentionDays: 90, sessionTtlSeconds: 270 },
+    // Enabled by default (unlike other features): it backs the mandatory test-coverage
+    // policy and is inert without webhook mode — no cost unless authors dispute findings.
+    testDebate: { enabled: true, maxRounds: 2, timeoutMs: 120_000 },
   },
   dashboard: { port: 3001 },
   rateLimit: { defaultCooldownSeconds: 120, spendingLimitCooldownSeconds: 3600, maxEventHistory: 50 },
@@ -254,6 +274,7 @@ export function loadConfig(path: string = "config.yaml", allowEmptyRepos = false
       audit: { ...DEFAULTS.features.audit, ...fileFeatures?.audit },
       autofix: { ...DEFAULTS.features.autofix, ...fileFeatures?.autofix },
       usage: { ...DEFAULTS.features.usage, ...fileFeatures?.usage },
+      testDebate: { ...DEFAULTS.features.testDebate, ...fileFeatures?.testDebate },
     },
     dashboard: { ...DEFAULTS.dashboard!, ...fileConfig.dashboard },
     rateLimit: { ...DEFAULTS.rateLimit, ...fileConfig.rateLimit },

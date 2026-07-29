@@ -585,6 +585,21 @@ export function getDashboardHtml(): string {
             <span class="toggle-slider"></span>
           </label>
         </div>
+        <div class="field">
+          <label>Require Tests</label>
+          <label class="toggle-switch">
+            <input type="checkbox" id="cfg-review-requireTests">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="field">
+          <label>Test Blocking Importance</label>
+          <select id="cfg-review-testBlockingImportance">
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+            <option value="critical">critical</option>
+          </select>
+        </div>
       </div>
     </div>
 
@@ -878,6 +893,29 @@ export function getDashboardHtml(): string {
           <div class="field">
             <label>Timeout (ms)</label>
             <input type="number" id="cfg-features-autofix-timeoutMs" min="10000">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Test Debate -->
+    <div class="section">
+      <div class="section-header">
+        Test Debate
+        <label class="toggle-switch" style="margin-left:auto">
+          <input type="checkbox" id="cfg-features-testDebate-enabled" onchange="toggleFeature('testDebate')">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="section-body">
+        <div id="feature-testDebate" class="feature-content hidden">
+          <div class="field">
+            <label>Max Rounds</label>
+            <input type="number" id="cfg-features-testDebate-maxRounds" min="1">
+          </div>
+          <div class="field">
+            <label>Timeout (ms)</label>
+            <input type="number" id="cfg-features-testDebate-timeoutMs" min="10000">
           </div>
         </div>
       </div>
@@ -1228,6 +1266,8 @@ export function getDashboardHtml(): string {
     setVal('cfg-review-staleErrorDays', cfg.review?.staleErrorDays);
     setVal('cfg-review-staleWorktreeMinutes', cfg.review?.staleWorktreeMinutes);
     setVal('cfg-review-commentVerifyIntervalMinutes', cfg.review?.commentVerifyIntervalMinutes);
+    setChecked('cfg-review-requireTests', cfg.review?.requireTests);
+    setVal('cfg-review-testBlockingImportance', cfg.review?.testBlockingImportance || 'high');
 
     // Features
     setChecked('cfg-features-jira-enabled', cfg.features?.jira?.enabled);
@@ -1267,6 +1307,11 @@ export function getDashboardHtml(): string {
     setVal('cfg-features-autofix-maxTurns', cfg.features?.autofix?.maxTurns);
     setVal('cfg-features-autofix-timeoutMs', cfg.features?.autofix?.timeoutMs);
     toggleFeature('autofix');
+
+    setChecked('cfg-features-testDebate-enabled', cfg.features?.testDebate?.enabled);
+    setVal('cfg-features-testDebate-maxRounds', cfg.features?.testDebate?.maxRounds);
+    setVal('cfg-features-testDebate-timeoutMs', cfg.features?.testDebate?.timeoutMs);
+    toggleFeature('testDebate');
 
     // Repos
     renderRepos(cfg.repos || []);
@@ -1373,6 +1418,8 @@ export function getDashboardHtml(): string {
       staleErrorDays: getNum('cfg-review-staleErrorDays'),
       staleWorktreeMinutes: getNum('cfg-review-staleWorktreeMinutes'),
       commentVerifyIntervalMinutes: getNum('cfg-review-commentVerifyIntervalMinutes'),
+      requireTests: getChecked('cfg-review-requireTests'),
+      testBlockingImportance: getVal('cfg-review-testBlockingImportance'),
     };
 
     // Features
@@ -1427,6 +1474,12 @@ export function getDashboardHtml(): string {
       autoApply: getChecked('cfg-features-autofix-autoApply'),
       maxTurns: getNum('cfg-features-autofix-maxTurns'),
       timeoutMs: getNum('cfg-features-autofix-timeoutMs'),
+    };
+
+    cfg.features.testDebate = {
+      enabled: getChecked('cfg-features-testDebate-enabled'),
+      maxRounds: getNum('cfg-features-testDebate-maxRounds'),
+      timeoutMs: getNum('cfg-features-testDebate-timeoutMs'),
     };
 
     // Repos

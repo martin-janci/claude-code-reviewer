@@ -376,6 +376,111 @@ export async function reviewExists(
 }
 
 
+// --- PR Review Comments (inline threads) ---
+
+export interface PullReviewComment {
+  id: number;
+  body: string;
+  path: string;
+  line: number | null;
+  user: string;
+  inReplyToId: number | null;
+  diffHunk: string;
+}
+
+function mapReviewComment(raw: {
+  id: number;
+  body: string;
+  path: string;
+  line: number | null;
+  original_line: number | null;
+  user: { login: string } | null;
+  in_reply_to_id?: number | null;
+  diff_hunk?: string;
+}): PullReviewComment {
+  return {
+    id: raw.id,
+    body: raw.body ?? "",
+    path: raw.path,
+    // For outdated comments `line` is null and `original_line` holds the position
+    line: raw.line ?? raw.original_line ?? null,
+    user: raw.user?.login ?? "unknown",
+    inReplyToId: raw.in_reply_to_id ?? null,
+    diffHunk: raw.diff_hunk ?? "",
+  };
+}
+
+/** Fetch a single PR review (inline) comment by id. */
+export async function getReviewComment(
+  owner: string,
+  repo: string,
+  commentId: number,
+): Promise<PullReviewComment> {
+  const json = await gh([
+    "api",
+    `repos/${owner}/${repo}/pulls/comments/${commentId}`,
+  ]);
+  return mapReviewComment(JSON.parse(json));
+}
+
+/**
+ * List replies in a review comment thread. GitHub flattens threads: every reply's
+ * in_reply_to_id points at the thread's root comment.
+ */
+export async function listReviewCommentReplies(
+  owner: string,
+  repo: string,
+  prNumber: number,
+  rootCommentId: number,
+): Promise<PullReviewComment[]> {
+  const ndjson = await gh([
+    "api",
+    "--paginate",
+    `repos/${owner}/${repo}/pulls/${prNumber}/comments`,
+    "--jq", ".[] | {id, body, path, line, original_line, user: {login: .user.login}, in_reply_to_id, diff_hunk}",
+  ]);
+
+  const replies: PullReviewComment[] = [];
+  for (const line of ndjson.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const comment = mapReviewComment(JSON.parse(line));
+      if (comment.inReplyToId === rootCommentId) {
+        replies.push(comment);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return replies;
+}
+
+/** Reply in an existing review comment thread. Returns the new comment id. */
+export async function replyToReviewComment(
+  owner: string,
+  repo: string,
+  prNumber: number,
+  commentId: number,
+  body: string,
+): Promise<number> {
+  console.log(`GitHub API: POST reply to review comment ${commentId} on ${owner}/${repo}#${prNumber} (${body.length} chars)`);
+  const json = await gh([
+    "api",
+    "--method", "POST",
+    `repos/${owner}/${repo}/pulls/${prNumber}/comments/${commentId}/replies`,
+    "--input", "-",
+  ], JSON.stringify({ body }));
+
+  let result: { id: number };
+  try {
+    result = JSON.parse(json);
+  } catch {
+    throw new Error(`Failed to parse replyToReviewComment response: ${json.slice(0, 200)}`);
+  }
+  console.log(`GitHub API: Reply posted — id=${result.id}`);
+  return result.id;
+}
+
 // --- GraphQL: Review Thread Resolution ---
 
 export interface ReviewThread {

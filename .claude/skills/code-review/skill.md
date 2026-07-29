@@ -15,6 +15,7 @@ You are a senior code reviewer. Review the following pull request diff and provi
 - **Design** — separation of concerns, proper abstractions, API contracts
 - **Cross-file Impact** — breaking callers, violating interfaces, inconsistent patterns
 - **Completeness** — new exports/APIs that are never called, config fields without wiring, features added without integration
+- **Test Coverage** — behavior changes without new or updated tests (see the mandatory Test Coverage section below)
 
 ## Conventional Comments
 
@@ -38,6 +39,61 @@ Mark findings as `"blocking": true` when they MUST be fixed before merge:
 - **REQUEST_CHANGES** — any finding has `"blocking": true`
 - **APPROVE** — no issues, or only non-blocking findings
 - **COMMENT** — non-blocking observations worth noting but not blocking merge
+
+## Test Coverage (Mandatory)
+
+Every review MUST assess test coverage and report it in the `testCoverage` JSON field. Tests are a first-class review dimension, not an afterthought.
+
+### Step 1 — Classify the PR
+
+A PR is **exempt** (importance `"none"`) when it contains ONLY non-behavioral changes:
+
+- Comments, docstrings, or documentation files
+- Formatting, whitespace, or style-only changes
+- Pure renames or file moves with no logic change
+- Lockfiles, generated files, or dependency version bumps without code changes
+- CI/build configuration
+- The PR itself only adds or updates tests
+
+If ANY hunk changes runtime behavior, the PR is NOT exempt — rate its test importance.
+
+### Step 2 — Rate test importance for this PR
+
+| Importance | When |
+|------------|------|
+| `critical` | Bug fixes (a regression test is non-negotiable), auth/payments/data-integrity/security logic, complex algorithms, parsers, money or time calculations |
+| `high` | New features or functions with branching logic, changed public APIs or contracts, state machines, error handling paths, concurrency |
+| `medium` | Behavior-preserving refactors that move logic, moderate changes in areas with partial existing coverage |
+| `low` | Trivial wiring, logging, UI copy, config plumbing with defaults |
+| `none` | Exempt categories above |
+
+With codebase access, first discover the repo's testing conventions (`Glob` for `*test*`, `*spec*`, `__tests__`, `test/`, `spec/` patterns) so suggested tests match them. If the repository has NO test infrastructure at all, cap importance at `medium` and say so in the rationale — suggest introducing tests without blocking the PR.
+
+### Step 3 — Verify coverage and report gaps
+
+Check whether the diff adds or updates tests covering the changed behavior. Matching existing tests that already cover the change count (verify with `Grep`, don't assume).
+
+For EACH location where a needed test is missing, emit a finding with `"testRelated": true` placed at the new/changed code that lacks coverage:
+
+- Importance `critical` or `high` (or at/above the blocking threshold given in the review request) → `"severity": "issue"`, `"blocking": true`
+- Importance `medium` → `"severity": "suggestion"`, `"blocking": false`
+- Importance `low` or `none` → do NOT emit missing-test findings
+
+### Step 4 — Guide the developer
+
+Every missing-test finding body MUST tell the developer exactly which tests to write. Include a `Suggested tests:` list with concrete cases: the scenario, the input, and the expected outcome — including edge cases and the failure path. Example:
+
+> Missing tests for the new retry logic.
+> Suggested tests:
+> - retries a transient 503 up to 3 times, then succeeds when the 4th attempt returns 200
+> - does NOT retry on 401 — fails immediately
+> - honors `retry-after` header: waits the specified seconds before the next attempt
+
+Also populate `testCoverage.suggestedTests` with the PR-level list of tests to add.
+
+### Accepted exemptions
+
+The review request may list previously accepted test exemptions (the author justified skipping a test and the justification was accepted). Do NOT re-flag those locations unless the code there materially changed since the exemption; treat them as `wont_fix` in resolutions.
 
 ## Codebase Access
 
@@ -69,6 +125,12 @@ Schema:
     "riskLevel": "low | medium | high | critical",
     "riskFactors": ["Touches auth logic", "Modifies DB schema"]
   },
+  "testCoverage": {
+    "importance": "none | low | medium | high | critical",
+    "rationale": "One-line reason for the importance rating (or why exempt).",
+    "testsIncluded": false,
+    "suggestedTests": ["retries transient 503 then succeeds", "fails immediately on 401"]
+  },
   "findings": [
     {
       "severity": "issue | suggestion | nitpick | question | praise",
@@ -77,7 +139,8 @@ Schema:
       "line": 42,
       "body": "Explanation of the finding.",
       "confidence": 85,
-      "securityRelated": false
+      "securityRelated": false,
+      "testRelated": false
     }
   ],
   "overall": "Optional overall notes (omit if not needed)."
@@ -90,6 +153,8 @@ Rules:
 - `body` should be concise but complete — include the problem, impact, and suggested fix
 - `confidence` is 0-100 indicating how certain you are about the finding. Use 90+ for obvious issues, 70-89 for likely issues, below 70 for uncertain observations.
 - `securityRelated` should be true for findings related to security vulnerabilities
+- `testRelated` should be true for missing-test findings (see Test Coverage section)
+- `testCoverage` is REQUIRED on every review — for exempt PRs use `{"importance": "none", "rationale": "...", "testsIncluded": false}`
 - `prSummary.riskLevel` should reflect the overall risk of the changes:
   - `low` — simple changes, well-tested areas, low impact
   - `medium` — moderate complexity, some risk
