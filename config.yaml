@@ -25,6 +25,12 @@ review:
   maxRetries: 3                      # max consecutive errors before giving up
   debouncePeriodSeconds: 60          # wait for pushes to settle before reviewing
   incrementalReviews: true           # re-reviews send only the delta since the last reviewed SHA (falls back to full diff on force-push); an empty delta (rebase/merge only) skips the Claude call entirely
+  # Token-cost tiering — route small, non-security PRs to a cheaper model.
+  # Security-sensitive PRs (securityPaths match) always use the full model.
+  model: ""                          # model for reviews ("" = Claude CLI default)
+  lightModel: ""                     # cheaper model for small diffs, e.g. "claude-sonnet-5" ("" = tiering disabled)
+  lightModelMaxDiffLines: 0          # use lightModel when the review payload has at most this many lines (e.g. 400; 0 = disabled)
+  lightModelMaxTurns: 0              # tighter turn cap for light-model reviews (e.g. 20; 0 = use reviewMaxTurns)
   staleClosedDays: 7                 # purge closed/merged PR state after N days
   staleErrorDays: 30                 # purge max-retries error state after N days
   commentVerifyIntervalMinutes: 60   # how often to check if review comment still exists
