@@ -22,6 +22,25 @@ LABEL org.opencontainers.image.vendor="PapayaPOS"
 USER root
 RUN apk add --no-cache github-cli git su-exec
 
+# --- Language servers for LSP code-intelligence ---
+# Java: Eclipse JDT LS (pure JVM — runs on Alpine's musl openjdk; python3 for its launcher)
+RUN apk add --no-cache openjdk21-jre-headless python3 unzip gcompat libstdc++ \
+    && mkdir -p /opt/jdtls \
+    && wget -qO- https://download.eclipse.org/jdtls/snapshots/jdt-language-server-latest.tar.gz | tar -xz -C /opt/jdtls \
+    && printf '#!/bin/sh\nexec /opt/jdtls/bin/jdtls --jvm-arg=-Xmx1024m "$@"\n' > /usr/local/bin/jdtls \
+    && chmod +x /usr/local/bin/jdtls
+
+# Kotlin: JetBrains kotlin-lsp (EXPERIMENTAL on Alpine — ships a glibc launcher + bundled
+# JBR, bridged via gcompat; heap capped to 1G. If it fails at runtime the LSP tool simply
+# has no Kotlin backend — reviews are unaffected.)
+ARG KOTLIN_LSP_URL=https://download-cdn.jetbrains.com/language-server/kotlin-server/262.9593.0/kotlin-server-0.0.6-linux-amd64.vsix
+RUN wget -qO /tmp/klsp.vsix ${KOTLIN_LSP_URL} \
+    && mkdir -p /opt/kotlin-lsp && unzip -q /tmp/klsp.vsix -d /opt/kotlin-lsp && rm /tmp/klsp.vsix \
+    && chmod -R +x /opt/kotlin-lsp/extension/server/bin /opt/kotlin-lsp/extension/server/jbr/bin \
+    && sed -i 's/^-Xmx2048m/-Xmx1024m/' /opt/kotlin-lsp/extension/server/bin/intellij-server.vmoptions \
+    && printf '#!/bin/sh\nexec /opt/kotlin-lsp/extension/server/bin/intellij-server "$@"\n' > /usr/local/bin/kotlin-lsp \
+    && chmod +x /usr/local/bin/kotlin-lsp
+
 # Install Claude CLI via npm (global prefix under node user's home)
 ENV NPM_CONFIG_PREFIX=/home/node/.local
 ARG CLAUDE_CLI_VERSION=latest
