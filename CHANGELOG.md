@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.29.0
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.28.0...v1.29.0)
+
+### 🚀 Enhancements
+
+- **review:** Token-cost tiering — route small diffs to a cheaper model ([c28ad5d](https://github.com/martin-janci/claude-code-reviewer/commit/c28ad5d))
+
+### 🏡 Chore
+
+- **release:** V1.28.0 ([8919937](https://github.com/martin-janci/claude-code-reviewer/commit/8919937))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.28.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.27.0...v1.28.0)
