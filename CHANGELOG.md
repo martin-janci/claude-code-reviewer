@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.31.0
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.30.0...v1.31.0)
+
+### 🚀 Enhancements
+
+- **review:** Java + kotlin language servers for LSP reviews ([274cf03](https://github.com/martin-janci/claude-code-reviewer/commit/274cf03))
+
+### 🏡 Chore
+
+- **release:** V1.29.0 ([8899111](https://github.com/martin-janci/claude-code-reviewer/commit/8899111))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.30.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.29.0...v1.30.0)
