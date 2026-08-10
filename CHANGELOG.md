@@ -2,15 +2,26 @@
 
 ## v1.26.0
 
-[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.25.0...v1.26.0)
+[compare changes](https://github.com/papayapos/papaya-reviewer/compare/v1.24.9...v1.26.0)
 
 ### 🚀 Enhancements
 
-- **code-review:** Add multi-repo architecture awareness ([350ac96](https://github.com/martin-janci/claude-code-reviewer/commit/350ac96))
+- **code-review:** Add multi-repo architecture awareness ([350ac96](https://github.com/papayapos/papaya-reviewer/commit/350ac96))
+- **review:** Mandatory test coverage assessment with author debate flow ([7e6cd5b](https://github.com/papayapos/papaya-reviewer/commit/7e6cd5b))
+
+### 🩹 Fixes
+
+- **auth:** Use HOME=/home/node so claude CLI reads from PVC credentials ([450d187](https://github.com/papayapos/papaya-reviewer/commit/450d187))
+
+### 📖 Documentation
+
+- Design spec for mandatory test coverage in reviews ([21f5942](https://github.com/papayapos/papaya-reviewer/commit/21f5942))
 
 ### 🏡 Chore
 
-- **release:** V1.24.9 ([ff0b1ed](https://github.com/martin-janci/claude-code-reviewer/commit/ff0b1ed))
+- **release:** V1.24.8 ([5a3afb0](https://github.com/papayapos/papaya-reviewer/commit/5a3afb0))
+- **release:** V1.24.9 ([956fc4a](https://github.com/papayapos/papaya-reviewer/commit/956fc4a))
+- **release:** V1.25.0 ([6aab247](https://github.com/papayapos/papaya-reviewer/commit/6aab247))
 
 ### ❤️ Contributors
 
