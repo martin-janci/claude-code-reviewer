@@ -30,16 +30,32 @@ RUN apk add --no-cache openjdk21-jre-headless python3 unzip gcompat libstdc++ \
     && printf '#!/bin/sh\nexec /opt/jdtls/bin/jdtls --jvm-arg=-Xmx1024m "$@"\n' > /usr/local/bin/jdtls \
     && chmod +x /usr/local/bin/jdtls
 
-# Kotlin: JetBrains kotlin-lsp (EXPERIMENTAL on Alpine — ships a glibc launcher + bundled
-# JBR, bridged via gcompat; heap capped to 1G. If it fails at runtime the LSP tool simply
-# has no Kotlin backend — reviews are unaffected.)
+# Kotlin: JetBrains kotlin-lsp (EXPERIMENTAL). Its native launcher + bundled JBR are
+# glibc-only and fail on musl, so we discard them and launch the IntelliJ platform
+# directly on a musl-native Zulu JRE 25, with the java command synthesized from the
+# distribution's own product-info.json. Verified working on the pod before baking in.
+# A runtime failure only disables the Kotlin LSP backend — reviews are unaffected.
+ARG ZULU_JRE25_URL=https://cdn.azul.com/zulu/bin/zulu25.36.15-ca-jre25.0.4-linux_musl_x64.tar.gz
+RUN wget -qO /tmp/zulu25.tar.gz ${ZULU_JRE25_URL} \
+    && mkdir -p /opt/java25 && tar -xzf /tmp/zulu25.tar.gz -C /opt/java25 --strip-components=1 \
+    && rm /tmp/zulu25.tar.gz
 ARG KOTLIN_LSP_URL=https://download-cdn.jetbrains.com/language-server/kotlin-server/262.9593.0/kotlin-server-0.0.6-linux-amd64.vsix
 RUN wget -qO /tmp/klsp.vsix ${KOTLIN_LSP_URL} \
-    && mkdir -p /opt/kotlin-lsp && unzip -q /tmp/klsp.vsix -d /opt/kotlin-lsp && rm /tmp/klsp.vsix \
-    && chmod -R +x /opt/kotlin-lsp/extension/server/bin /opt/kotlin-lsp/extension/server/jbr/bin \
-    && sed -i 's/^-Xmx2048m/-Xmx1024m/' /opt/kotlin-lsp/extension/server/bin/intellij-server.vmoptions \
-    && printf '#!/bin/sh\nexec /opt/kotlin-lsp/extension/server/bin/intellij-server "$@"\n' > /usr/local/bin/kotlin-lsp \
-    && chmod +x /usr/local/bin/kotlin-lsp
+    && mkdir -p /opt/kotlin-lsp && unzip -q /tmp/klsp.vsix 'extension/server/*' -d /opt/kotlin-lsp \
+    && rm /tmp/klsp.vsix \
+    && rm -rf /opt/kotlin-lsp/extension/server/jbr \
+    && python3 -c "$(printf '%s\n' \
+        "import json" \
+        "p = json.load(open('/opt/kotlin-lsp/extension/server/product-info.json'))" \
+        "lc = p['launch'][0]" \
+        "ide = '/opt/kotlin-lsp/extension/server'" \
+        "cp = ':'.join(ide + '/lib/' + j for j in lc['bootClassPathJarNames'])" \
+        "args = ' '.join(chr(34) + a.replace('\$IDE_HOME', ide) + chr(34) for a in lc['additionalJvmArguments'])" \
+        "s = '#!/bin/sh\nexec /opt/java25/bin/java -Xmx1024m ' + args + ' -cp ' + chr(34) + cp + chr(34) + ' ' + lc['mainClass'] + ' ' + chr(34) + chr(36) + '@' + chr(34) + '\n'" \
+        "open('/usr/local/bin/kotlin-lsp', 'w').write(s)" \
+    )" \
+    && chmod +x /usr/local/bin/kotlin-lsp \
+    && sh -n /usr/local/bin/kotlin-lsp
 
 # Install Claude CLI via npm (global prefix under node user's home)
 ENV NPM_CONFIG_PREFIX=/home/node/.local
