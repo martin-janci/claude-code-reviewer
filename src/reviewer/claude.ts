@@ -20,6 +20,8 @@ export interface ReviewContext {
   previousVerdict?: string;
   previousSha?: string;
   previousFindings?: ReviewFinding[];
+  /** Set when the diff contains only changes since this SHA (incremental re-review). */
+  incrementalSinceSha?: string;
 }
 
 export interface ReviewOptions {
@@ -336,7 +338,11 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
     userPrompt += `\n`;
   }
 
-  userPrompt += `## Diff\n\`\`\`diff\n${diff}\n\`\`\`\n\n`;
+  if (context?.incrementalSinceSha) {
+    userPrompt += `## Diff (Incremental)\nThe diff below contains ONLY the changes since the previously reviewed commit ${context.incrementalSinceSha.slice(0, 7)} — the rest of the PR was already reviewed. Review these new changes; use the codebase access tools when you need surrounding context, and use the previous findings above to assess resolutions.\n\`\`\`diff\n${diff}\n\`\`\`\n\n`;
+  } else {
+    userPrompt += `## Diff\n\`\`\`diff\n${diff}\n\`\`\`\n\n`;
+  }
   userPrompt += `## Output Requirements\nOutput ONLY a JSON object matching this schema — no markdown, no fences, no extra text:\n${JSON_SCHEMA}\n\nVerdict rules:\n- REQUEST_CHANGES if any finding has "blocking": true\n- APPROVE if no issues or only non-blocking suggestions\n- COMMENT for non-blocking observations worth noting\n\nResolutions array: only include when re-reviewing (previous findings were provided). Omit the field entirely on first reviews.`;
 
   const args = ["-p", "--output-format", "json"];

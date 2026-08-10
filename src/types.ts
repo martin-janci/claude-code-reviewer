@@ -46,6 +46,8 @@ export interface ReviewConfig {
   // Mandatory test coverage assessment
   requireTests: boolean;
   testBlockingImportance: "medium" | "high" | "critical";
+  // Re-reviews send only the delta since the last reviewed SHA (falls back to full diff)
+  incrementalReviews: boolean;
 }
 
 export interface JiraConfig {

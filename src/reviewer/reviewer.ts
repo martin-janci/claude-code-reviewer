@@ -14,6 +14,8 @@ import { autoLabelPlugin } from "../features/auto-label-plugin.js";
 import { slackPlugin } from "../features/slack-plugin.js";
 import { sendSlackNotification, buildErrorNotification, shouldNotify } from "../features/slack.js";
 import { shouldReview } from "../state/decisions.js";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { getPRDiff, postReview, postComment, updateComment, deleteComment, findExistingComment, getReviewThreads, resolveReviewThread, type ReviewEvent } from "./github.js";
 import { reviewDiff } from "./claude.js";
 import { parseCommentableLines, findNearestCommentableLine, filterDiff, extractDiffPaths, findSecurityPaths } from "./diff-parser.js";
@@ -615,7 +617,41 @@ export class Reviewer {
       previousVerdict: lastReview.verdict,
       previousSha: lastReview.sha,
       previousFindings: allPreviousFindings,
-    } : undefined;
+    } as import("./claude.js").ReviewContext : undefined;
+
+    // Incremental re-review: shrink the payload to just the delta since the last reviewed SHA.
+    // Comment line-validation still runs against the full PR diff, so posting is unaffected.
+    let reviewDiffText = diff;
+    if (this.config.review.incrementalReviews && lastReview && context && cwd && lastReview.sha !== headSha) {
+      const delta = await this.computeDeltaDiff(cwd, lastReview.sha, headSha, diff, log);
+      if (delta !== null) {
+        if (delta.trim() === "") {
+          // Rebase/merge with no reviewable content changes — skip the Claude invocation entirely
+          log.info("Incremental re-review: no reviewable changes since last review — carrying verdict forward", {
+            previousSha: lastReview.sha.slice(0, 7),
+            verdict: lastReview.verdict,
+          });
+          return {
+            success: true,
+            body: "",
+            structured: {
+              verdict: lastReview.verdict,
+              summary: `No reviewable changes since previously reviewed commit \`${lastReview.sha.slice(0, 7)}\` (rebase or merge without content changes). Previous verdict carried forward.`,
+              findings: [],
+            },
+          };
+        }
+        if (delta.length < diff.length) {
+          log.info("Incremental re-review: using delta diff", {
+            previousSha: lastReview.sha.slice(0, 7),
+            deltaBytes: delta.length,
+            fullBytes: diff.length,
+          });
+          reviewDiffText = delta;
+          context.incrementalSinceSha = lastReview.sha;
+        }
+      }
+    }
 
     // Detect security-sensitive paths
     const diffPaths = extractDiffPaths(diff);
@@ -637,7 +673,7 @@ export class Reviewer {
 
     const claudeT0 = Date.now();
     const result = await reviewDiff({
-      diff,
+      diff: reviewDiffText,
       prTitle: title,
       context,
       cwd,
@@ -982,6 +1018,37 @@ export class Reviewer {
         // Audit: state changed
         this.auditLogger?.stateChanged(state.owner, state.repo, state.number, "skipped", "pending_review", "reviewer");
       }
+    }
+  }
+
+  /**
+   * Compute the diff between the last reviewed SHA and the current head,
+   * restricted to paths in the PR diff (so base-branch merges don't flood it)
+   * and filtered by the same exclusion patterns.
+   * Returns null when the delta cannot be computed (force-push, git error) —
+   * callers fall back to the full PR diff.
+   */
+  private async computeDeltaDiff(cwd: string, fromSha: string, toSha: string, fullDiff: string, log: Logger): Promise<string | null> {
+    const exec = promisify(execFile);
+    try {
+      await exec("git", ["cat-file", "-e", `${fromSha}^{commit}`], { cwd, timeout: 10_000 });
+    } catch {
+      log.info("Incremental re-review unavailable — previous SHA not in clone (force-push?)", { previousSha: fromSha.slice(0, 7) });
+      return null;
+    }
+    try {
+      const args = ["diff", `${fromSha}..${toSha}`];
+      // Restrict to PR-diff paths; skip the pathspec when it would blow up the arg list
+      const paths = extractDiffPaths(fullDiff);
+      if (paths.length > 0 && paths.length <= 300) {
+        args.push("--", ...paths);
+      }
+      const { stdout } = await exec("git", args, { cwd, maxBuffer: 64 * 1024 * 1024, timeout: 30_000 });
+      const { filtered } = filterDiff(stdout, this.config.review.excludePaths);
+      return filtered;
+    } catch (err) {
+      log.warn("Incremental diff failed — falling back to full diff", { error: String(err).slice(0, 200) });
+      return null;
     }
   }
 

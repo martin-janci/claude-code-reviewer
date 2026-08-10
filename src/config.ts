@@ -228,6 +228,7 @@ export const DEFAULTS: AppConfig = {
     securityPaths: ["**/auth/**", "**/crypto/**", "**/security/**", "**/*.env*", "**/secrets/**"],
     requireTests: true,
     testBlockingImportance: "high",
+    incrementalReviews: true,
   },
   features: {
     jira: { enabled: false, baseUrl: "", token: "", email: "", projectKeys: [] },
