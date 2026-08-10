@@ -169,6 +169,26 @@ export class DashboardServer {
       return;
     }
 
+    // GET /api/failures — PRs currently in error state, most recent first
+    if (req.method === "GET" && path === "/api/failures") {
+      const maxRetries = this.configManager.getConfig().review.maxRetries;
+      const failures = (this.store?.getAll() ?? [])
+        .filter((p) => p.status === "error")
+        .map((p) => ({
+          pr: `${p.owner}/${p.repo}#${p.number}`,
+          url: `https://github.com/${p.owner}/${p.repo}/pull/${p.number}`,
+          title: p.title,
+          consecutiveErrors: p.consecutiveErrors,
+          stuck: p.consecutiveErrors >= maxRetries,
+          lastError: p.lastError,
+        }))
+        .sort((a, b) => (b.lastError?.occurredAt ?? "").localeCompare(a.lastError?.occurredAt ?? ""));
+      const authFailureCount = failures.filter((f) => /authenticat|oauth/i.test(f.lastError?.message ?? "")).length;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ failures, maxRetries, authFailureCount }));
+      return;
+    }
+
     // GET /api/claude/version — return current Claude CLI version
     if (req.method === "GET" && path === "/api/claude/version") {
       try {

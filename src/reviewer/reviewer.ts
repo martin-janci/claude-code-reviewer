@@ -12,6 +12,7 @@ import { jiraPlugin } from "../features/jira-plugin.js";
 import { autoDescriptionPlugin } from "../features/auto-description-plugin.js";
 import { autoLabelPlugin } from "../features/auto-label-plugin.js";
 import { slackPlugin } from "../features/slack-plugin.js";
+import { sendSlackNotification, buildErrorNotification, shouldNotify } from "../features/slack.js";
 import { shouldReview } from "../state/decisions.js";
 import { getPRDiff, postReview, postComment, updateComment, deleteComment, findExistingComment, getReviewThreads, resolveReviewThread, type ReviewEvent } from "./github.js";
 import { reviewDiff } from "./claude.js";
@@ -1019,5 +1020,17 @@ export class Reviewer {
 
     // Audit: state changed to error
     this.auditLogger?.stateChanged(owner, repo, prNumber, oldStatus, "error", "reviewer");
+
+    // Notify Slack about the failure (non-fatal, fire-and-forget)
+    if (shouldNotify(this.config.features.slack, "error")) {
+      const errored = this.store.get(owner, repo, prNumber);
+      if (errored) {
+        void sendSlackNotification(
+          this.config.features.slack,
+          buildErrorNotification(errored, `${phase}: ${message}`),
+          log,
+        );
+      }
+    }
   }
 }

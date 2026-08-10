@@ -1,4 +1,7 @@
 import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 export interface AuthStatus {
   available: boolean;
@@ -11,13 +14,71 @@ export interface AuthStatus {
 
 /**
  * Check Claude CLI availability and auth status.
- * Uses direct CLI invocation (no `which`) for Docker compatibility.
- * Note: `--version` doesn't require auth, so this only confirms availability.
- * Auth detection is best-effort via error message heuristics.
+ * Availability comes from invoking the CLI directly (no `which`) for Docker compatibility.
+ * Auth status comes from inspecting the OAuth credentials file — `--version` succeeds even
+ * when the session is expired, so it cannot be trusted for auth.
  */
-export function checkClaudeAuth(): Promise<Omit<AuthStatus, "lastChecked">> {
+export async function checkClaudeAuth(): Promise<Omit<AuthStatus, "lastChecked">> {
+  const cli = await checkClaudeCli();
+  if (!cli.available) return cli;
+
+  // A long-lived token via env bypasses the OAuth credentials file entirely
+  if (process.env.CLAUDE_CODE_OAUTH_TOKEN) {
+    return { ...cli, authenticated: true, username: "token (CLAUDE_CODE_OAUTH_TOKEN)" };
+  }
+
+  const credsPath = join(homedir(), ".claude", ".credentials.json");
+  let raw: string;
+  try {
+    raw = await readFile(credsPath, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      // macOS stores credentials in the Keychain — a missing file proves nothing there
+      if (process.platform === "darwin") {
+        return { ...cli, authenticated: true, warning: "Credentials in macOS Keychain — auth not verifiable from file" };
+      }
+      return {
+        ...cli,
+        authenticated: false,
+        error: "No Claude credentials (~/.claude/.credentials.json missing) — run `claude login` or set CLAUDE_CODE_OAUTH_TOKEN",
+      };
+    }
+    return { ...cli, authenticated: true, warning: `Could not inspect credentials: ${(err as Error).message?.slice(0, 80)}` };
+  }
+
+  try {
+    const creds = JSON.parse(raw) as { claudeAiOauth?: { expiresAt?: number } };
+    const expiresAt = creds.claudeAiOauth?.expiresAt;
+    if (typeof expiresAt !== "number" || expiresAt <= 0) {
+      return {
+        ...cli,
+        authenticated: false,
+        error: "OAuth session invalidated — re-login required (`claude login` or CLAUDE_CODE_OAUTH_TOKEN)",
+      };
+    }
+    if (expiresAt < Date.now()) {
+      // Expired access token is normal between runs (the CLI refreshes on demand),
+      // but a long-expired one suggests refresh is failing.
+      const hoursAgo = Math.round((Date.now() - expiresAt) / 3_600_000);
+      if (hoursAgo >= 24) {
+        return {
+          ...cli,
+          authenticated: false,
+          error: `OAuth token expired ${hoursAgo}h ago and was not refreshed — re-login likely required`,
+        };
+      }
+      return { ...cli, authenticated: true, warning: `OAuth token expired ${hoursAgo}h ago — CLI will attempt refresh on next review` };
+    }
+    return { ...cli, authenticated: true };
+  } catch {
+    return { ...cli, authenticated: false, error: "Claude credentials file is not valid JSON — re-login required" };
+  }
+}
+
+/** CLI availability probe via `--version` (does not require auth). */
+function checkClaudeCli(): Promise<Omit<AuthStatus, "lastChecked">> {
   return new Promise((resolve) => {
-    execFile("claude", ["--version"], { timeout: 3000 }, (err, stdout, stderr) => {
+    execFile("claude", ["--version"], { timeout: 3000 }, (err, _stdout, stderr) => {
       if (err) {
         const errMsg = err.message + stderr;
         const code = (err as NodeJS.ErrnoException).code;
@@ -31,12 +92,6 @@ export function checkClaudeAuth(): Promise<Omit<AuthStatus, "lastChecked">> {
           resolve({ available: false, authenticated: false, error: "claude CLI not executable (permission denied)" });
           return;
         }
-        // Heuristic: error messages containing these strings suggest auth issues
-        // This is fragile but claude CLI has no dedicated auth status command
-        if (errMsg.includes("not authenticated") || errMsg.includes("login required")) {
-          resolve({ available: true, authenticated: false, error: "Not authenticated" });
-          return;
-        }
         resolve({ available: false, authenticated: false, error: errMsg.slice(0, 100) });
         return;
       }
@@ -47,8 +102,6 @@ export function checkClaudeAuth(): Promise<Omit<AuthStatus, "lastChecked">> {
         return;
       }
 
-      // If --version succeeds without warnings, CLI is available.
-      // Auth status is best-effort - we assume authenticated unless proven otherwise.
       resolve({ available: true, authenticated: true });
     });
   });
