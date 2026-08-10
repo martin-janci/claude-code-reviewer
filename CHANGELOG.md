@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.31.0
+
+[compare changes](https://github.com/papayapos/papaya-reviewer/compare/v1.29.0...v1.31.0)
+
+### 🚀 Enhancements
+
+- **review:** Token-cost tiering — route small diffs to a cheaper model ([c28ad5d](https://github.com/papayapos/papaya-reviewer/commit/c28ad5d))
+- **review:** Typescript LSP pilot — native LSP tool for codebase reviews ([0e88e8f](https://github.com/papayapos/papaya-reviewer/commit/0e88e8f))
+
+### 🏡 Chore
+
+- **release:** V1.29.0 ([8219d8e](https://github.com/papayapos/papaya-reviewer/commit/8219d8e))
+- **release:** V1.30.0 ([a6ba724](https://github.com/papayapos/papaya-reviewer/commit/a6ba724))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.30.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.29.0...v1.30.0)
