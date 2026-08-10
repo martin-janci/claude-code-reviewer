@@ -1,5 +1,30 @@
 # Changelog
 
+## v1.29.0
+
+[compare changes](https://github.com/papayapos/papaya-reviewer/compare/v1.28.0...v1.29.0)
+
+### 🚀 Enhancements
+
+- **dashboard:** Surface auth failures and failed reviews ([75f06e0](https://github.com/papayapos/papaya-reviewer/commit/75f06e0))
+- **dashboard:** Deep auth probe via real Claude invocation ([086b73d](https://github.com/papayapos/papaya-reviewer/commit/086b73d))
+
+### 🔥 Performance
+
+- **review:** Incremental re-reviews — send only the delta since last reviewed SHA ([0b94377](https://github.com/papayapos/papaya-reviewer/commit/0b94377))
+
+### 🩹 Fixes
+
+- **review:** Never lose debounced reviews; collapse push bursts into one review ([39ff7b2](https://github.com/papayapos/papaya-reviewer/commit/39ff7b2))
+
+### 🏡 Chore
+
+- **release:** V1.28.0 ([8633689](https://github.com/papayapos/papaya-reviewer/commit/8633689))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.28.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.27.0...v1.28.0)
