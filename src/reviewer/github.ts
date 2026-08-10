@@ -7,7 +7,7 @@ export function setGhToken(token: string): void {
   ghToken = token;
 }
 
-function gh(args: string[], input?: string): Promise<string> {
+function gh(args: string[], input?: string, opts?: { maxBuffer?: number }): Promise<string> {
   return new Promise((resolve, reject) => {
     const env = { ...process.env };
     if (ghToken) {
@@ -16,7 +16,7 @@ function gh(args: string[], input?: string): Promise<string> {
 
     const child = execFile("gh", args, {
       encoding: "utf-8",
-      maxBuffer: 10 * 1024 * 1024,
+      maxBuffer: opts?.maxBuffer ?? 10 * 1024 * 1024,
       env,
       timeout: 60_000,
     }, (err, stdout) => {
@@ -121,11 +121,49 @@ export async function getPRState(
   return JSON.parse(json) as { state: string; mergedAt: string | null };
 }
 
+// Diffs can be huge — anything over review.maxDiffLines is skipped downstream,
+// so the buffer just needs to be large enough to not fail before that check.
+const DIFF_MAX_BUFFER = 50 * 1024 * 1024;
+
 export async function getPRDiff(owner: string, repo: string, prNumber: number): Promise<string> {
   return gh([
     "pr", "diff", String(prNumber),
     "--repo", `${owner}/${repo}`,
+  ], undefined, { maxBuffer: DIFF_MAX_BUFFER });
+}
+
+/** List the PR's commit SHAs in chronological order (oldest first). */
+export async function listPRCommits(owner: string, repo: string, prNumber: number): Promise<string[]> {
+  const out = await gh([
+    "api",
+    "--paginate",
+    `repos/${owner}/${repo}/pulls/${prNumber}/commits`,
+    "--jq", ".[].sha",
   ]);
+  if (!out) return [];
+  return out.split("\n").map((s) => s.trim()).filter(Boolean);
+}
+
+/** Fetch the unified diff between two commits via the compare API. */
+export async function getCompareDiff(owner: string, repo: string, base: string, head: string): Promise<string> {
+  return gh([
+    "api",
+    `repos/${owner}/${repo}/compare/${base}...${head}`,
+    "-H", "Accept: application/vnd.github.diff",
+  ], undefined, { maxBuffer: DIFF_MAX_BUFFER });
+}
+
+/**
+ * True when a diff fetch failed for a reason that can never succeed on retry:
+ * the diff overflowed our stdout buffer, or GitHub refused to render it
+ * (HTTP 406 — "diff exceeded the maximum number of files (300)").
+ */
+export function isDiffTooLargeError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  const code = (err as NodeJS.ErrnoException | null)?.code;
+  if (code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") return true;
+  if (/maxBuffer length exceeded/i.test(message)) return true;
+  return /HTTP 406|\b406\b/.test(message) && /diff exceeded|maximum number of files/i.test(message);
 }
 
 export async function findExistingComment(

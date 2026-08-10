@@ -61,6 +61,7 @@ export function formatReviewBody(
   tag: string,
   orphanFindings: ReviewFinding[],
   jira?: JiraLink,
+  partialNote?: string,
 ): string {
   const parts: string[] = [tag, ""];
 
@@ -71,6 +72,12 @@ export function formatReviewBody(
                       structured.verdict === "COMMENT" ? "Commented" : "Review Complete";
   parts.push(`## ${verdictEmoji} ${verdictText}`);
   parts.push("");
+
+  // Partial-review banner (diff too large — only recent commits reviewed)
+  if (partialNote) {
+    parts.push(`> ${partialNote}`);
+    parts.push("");
+  }
 
   // PR Summary (TL;DR section)
   if (structured.prSummary) {
