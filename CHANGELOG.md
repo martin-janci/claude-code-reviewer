@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.32.0
+
+[compare changes](https://github.com/papayapos/papaya-reviewer/compare/v1.31.0...v1.32.0)
+
+### 🚀 Enhancements
+
+- **review:** Java + kotlin language servers for LSP reviews ([274cf03](https://github.com/papayapos/papaya-reviewer/commit/274cf03))
+
+### 🏡 Chore
+
+- **release:** V1.31.0 ([c74fa5a](https://github.com/papayapos/papaya-reviewer/commit/c74fa5a))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.31.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.30.0...v1.31.0)
