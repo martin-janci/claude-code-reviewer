@@ -794,6 +794,7 @@ export class Reviewer {
       testBlockingImportance: this.config.review.testBlockingImportance,
       // Cap exemptions passed to the prompt to bound its size
       testExemptions: state.testExemptions?.slice(-20),
+      extraTools: this.config.review.extraTools.length > 0 ? this.config.review.extraTools : undefined,
     });
     timings.claude_review_ms = Date.now() - claudeT0;
 

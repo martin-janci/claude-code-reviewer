@@ -27,6 +27,7 @@ ENV NPM_CONFIG_PREFIX=/home/node/.local
 ARG CLAUDE_CLI_VERSION=latest
 RUN mkdir -p /home/node/.local && chown node:node /home/node/.local \
     && su-exec node npm install -g @anthropic-ai/claude-code@${CLAUDE_CLI_VERSION} \
+    && su-exec node npm install -g typescript @vtsls/language-server \
     && su-exec node npm cache clean --force
 
 WORKDIR /app

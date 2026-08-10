@@ -229,6 +229,7 @@ export const DEFAULTS: AppConfig = {
     requireTests: true,
     testBlockingImportance: "high",
     incrementalReviews: true,
+    extraTools: [],
   },
   features: {
     jira: { enabled: false, baseUrl: "", token: "", email: "", projectKeys: [] },

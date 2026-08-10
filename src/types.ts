@@ -48,6 +48,9 @@ export interface ReviewConfig {
   testBlockingImportance: "medium" | "high" | "critical";
   // Re-reviews send only the delta since the last reviewed SHA (falls back to full diff)
   incrementalReviews: boolean;
+  // Extra tool names appended to the Claude CLI --tools allowlist for codebase reviews
+  // (e.g. LSP code-intelligence tools from installed plugins). Empty = Read,Grep,Glob only.
+  extraTools: string[];
 }
 
 export interface JiraConfig {

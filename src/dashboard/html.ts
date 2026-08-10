@@ -685,6 +685,10 @@ export function getDashboardHtml(): string {
           <label>Security Paths</label>
           <textarea id="cfg-review-securityPaths" placeholder="One glob pattern per line"></textarea>
         </div>
+        <div class="field">
+          <label>Extra Tools (LSP — one tool name per line)</label>
+          <textarea id="cfg-review-extraTools" placeholder="Extra Claude CLI tool names for codebase reviews"></textarea>
+        </div>
       </div>
     </div>
 
@@ -1294,6 +1298,7 @@ export function getDashboardHtml(): string {
     setVal('cfg-review-commentTrigger', cfg.review?.commentTrigger);
     setVal('cfg-review-excludePaths', (cfg.review?.excludePaths || []).join('\\n'));
     setVal('cfg-review-securityPaths', (cfg.review?.securityPaths || []).join('\\n'));
+    setVal('cfg-review-extraTools', (cfg.review?.extraTools || []).join('\\n'));
     setVal('cfg-review-staleClosedDays', cfg.review?.staleClosedDays);
     setVal('cfg-review-staleErrorDays', cfg.review?.staleErrorDays);
     setVal('cfg-review-staleWorktreeMinutes', cfg.review?.staleWorktreeMinutes);
@@ -1446,6 +1451,7 @@ export function getDashboardHtml(): string {
       commentTrigger: getVal('cfg-review-commentTrigger'),
       excludePaths: getVal('cfg-review-excludePaths').split('\\n').map(s => s.trim()).filter(Boolean),
       securityPaths: getVal('cfg-review-securityPaths').split('\\n').map(s => s.trim()).filter(Boolean),
+      extraTools: getVal('cfg-review-extraTools').split('\\n').map(s => s.trim()).filter(Boolean),
       staleClosedDays: getNum('cfg-review-staleClosedDays'),
       staleErrorDays: getNum('cfg-review-staleErrorDays'),
       staleWorktreeMinutes: getNum('cfg-review-staleWorktreeMinutes'),
