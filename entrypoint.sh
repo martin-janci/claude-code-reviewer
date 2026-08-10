@@ -35,6 +35,30 @@ if [ "${CLAUDE_AUTO_UPDATE}" = "true" ]; then
   fi
 fi
 
+# --- LSP code-intelligence plugins (opt-in pilot) ---
+# CLAUDE_LSP_MARKETPLACES: space-separated marketplace sources, e.g. "Piebald-AI/claude-code-lsps"
+# CLAUDE_LSP_PLUGINS: space-separated plugins, e.g. "vtsls@claude-code-lsps"
+# Plugins persist on the PVC (~/.claude/plugins); installs are idempotent and non-fatal.
+# The plugin only maps file extensions to a language-server binary — the binary itself
+# (e.g. vtsls) must be baked into the image. Reviews gain the LSP tool only when
+# review.extraTools includes "LSP" in config.
+if [ -n "${CLAUDE_LSP_MARKETPLACES}" ]; then
+  for mp in ${CLAUDE_LSP_MARKETPLACES}; do
+    echo "[entrypoint] Adding plugin marketplace: ${mp}..."
+    su-exec node claude plugin marketplace add "${mp}" 2>&1 || echo "[entrypoint] WARNING: marketplace add failed (may already exist): ${mp}"
+  done
+fi
+if [ -n "${CLAUDE_LSP_PLUGINS}" ]; then
+  for plugin in ${CLAUDE_LSP_PLUGINS}; do
+    echo "[entrypoint] Installing LSP plugin: ${plugin}..."
+    if su-exec node claude plugin install "${plugin}" 2>&1; then
+      echo "[entrypoint] LSP plugin ready: ${plugin}"
+    else
+      echo "[entrypoint] WARNING: LSP plugin install failed: ${plugin} (continuing without it)"
+    fi
+  done
+fi
+
 # --- Version logging ---
 echo "[entrypoint] Claude CLI version: $(su-exec node claude --version 2>/dev/null || echo 'not found')"
 

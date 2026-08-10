@@ -242,6 +242,7 @@ export const DEFAULTS: AppConfig = {
     lightModel: "",
     lightModelMaxDiffLines: 0,
     lightModelMaxTurns: 0,
+    extraTools: [],
   },
   features: {
     jira: { enabled: false, baseUrl: "", token: "", email: "", projectKeys: [] },

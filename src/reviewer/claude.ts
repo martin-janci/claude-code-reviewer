@@ -39,6 +39,7 @@ export interface ReviewOptions {
   requireTests?: boolean; // Mandatory test coverage assessment (default true)
   testBlockingImportance?: "medium" | "high" | "critical"; // Importance at/above which missing tests block
   testExemptions?: TestExemption[]; // Previously conceded missing-test exemptions
+  extraTools?: string[]; // Additional --tools allowlist entries (e.g. LSP plugin tools)
 }
 
 const VALID_VERDICTS = new Set<string>(["APPROVE", "REQUEST_CHANGES", "COMMENT"]);
@@ -303,6 +304,9 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
 
   if (cwd) {
     userPrompt += `## Codebase Access\nYou have read-only access to the full repository in your working directory. Use Read, Grep, and Glob tools to explore the codebase when the diff raises questions about contracts, callers, patterns, or architectural impact. Do NOT read every file — only explore when the diff context is insufficient.\n\n`;
+    if (options.extraTools && options.extraTools.length > 0) {
+      userPrompt += `You also have code-intelligence (LSP) tools available: ${options.extraTools.join(", ")}. Prefer them over Grep for finding definitions, references, and type information — they are precise and cost fewer exploration turns.\n\n`;
+    }
   }
 
   if (focusPaths && focusPaths.length > 0) {
@@ -358,7 +362,8 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
   }
 
   if (cwd) {
-    args.push("--tools", "Read,Grep,Glob");
+    const tools = ["Read", "Grep", "Glob", ...(options.extraTools ?? [])];
+    args.push("--tools", tools.join(","));
   }
 
   if (maxTurns != null) {

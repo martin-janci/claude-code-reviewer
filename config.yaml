@@ -43,6 +43,7 @@ review:
   reviewMaxTurns: 30                 # max agentic turns for codebase exploration
   staleWorktreeMinutes: 60           # cleanup worktrees older than this
   excludePaths: []                   # glob patterns to exclude from diff (e.g. ["*.lock", "vendor/**", "dist/**"])
+  extraTools: []                     # extra Claude CLI tool names allowed during codebase reviews, e.g. LSP plugin tools (requires CLAUDE_LSP_PLUGINS env + language server in image); empty = Read,Grep,Glob only
   dryRun: false                      # if true, run reviews but don't post to GitHub (env: DRY_RUN)
   maxConcurrentReviews: 3            # max parallel reviews across all PRs (1-10 recommended)
   confidenceThreshold: 0             # filter findings below this confidence (0-100, 0 = show all)
