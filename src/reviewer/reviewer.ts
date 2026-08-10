@@ -16,7 +16,7 @@ import { sendSlackNotification, buildErrorNotification, shouldNotify } from "../
 import { shouldReview } from "../state/decisions.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { getPRDiff, postReview, postComment, updateComment, deleteComment, findExistingComment, getReviewThreads, resolveReviewThread, type ReviewEvent } from "./github.js";
+import { getPRDiff, isDiffTooLargeError, listPRCommits, getCompareDiff, postReview, postComment, updateComment, deleteComment, findExistingComment, getReviewThreads, resolveReviewThread, type ReviewEvent } from "./github.js";
 import { reviewDiff } from "./claude.js";
 import { parseCommentableLines, findNearestCommentableLine, filterDiff, extractDiffPaths, findSecurityPaths } from "./diff-parser.js";
 import { formatReviewBody, formatInlineComment, filterByConfidence, type JiraLink } from "./formatter.js";
@@ -88,6 +88,13 @@ function extractRetryAfterSeconds(message: string): number | null {
   return match ? parseInt(match[1], 10) : null;
 }
 
+/** Describes a partial-diff review: only the last N commits of the PR were reviewed. */
+interface PartialDiffInfo {
+  reviewedCommits: number;
+  totalCommits: number;
+  baseSha: string;
+}
+
 /** Internal state passed through review phases */
 interface ReviewPhaseState {
   pr: PullRequest;
@@ -98,6 +105,7 @@ interface ReviewPhaseState {
   timings: Partial<PhaseTimings>;
   phaseStart: number;
   jiraLink?: JiraLink;
+  partial?: PartialDiffInfo;
 }
 
 export class Reviewer {
@@ -278,8 +286,12 @@ export class Reviewer {
       this.auditLogger?.reviewFailed(owner, repo, prNumber, headSha, "Failed to fetch diff", "diff_fetch", "reviewer");
       return { outcome: "error", error: "Failed to fetch diff" };
     }
+    if ("skippedTooLarge" in diffResult) {
+      log.info("Phase 2: Diff too large to fetch, skipping review", { phase: "diff_fetch" });
+      return { outcome: "skipped", skipReason: diffResult.skippedTooLarge };
+    }
 
-    log.info("Phase 2: Diff fetched", { phase: "diff_fetch", lines: diffResult.diff.split("\n").length, durationMs: diffResult.diffFetchMs });
+    log.info("Phase 2: Diff fetched", { phase: "diff_fetch", lines: diffResult.diff.split("\n").length, durationMs: diffResult.diffFetchMs, partial: !!diffResult.partial });
 
     // Set status to reviewing (lock)
     const oldStatus = state.status;
@@ -386,7 +398,7 @@ export class Reviewer {
 
     // Phase 4: Run Claude review
     log.info("Phase 4: Starting Claude review", { phase: "claude_review", codebaseAccess: !!cwd });
-    const reviewResult = await this.runReview(pr, currentState, diffResult.diff, cwd, timings, log);
+    const reviewResult = await this.runReview(pr, currentState, diffResult.diff, cwd, timings, log, !!diffResult.partial);
     if (!reviewResult) {
       log.info("Phase 4: Claude review failed", { phase: "claude_review" });
       // Audit: review failed
@@ -417,7 +429,7 @@ export class Reviewer {
     // Phase 5: Post review results
     log.info("Phase 5: Posting review results", { phase: "comment_post" });
     const postResult = await this.postResults(
-      { pr, state: currentState, log, diff: diffResult.diff, cwd, timings, phaseStart, jiraLink },
+      { pr, state: currentState, log, diff: diffResult.diff, cwd, timings, phaseStart, jiraLink, partial: diffResult.partial },
       reviewResult,
     );
     if (!postResult) {
@@ -550,23 +562,62 @@ export class Reviewer {
 
   /**
    * Phase 2: Fetch diff and apply exclusion filters.
-   * Returns null on error.
+   * When the full diff is too large for GitHub to serve, falls back to a partial
+   * diff of the most recent commits that fit (marked via `partial`). If even that
+   * fails the PR goes to the diff_too_large skip state — retrying can never
+   * succeed, so it must not hit the error/backoff path. Returns null on other errors.
    */
   private async fetchDiff(
     pr: PullRequest,
     log: Logger,
-  ): Promise<{ diff: string; diffFetchMs: number } | null> {
+  ): Promise<{ diff: string; diffFetchMs: number; partial?: PartialDiffInfo } | { skippedTooLarge: string } | null> {
     const { owner, repo, number: prNumber, headSha } = pr;
 
     let diff: string;
     let diffFetchMs: number;
+    let partial: PartialDiffInfo | undefined;
     try {
       const t0 = Date.now();
       diff = await getPRDiff(owner, repo, prNumber);
       diffFetchMs = Date.now() - t0;
     } catch (err) {
-      this.recordError(owner, repo, prNumber, headSha, err, "diff_fetch", log);
-      return null;
+      if (!isDiffTooLargeError(err)) {
+        this.recordError(owner, repo, prNumber, headSha, err, "diff_fetch", log);
+        return null;
+      }
+
+      const message = err instanceof Error ? err.message : String(err);
+      log.info("Full diff too large to fetch, trying partial diff of recent commits", { error: message });
+      const t0 = Date.now();
+      let fallback: { diff: string; partial: PartialDiffInfo } | null = null;
+      try {
+        fallback = await this.fetchLatestCommitsDiff(pr, log);
+      } catch (fbErr) {
+        log.warn("Partial diff fallback failed", { error: fbErr instanceof Error ? fbErr.message : String(fbErr) });
+      }
+
+      if (!fallback) {
+        log.info("Skipping: diff too large to fetch", { error: message });
+        this.metrics?.recordSkip("diff_too_large");
+        this.store.update(owner, repo, prNumber, {
+          status: "skipped",
+          skipReason: "diff_too_large",
+          skipDiffLines: null,
+          skippedAtSha: headSha,
+        });
+        this.auditLogger?.reviewSkipped(owner, repo, prNumber, `Diff too large to fetch: ${message}`, "reviewer");
+        return { skippedTooLarge: `Diff too large to fetch (${message})` };
+      }
+
+      diff = fallback.diff;
+      partial = fallback.partial;
+      diffFetchMs = Date.now() - t0;
+      log.info("Partial diff fallback succeeded", {
+        reviewedCommits: partial.reviewedCommits,
+        totalCommits: partial.totalCommits,
+        baseSha: partial.baseSha.slice(0, 7),
+        durationMs: diffFetchMs,
+      });
     }
 
     // Filter excluded paths from diff
@@ -578,7 +629,60 @@ export class Reviewer {
       }
     }
 
-    return { diff, diffFetchMs };
+    return { diff, diffFetchMs, partial };
+  }
+
+  /**
+   * Fallback when the full PR diff is unfetchable: binary-search for the longest
+   * run of trailing commits whose combined compare-diff both fetches successfully
+   * and fits within review.maxDiffLines. Returns null when no suffix fits.
+   */
+  private async fetchLatestCommitsDiff(
+    pr: PullRequest,
+    log: Logger,
+  ): Promise<{ diff: string; partial: PartialDiffInfo } | null> {
+    const { owner, repo, number: prNumber, headSha } = pr;
+
+    const commits = await listPRCommits(owner, repo, prNumber);
+    // Pin the range to the SHA under review. If it isn't in the list (race with a
+    // new push, or a PR beyond the API's 250-commit cap), bail — a diff against a
+    // different head would misplace inline comments.
+    const headIdx = commits.lastIndexOf(headSha);
+    if (headIdx < 0) {
+      log.warn("Partial diff fallback unavailable: head SHA not in PR commit list", { commits: commits.length });
+      return null;
+    }
+    const chain = commits.slice(0, headIdx + 1);
+    const n = chain.length;
+    if (n < 2) return null; // single commit — nothing smaller than the full diff to try
+
+    const maxDiffLines = this.config.review.maxDiffLines;
+    let best: { diff: string; count: number; baseSha: string } | null = null;
+    let lo = 1;
+    let hi = n - 1;
+    while (lo <= hi) {
+      const count = Math.floor((lo + hi) / 2);
+      const baseSha = chain[n - count - 1];
+      let fits = false;
+      try {
+        const diff = await getCompareDiff(owner, repo, baseSha, headSha);
+        if (diff && diff.split("\n").length <= maxDiffLines) {
+          best = { diff, count, baseSha };
+          fits = true;
+        }
+      } catch (err) {
+        if (!isDiffTooLargeError(err)) throw err;
+      }
+      log.debug("Partial diff probe", { commits: count, fits });
+      if (fits) lo = count + 1;
+      else hi = count - 1;
+    }
+
+    if (!best) return null;
+    return {
+      diff: best.diff,
+      partial: { reviewedCommits: best.count, totalCommits: n, baseSha: best.baseSha },
+    };
   }
 
   /**
@@ -592,6 +696,7 @@ export class Reviewer {
     cwd: string | undefined,
     timings: Partial<PhaseTimings>,
     log: Logger,
+    isPartialDiff = false,
   ): Promise<ReviewResult | null> {
     const { owner, repo, number: prNumber, headSha, title } = pr;
 
@@ -622,7 +727,9 @@ export class Reviewer {
     // Incremental re-review: shrink the payload to just the delta since the last reviewed SHA.
     // Comment line-validation still runs against the full PR diff, so posting is unaffected.
     let reviewDiffText = diff;
-    if (this.config.review.incrementalReviews && lastReview && context && cwd && lastReview.sha !== headSha) {
+    // Not applicable to partial diffs — their path set is incomplete, so a delta
+    // restricted to it could look deceptively empty
+    if (this.config.review.incrementalReviews && !isPartialDiff && lastReview && context && cwd && lastReview.sha !== headSha) {
       const delta = await this.computeDeltaDiff(cwd, lastReview.sha, headSha, diff, log);
       if (delta !== null) {
         if (delta.trim() === "") {
@@ -721,11 +828,14 @@ export class Reviewer {
     phase: ReviewPhaseState,
     result: ReviewResult,
   ): Promise<{ verdict: ReviewVerdict; reviewId: string | null; commentId: string | null } | null> {
-    const { pr, state, log, diff, jiraLink, timings } = phase;
+    const { pr, state, log, diff, jiraLink, timings, partial } = phase;
     const { owner, repo, number: prNumber, headSha } = pr;
 
     const postT0 = Date.now();
     const tag = this.config.review.commentTag;
+    const partialNote = partial
+      ? `⚠️ **Partial review** — the full PR diff was too large to fetch, so only the last ${partial.reviewedCommits} of ${partial.totalCommits} commits were reviewed (changes since \`${partial.baseSha.slice(0, 7)}\`). Earlier changes in this PR were not reviewed.`
+      : undefined;
     let verdict: ReviewVerdict;
     let reviewId: string | null = null;
     let commentId: string | null = state.commentId;
@@ -808,7 +918,7 @@ export class Reviewer {
       }
 
       // Build top-level review body
-      const body = formatReviewBody(structured, headSha, tag, orphanFindings, jiraLink);
+      const body = formatReviewBody(structured, headSha, tag, orphanFindings, jiraLink, partialNote);
 
       // Map verdict to GitHub review event
       const reviewEvent: ReviewEvent = verdict === "APPROVE" ? "APPROVE" : "COMMENT";
@@ -862,7 +972,7 @@ export class Reviewer {
     } else {
       // Fallback path: legacy issue comment
       verdict = parseLegacyVerdict(result.body);
-      const body = `${tag}\n\n${result.body}\n\n---\n*Reviewed by Claude Code at commit ${headSha.slice(0, 7)}*`;
+      const body = `${tag}\n\n${partialNote ? `${partialNote}\n\n` : ""}${result.body}\n\n---\n*Reviewed by Claude Code at commit ${headSha.slice(0, 7)}*`;
 
       if (this.config.review.dryRun) {
         log.info("Dry run: skipping legacy comment post", { phase: "comment_post", verdict });
