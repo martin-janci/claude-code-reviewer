@@ -48,6 +48,11 @@ export interface ReviewConfig {
   testBlockingImportance: "medium" | "high" | "critical";
   // Re-reviews send only the delta since the last reviewed SHA (falls back to full diff)
   incrementalReviews: boolean;
+  // Token-cost tiering
+  model: string; // Claude model for reviews ("" = CLI default)
+  lightModel: string; // cheaper model for small diffs ("" = disabled)
+  lightModelMaxDiffLines: number; // use lightModel when diff has at most this many lines (0 = disabled)
+  lightModelMaxTurns: number; // tighter turn cap for light-model reviews (0 = use reviewMaxTurns)
   // Extra tool names appended to the Claude CLI --tools allowlist for codebase reviews
   // (e.g. LSP code-intelligence tools from installed plugins). Empty = Read,Grep,Glob only.
   extraTools: string[];

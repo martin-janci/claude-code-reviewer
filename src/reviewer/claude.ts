@@ -35,6 +35,7 @@ export interface ReviewOptions {
   focusPaths?: string[];
   securityPaths?: string[]; // Paths that touch security-sensitive areas
   sessionId?: string; // Resume a previous session for prompt cache reuse
+  model?: string; // Claude model override (e.g. tiered light model for small diffs)
   requireTests?: boolean; // Mandatory test coverage assessment (default true)
   testBlockingImportance?: "medium" | "high" | "critical"; // Importance at/above which missing tests block
   testExemptions?: TestExemption[]; // Previously conceded missing-test exemptions
@@ -367,6 +368,10 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
 
   if (maxTurns != null) {
     args.push("--max-turns", String(maxTurns));
+  }
+
+  if (options.model) {
+    args.push("--model", options.model);
   }
 
   // Write prompt to temp file and redirect stdin via shell — more reliable
