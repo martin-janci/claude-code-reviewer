@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.30.0
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.29.0...v1.30.0)
+
+### 🚀 Enhancements
+
+- **review:** Typescript LSP pilot — native LSP tool for codebase reviews ([0e88e8f](https://github.com/martin-janci/claude-code-reviewer/commit/0e88e8f))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.29.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.28.0...v1.29.0)
