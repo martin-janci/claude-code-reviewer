@@ -8,11 +8,12 @@ import type { MetricsCollector } from "../metrics.js";
 import type { UsageStore } from "../usage/store.js";
 import type { RateLimitGuard } from "../rate-limit-guard.js";
 import { getDashboardHtml } from "./html.js";
-import { checkClaudeAuth, checkGhAuth } from "../auth-check.js";
+import { checkClaudeAuth, checkGhAuth, probeClaudeAuth } from "../auth-check.js";
 
 export class DashboardServer {
   private server: Server | null = null;
   private updateInProgress = false;
+  private probeInProgress = false;
 
   constructor(
     private configManager: ConfigManager,
@@ -169,6 +170,26 @@ export class DashboardServer {
       return;
     }
 
+    // GET /api/failures — PRs currently in error state, most recent first
+    if (req.method === "GET" && path === "/api/failures") {
+      const maxRetries = this.configManager.getConfig().review.maxRetries;
+      const failures = (this.store?.getAll() ?? [])
+        .filter((p) => p.status === "error")
+        .map((p) => ({
+          pr: `${p.owner}/${p.repo}#${p.number}`,
+          url: `https://github.com/${p.owner}/${p.repo}/pull/${p.number}`,
+          title: p.title,
+          consecutiveErrors: p.consecutiveErrors,
+          stuck: p.consecutiveErrors >= maxRetries,
+          lastError: p.lastError,
+        }))
+        .sort((a, b) => (b.lastError?.occurredAt ?? "").localeCompare(a.lastError?.occurredAt ?? ""));
+      const authFailureCount = failures.filter((f) => /authenticat|oauth/i.test(f.lastError?.message ?? "")).length;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ failures, maxRetries, authFailureCount }));
+      return;
+    }
+
     // GET /api/claude/version — return current Claude CLI version
     if (req.method === "GET" && path === "/api/claude/version") {
       try {
@@ -191,6 +212,27 @@ export class DashboardServer {
       } catch (err) {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    // POST /api/claude/auth/probe — definitive end-to-end auth check (runs a real claude invocation)
+    if (req.method === "POST" && path === "/api/claude/auth/probe") {
+      if (this.probeInProgress) {
+        res.writeHead(409, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Probe already running" }));
+        return;
+      }
+      this.probeInProgress = true;
+      try {
+        const result = await probeClaudeAuth();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(result));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      } finally {
+        this.probeInProgress = false;
       }
       return;
     }

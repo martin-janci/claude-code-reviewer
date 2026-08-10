@@ -275,6 +275,7 @@ function main(): void {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info("Shutting down...");
+    reviewer.stop();
     await poller?.stop();
     await webhook?.stop();
     await dashboard?.stop();

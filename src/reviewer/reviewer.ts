@@ -12,7 +12,10 @@ import { jiraPlugin } from "../features/jira-plugin.js";
 import { autoDescriptionPlugin } from "../features/auto-description-plugin.js";
 import { autoLabelPlugin } from "../features/auto-label-plugin.js";
 import { slackPlugin } from "../features/slack-plugin.js";
+import { sendSlackNotification, buildErrorNotification, shouldNotify } from "../features/slack.js";
 import { shouldReview } from "../state/decisions.js";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { getPRDiff, isDiffTooLargeError, listPRCommits, getCompareDiff, postReview, postComment, updateComment, deleteComment, findExistingComment, getReviewThreads, resolveReviewThread, type ReviewEvent } from "./github.js";
 import { reviewDiff } from "./claude.js";
 import { parseCommentableLines, findNearestCommentableLine, filterDiff, extractDiffPaths, findSecurityPaths } from "./diff-parser.js";
@@ -112,6 +115,8 @@ export class Reviewer {
   // Semaphore for limiting concurrent reviews
   private concurrencyQueue: Array<() => void> = [];
   private activeReviews = 0;
+  // One pending retry timer per PR — debounced/backed-off reviews are deferred, not lost
+  private retryTimers = new Map<string, NodeJS.Timeout>();
 
   constructor(
     private config: AppConfig,
@@ -393,7 +398,7 @@ export class Reviewer {
 
     // Phase 4: Run Claude review
     log.info("Phase 4: Starting Claude review", { phase: "claude_review", codebaseAccess: !!cwd });
-    const reviewResult = await this.runReview(pr, currentState, diffResult.diff, cwd, timings, log);
+    const reviewResult = await this.runReview(pr, currentState, diffResult.diff, cwd, timings, log, !!diffResult.partial);
     if (!reviewResult) {
       log.info("Phase 4: Claude review failed", { phase: "claude_review" });
       // Audit: review failed
@@ -543,6 +548,11 @@ export class Reviewer {
     const decision = shouldReview(freshState, this.config.review, pr.forceReview);
     if (!decision.shouldReview) {
       log.info("Skipping PR", { reason: decision.reason, status: freshState.status });
+      // Debounce/backoff windows are temporary — schedule a re-check so the
+      // review happens even if no further webhook event ever arrives
+      if (decision.retryAfterMs !== undefined) {
+        this.scheduleRetry(pr, decision.retryAfterMs, decision.reason, log);
+      }
       return { state: null, skipReason: decision.reason };
     }
 
@@ -686,6 +696,7 @@ export class Reviewer {
     cwd: string | undefined,
     timings: Partial<PhaseTimings>,
     log: Logger,
+    isPartialDiff = false,
   ): Promise<ReviewResult | null> {
     const { owner, repo, number: prNumber, headSha, title } = pr;
 
@@ -711,7 +722,43 @@ export class Reviewer {
       previousVerdict: lastReview.verdict,
       previousSha: lastReview.sha,
       previousFindings: allPreviousFindings,
-    } : undefined;
+    } as import("./claude.js").ReviewContext : undefined;
+
+    // Incremental re-review: shrink the payload to just the delta since the last reviewed SHA.
+    // Comment line-validation still runs against the full PR diff, so posting is unaffected.
+    let reviewDiffText = diff;
+    // Not applicable to partial diffs — their path set is incomplete, so a delta
+    // restricted to it could look deceptively empty
+    if (this.config.review.incrementalReviews && !isPartialDiff && lastReview && context && cwd && lastReview.sha !== headSha) {
+      const delta = await this.computeDeltaDiff(cwd, lastReview.sha, headSha, diff, log);
+      if (delta !== null) {
+        if (delta.trim() === "") {
+          // Rebase/merge with no reviewable content changes — skip the Claude invocation entirely
+          log.info("Incremental re-review: no reviewable changes since last review — carrying verdict forward", {
+            previousSha: lastReview.sha.slice(0, 7),
+            verdict: lastReview.verdict,
+          });
+          return {
+            success: true,
+            body: "",
+            structured: {
+              verdict: lastReview.verdict,
+              summary: `No reviewable changes since previously reviewed commit \`${lastReview.sha.slice(0, 7)}\` (rebase or merge without content changes). Previous verdict carried forward.`,
+              findings: [],
+            },
+          };
+        }
+        if (delta.length < diff.length) {
+          log.info("Incremental re-review: using delta diff", {
+            previousSha: lastReview.sha.slice(0, 7),
+            deltaBytes: delta.length,
+            fullBytes: diff.length,
+          });
+          reviewDiffText = delta;
+          context.incrementalSinceSha = lastReview.sha;
+        }
+      }
+    }
 
     // Detect security-sensitive paths
     const diffPaths = extractDiffPaths(diff);
@@ -733,7 +780,7 @@ export class Reviewer {
 
     const claudeT0 = Date.now();
     const result = await reviewDiff({
-      diff,
+      diff: reviewDiffText,
       prTitle: title,
       context,
       cwd,
@@ -1084,6 +1131,67 @@ export class Reviewer {
     }
   }
 
+  /**
+   * Compute the diff between the last reviewed SHA and the current head,
+   * restricted to paths in the PR diff (so base-branch merges don't flood it)
+   * and filtered by the same exclusion patterns.
+   * Returns null when the delta cannot be computed (force-push, git error) —
+   * callers fall back to the full PR diff.
+   */
+  private async computeDeltaDiff(cwd: string, fromSha: string, toSha: string, fullDiff: string, log: Logger): Promise<string | null> {
+    const exec = promisify(execFile);
+    try {
+      await exec("git", ["cat-file", "-e", `${fromSha}^{commit}`], { cwd, timeout: 10_000 });
+    } catch {
+      log.info("Incremental re-review unavailable — previous SHA not in clone (force-push?)", { previousSha: fromSha.slice(0, 7) });
+      return null;
+    }
+    try {
+      const args = ["diff", `${fromSha}..${toSha}`];
+      // Restrict to PR-diff paths; skip the pathspec when it would blow up the arg list
+      const paths = extractDiffPaths(fullDiff);
+      if (paths.length > 0 && paths.length <= 300) {
+        args.push("--", ...paths);
+      }
+      const { stdout } = await exec("git", args, { cwd, maxBuffer: 64 * 1024 * 1024, timeout: 30_000 });
+      const { filtered } = filterDiff(stdout, this.config.review.excludePaths);
+      return filtered;
+    } catch (err) {
+      log.warn("Incremental diff failed — falling back to full diff", { error: String(err).slice(0, 200) });
+      return null;
+    }
+  }
+
+  /**
+   * Schedule a deferred re-check of a PR after a debounce/backoff window.
+   * One timer per PR — a newer push replaces (and extends) any pending retry,
+   * so a burst of pushes settles into a single review after the quiet period.
+   */
+  private scheduleRetry(pr: PullRequest, delayMs: number, reason: string, log: Logger): void {
+    const key = `${pr.owner}/${pr.repo}#${pr.number}`;
+    const existing = this.retryTimers.get(key);
+    if (existing) clearTimeout(existing);
+
+    // Small buffer so the re-check lands after the window has actually expired
+    const delay = delayMs + 1_000;
+    log.info("Scheduled review retry", { pr: key, delaySeconds: Math.round(delay / 1000), reason });
+    const timer = setTimeout(() => {
+      this.retryTimers.delete(key);
+      // Re-evaluates gating from scratch; forceReview must not survive into the retry
+      this.processPR({ ...pr, forceReview: false }).catch((err) => {
+        this.logger.error("Scheduled retry failed", { pr: key, error: String(err) });
+      });
+    }, delay);
+    timer.unref();
+    this.retryTimers.set(key, timer);
+  }
+
+  /** Cancel all pending retry timers (graceful shutdown). */
+  stop(): void {
+    for (const timer of this.retryTimers.values()) clearTimeout(timer);
+    this.retryTimers.clear();
+  }
+
   private recordError(owner: string, repo: string, prNumber: number, sha: string, err: unknown, phase: ErrorPhase, log: Logger): void {
     const message = err instanceof Error ? err.message : String(err);
     const kind = classifyError(err, phase);
@@ -1126,5 +1234,17 @@ export class Reviewer {
 
     // Audit: state changed to error
     this.auditLogger?.stateChanged(owner, repo, prNumber, oldStatus, "error", "reviewer");
+
+    // Notify Slack about the failure (non-fatal, fire-and-forget)
+    if (shouldNotify(this.config.features.slack, "error")) {
+      const errored = this.store.get(owner, repo, prNumber);
+      if (errored) {
+        void sendSlackNotification(
+          this.config.features.slack,
+          buildErrorNotification(errored, `${phase}: ${message}`),
+          log,
+        );
+      }
+    }
   }
 }

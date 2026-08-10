@@ -348,6 +348,12 @@ export function getDashboardHtml(): string {
 
   .banner.visible { display: block; }
 
+  .banner.danger {
+    background: rgba(255,107,107,0.12);
+    border-color: var(--danger);
+    color: var(--danger);
+  }
+
   .login-overlay {
     position: fixed;
     top: 0;
@@ -485,6 +491,11 @@ export function getDashboardHtml(): string {
   <div class="banner" id="restart-banner">
     Some changes require a service restart to take effect.
     <button onclick="restartService()" style="margin-left:12px;padding:4px 16px;background:#e74c3c;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:600;">Restart Now</button>
+  </div>
+
+  <div class="banner danger" id="health-banner">
+    <span id="health-banner-text"></span>
+    <a href="#status" onclick="switchTabFromBanner()" style="margin-left:12px;color:inherit;font-weight:600;text-decoration:underline;cursor:pointer">View details</a>
   </div>
 
   <!-- General Tab -->
@@ -1011,6 +1022,23 @@ export function getDashboardHtml(): string {
       </div>
     </div>
     <div class="status-grid" id="status-grid"></div>
+    <div class="section" id="failures-section" style="display:none">
+      <div class="section-header">Failed Reviews</div>
+      <div class="section-body" style="padding:0;overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:12px;font-family:var(--mono)">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border);text-align:left">
+              <th style="padding:8px 12px;color:var(--text-muted);font-weight:500">PR</th>
+              <th style="padding:8px 8px;color:var(--text-muted);font-weight:500">Phase</th>
+              <th style="padding:8px 8px;color:var(--text-muted);font-weight:500">Error</th>
+              <th style="padding:8px 8px;color:var(--text-muted);font-weight:500;text-align:right">Attempts</th>
+              <th style="padding:8px 12px;color:var(--text-muted);font-weight:500">Last Failure</th>
+            </tr>
+          </thead>
+          <tbody id="failures-tbody"></tbody>
+        </table>
+      </div>
+    </div>
     <div class="section" id="rate-limit-section" style="display:none">
       <div class="section-header">Rate Limit Guard</div>
       <div class="section-body">
@@ -1052,7 +1080,9 @@ export function getDashboardHtml(): string {
           <label>Auth</label>
           <div style="display:flex;gap:8px;align-items:center">
             <span id="claude-auth-status" style="font-size:13px;color:var(--text-muted)">Loading...</span>
+            <button class="btn btn-sm" id="auth-probe-btn" onclick="probeAuth()" title="Runs a real minimal Claude invocation — definitive but takes a few seconds">Deep Check</button>
           </div>
+          <div id="auth-probe-result" style="display:none;margin-top:8px;font-size:12px;font-family:var(--mono)"></div>
         </div>
         <div class="field">
           <label>GitHub</label>
@@ -1180,6 +1210,7 @@ export function getDashboardHtml(): string {
         input.value = '';
         hideLoginScreen();
         loadConfig();
+        startHealthMonitor();
       }
     } catch (err) {
       authToken = null;
@@ -1212,6 +1243,7 @@ export function getDashboardHtml(): string {
         authRequired = true; // Token was accepted
         hideLoginScreen();
         loadConfig();
+        startHealthMonitor();
         return;
       }
     } catch (err) {
@@ -1720,7 +1752,8 @@ export function getDashboardHtml(): string {
       cards.forEach(c => {
         const card = document.createElement('div');
         card.className = 'status-card';
-        card.innerHTML = '<div class="value">' + c.value + '</div><div class="label">' + c.label + '</div>';
+        const valueStyle = (c.label === 'Errors' && c.value > 0) ? ' style="color:var(--danger)"' : '';
+        card.innerHTML = '<div class="value"' + valueStyle + '>' + c.value + '</div><div class="label">' + c.label + '</div>';
         grid.appendChild(card);
       });
 
@@ -1729,11 +1762,92 @@ export function getDashboardHtml(): string {
       document.getElementById('status-json').textContent = 'Error: ' + err.message;
     }
 
-    // Also load Claude CLI version, auth status, and rate limit status
+    // Also load Claude CLI version, auth status, rate limit status, and failures
     loadClaudeVersion();
     loadAuthStatus();
     loadRateLimitStatus();
+    loadFailures();
   };
+
+  async function loadFailures() {
+    const section = document.getElementById('failures-section');
+    const tbody = document.getElementById('failures-tbody');
+    try {
+      const res = await authFetch('/api/failures');
+      const data = await res.json();
+      const failures = data.failures || [];
+      if (!failures.length) {
+        section.style.display = 'none';
+        return;
+      }
+      section.style.display = 'block';
+      tbody.innerHTML = '';
+      failures.forEach(function(f) {
+        const tr = document.createElement('tr');
+        tr.style.borderBottom = '1px solid var(--border)';
+        const stuckBadge = f.stuck
+          ? ' <span style="background:var(--danger);color:#fff;border-radius:4px;padding:1px 6px;font-size:10px;font-weight:600">STUCK</span>'
+          : '';
+        tr.innerHTML = '<td style="padding:8px 12px;white-space:nowrap"><a href="' + esc(f.url) + '" target="_blank" rel="noopener" style="color:var(--text)">' + esc(f.pr) + '</a>' + stuckBadge + '</td>'
+          + '<td style="padding:8px 8px;white-space:nowrap">' + esc(f.lastError?.phase || '-') + '</td>'
+          + '<td style="padding:8px 8px;color:var(--danger);max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(f.lastError?.message || '') + '">' + esc((f.lastError?.message || '-').slice(0, 160)) + '</td>'
+          + '<td style="padding:8px 8px;text-align:right">' + f.consecutiveErrors + '/' + data.maxRetries + '</td>'
+          + '<td style="padding:8px 12px;white-space:nowrap">' + (f.lastError?.occurredAt ? new Date(f.lastError.occurredAt).toLocaleString() : '-') + '</td>';
+        tbody.appendChild(tr);
+      });
+    } catch (err) {
+      section.style.display = 'none';
+    }
+  }
+
+  window.switchTabFromBanner = function() {
+    history.pushState(null, '', '#status');
+    switchTab('status');
+  };
+
+  // Global health banner — shown on every tab when auth is broken or reviews are failing
+  let healthBannerTimer = null;
+  async function loadHealthBanner() {
+    const banner = document.getElementById('health-banner');
+    const text = document.getElementById('health-banner-text');
+    try {
+      const [authRes, failRes] = await Promise.all([
+        authFetch('/api/claude/auth'),
+        authFetch('/api/failures'),
+      ]);
+      const auth = await authRes.json();
+      const fails = await failRes.json();
+
+      const problems = [];
+      if (!auth.claude?.available || !auth.claude?.authenticated) {
+        problems.push('⚠ Claude CLI: ' + (auth.claude?.error || 'not authenticated') + ' — reviews cannot run.');
+      }
+      if (!auth.github?.available || !auth.github?.authenticated) {
+        problems.push('⚠ GitHub: ' + (auth.github?.error || 'not authenticated') + '.');
+      }
+      const failCount = (fails.failures || []).length;
+      if (failCount > 0) {
+        const authNote = fails.authFailureCount > 0 ? ' (' + fails.authFailureCount + ' auth-related)' : '';
+        problems.push(failCount + ' PR' + (failCount > 1 ? 's' : '') + ' in error state' + authNote + '.');
+      }
+
+      if (problems.length) {
+        text.textContent = problems.join(' ');
+        banner.classList.add('visible');
+      } else {
+        banner.classList.remove('visible');
+      }
+    } catch {
+      // Leave banner as-is on transient fetch errors
+    }
+  }
+
+  function startHealthMonitor() {
+    loadHealthBanner();
+    if (!healthBannerTimer) {
+      healthBannerTimer = setInterval(loadHealthBanner, 60000);
+    }
+  }
 
   async function loadRateLimitStatus() {
     const banner = document.getElementById('rate-limit-banner');
@@ -1864,6 +1978,34 @@ export function getDashboardHtml(): string {
       ghEl.style.color = 'var(--text-muted)';
     }
   }
+
+  window.probeAuth = async function() {
+    const btn = document.getElementById('auth-probe-btn');
+    const resultEl = document.getElementById('auth-probe-result');
+    btn.disabled = true;
+    btn.textContent = 'Probing...';
+    resultEl.style.display = 'block';
+    resultEl.style.color = 'var(--text-muted)';
+    resultEl.textContent = 'Running a real Claude invocation (may take up to a minute)...';
+    try {
+      const res = await authFetch('/api/claude/auth/probe', { method: 'POST' });
+      const data = await res.json();
+      if (data.authenticated) {
+        resultEl.style.color = 'var(--success)';
+        resultEl.textContent = '✓ Probe succeeded — Claude auth is fully working';
+      } else {
+        resultEl.style.color = 'var(--danger)';
+        resultEl.textContent = '✗ Probe failed: ' + (data.error || 'unknown error');
+      }
+      loadHealthBanner();
+    } catch (err) {
+      resultEl.style.color = 'var(--danger)';
+      resultEl.textContent = '✗ Probe error: ' + err.message;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Deep Check';
+    }
+  };
 
   window.checkAuth = async function() {
     const btn = document.getElementById('auth-check-btn');

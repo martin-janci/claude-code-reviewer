@@ -46,6 +46,8 @@ export interface ReviewConfig {
   // Mandatory test coverage assessment
   requireTests: boolean;
   testBlockingImportance: "medium" | "high" | "critical";
+  // Re-reviews send only the delta since the last reviewed SHA (falls back to full diff)
+  incrementalReviews: boolean;
 }
 
 export interface JiraConfig {
@@ -317,6 +319,8 @@ export interface PRState {
 export interface ReviewDecision {
   shouldReview: boolean;
   reason: string;
+  /** When set, the caller should re-evaluate this PR after this many ms (debounce/backoff windows). */
+  retryAfterMs?: number;
 }
 
 export interface StateFileV2 {
