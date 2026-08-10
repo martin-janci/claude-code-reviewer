@@ -767,8 +767,22 @@ export class Reviewer {
       log.info("Security-sensitive paths detected", { paths: securityPaths });
     }
 
+    // Token-cost tiering: small, non-security diffs go to the cheaper model with a
+    // tighter turn cap. Security-sensitive PRs always get the full model.
+    const reviewCfg = this.config.review;
+    let model = reviewCfg.model || undefined;
+    let tierMaxTurns: number | undefined;
+    if (reviewCfg.lightModel && reviewCfg.lightModelMaxDiffLines > 0 && securityPaths.length === 0) {
+      const diffLines = reviewDiffText.split("\n").length;
+      if (diffLines <= reviewCfg.lightModelMaxDiffLines) {
+        model = reviewCfg.lightModel;
+        if (reviewCfg.lightModelMaxTurns > 0) tierMaxTurns = reviewCfg.lightModelMaxTurns;
+        log.info("Token tiering: light model selected", { model, diffLines, maxDiffLines: reviewCfg.lightModelMaxDiffLines, tierMaxTurns });
+      }
+    }
+
     // Run Claude review
-    const effectiveMaxTurns = pr.overrides?.maxTurns ?? (cwd ? this.config.review.reviewMaxTurns : undefined);
+    const effectiveMaxTurns = pr.overrides?.maxTurns ?? tierMaxTurns ?? (cwd ? this.config.review.reviewMaxTurns : undefined);
 
     // Look up a cached session for prompt cache reuse
     const usageCfg = this.config.features.usage;
@@ -776,7 +790,7 @@ export class Reviewer {
       ? this.usageStore.getSession(owner, repo, usageCfg.sessionTtlSeconds) ?? undefined
       : undefined;
 
-    log.info("Starting Claude review", { phase: "claude_review", timeoutMs: this.config.review.reviewTimeoutMs, maxTurns: effectiveMaxTurns, codebase: !!cwd, focusPaths: pr.overrides?.focusPaths, securityPaths: securityPaths.length > 0 ? securityPaths : undefined, sessionReuse: !!sessionId });
+    log.info("Starting Claude review", { phase: "claude_review", timeoutMs: this.config.review.reviewTimeoutMs, maxTurns: effectiveMaxTurns, model: model ?? "default", codebase: !!cwd, focusPaths: pr.overrides?.focusPaths, securityPaths: securityPaths.length > 0 ? securityPaths : undefined, sessionReuse: !!sessionId });
 
     const claudeT0 = Date.now();
     const result = await reviewDiff({
@@ -790,6 +804,7 @@ export class Reviewer {
       focusPaths: pr.overrides?.focusPaths,
       securityPaths: securityPaths.length > 0 ? securityPaths : undefined,
       sessionId,
+      model,
       requireTests: this.config.review.requireTests,
       testBlockingImportance: this.config.review.testBlockingImportance,
       // Cap exemptions passed to the prompt to bound its size

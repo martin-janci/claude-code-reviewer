@@ -641,6 +641,28 @@ export function getDashboardHtml(): string {
     </div>
 
     <div class="section">
+      <div class="section-header">Token Cost Tiering</div>
+      <div class="section-body">
+        <div class="field">
+          <label>Model (empty = CLI default)</label>
+          <input type="text" id="cfg-review-model" placeholder="e.g. claude-opus-5">
+        </div>
+        <div class="field">
+          <label>Light Model (empty = tiering off)</label>
+          <input type="text" id="cfg-review-lightModel" placeholder="e.g. claude-sonnet-5">
+        </div>
+        <div class="field">
+          <label>Light Model Max Diff Lines (0 = off)</label>
+          <input type="number" id="cfg-review-lightModelMaxDiffLines" min="0">
+        </div>
+        <div class="field">
+          <label>Light Model Max Turns (0 = use Review Max Turns)</label>
+          <input type="number" id="cfg-review-lightModelMaxTurns" min="0">
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
       <div class="section-header">Timeouts</div>
       <div class="section-body">
         <div class="field">
@@ -1285,6 +1307,10 @@ export function getDashboardHtml(): string {
     setVal('cfg-review-maxConcurrentReviews', cfg.review?.maxConcurrentReviews);
     setVal('cfg-review-confidenceThreshold', cfg.review?.confidenceThreshold);
     setVal('cfg-review-maxReviewHistory', cfg.review?.maxReviewHistory);
+    setVal('cfg-review-model', cfg.review?.model);
+    setVal('cfg-review-lightModel', cfg.review?.lightModel);
+    setVal('cfg-review-lightModelMaxDiffLines', cfg.review?.lightModelMaxDiffLines);
+    setVal('cfg-review-lightModelMaxTurns', cfg.review?.lightModelMaxTurns);
     setVal('cfg-review-reviewTimeoutMs', cfg.review?.reviewTimeoutMs);
     setVal('cfg-review-cloneTimeoutMs', cfg.review?.cloneTimeoutMs);
     setVal('cfg-review-reviewMaxTurns', cfg.review?.reviewMaxTurns);
@@ -1452,6 +1478,10 @@ export function getDashboardHtml(): string {
       commentVerifyIntervalMinutes: getNum('cfg-review-commentVerifyIntervalMinutes'),
       requireTests: getChecked('cfg-review-requireTests'),
       testBlockingImportance: getVal('cfg-review-testBlockingImportance'),
+      model: getVal('cfg-review-model'),
+      lightModel: getVal('cfg-review-lightModel'),
+      lightModelMaxDiffLines: getNum('cfg-review-lightModelMaxDiffLines'),
+      lightModelMaxTurns: getNum('cfg-review-lightModelMaxTurns'),
     };
 
     // Features

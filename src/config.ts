@@ -24,6 +24,15 @@ export function validateConfig(config: AppConfig): ConfigError[] {
   if (config.review.maxRetries < 0) {
     errors.push({ field: "review.maxRetries", message: "Must be >= 0", severity: "error" });
   }
+  if (config.review.lightModelMaxDiffLines < 0) {
+    errors.push({ field: "review.lightModelMaxDiffLines", message: "Must be >= 0", severity: "error" });
+  }
+  if (config.review.lightModelMaxTurns < 0) {
+    errors.push({ field: "review.lightModelMaxTurns", message: "Must be >= 0", severity: "error" });
+  }
+  if (config.review.lightModelMaxDiffLines > 0 && !config.review.lightModel) {
+    errors.push({ field: "review.lightModel", message: "lightModelMaxDiffLines is set but lightModel is empty", severity: "warning" });
+  }
   if (config.review.debouncePeriodSeconds < 0) {
     errors.push({ field: "review.debouncePeriodSeconds", message: "Must be >= 0", severity: "error" });
   }
@@ -229,6 +238,10 @@ export const DEFAULTS: AppConfig = {
     requireTests: true,
     testBlockingImportance: "high",
     incrementalReviews: true,
+    model: "",
+    lightModel: "",
+    lightModelMaxDiffLines: 0,
+    lightModelMaxTurns: 0,
   },
   features: {
     jira: { enabled: false, baseUrl: "", token: "", email: "", projectKeys: [] },
