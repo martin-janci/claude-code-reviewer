@@ -317,6 +317,8 @@ export interface PRState {
 export interface ReviewDecision {
   shouldReview: boolean;
   reason: string;
+  /** When set, the caller should re-evaluate this PR after this many ms (debounce/backoff windows). */
+  retryAfterMs?: number;
 }
 
 export interface StateFileV2 {

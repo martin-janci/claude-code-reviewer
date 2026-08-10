@@ -36,20 +36,20 @@ export function shouldReview(state: PRState, config: ReviewConfig, forceReview?:
     return { shouldReview: false, reason: "Already reviewed this SHA" };
   }
 
-  // 6. Debounce — wait for pushes to settle
-  // Skip debounce when:
-  // - The last review requested changes (author is fixing comments)
-  // - The last review was APPROVE but new commits were pushed (author added more changes)
-  // - Force review was requested
-  const lastReview = state.reviews.length > 0 ? state.reviews[state.reviews.length - 1] : null;
-  const hasNewCommitsSinceReview = lastReview && state.headSha !== lastReview.sha;
-  const skipDebounce = hasNewCommitsSinceReview || forceReview;
-
-  if (state.lastPushAt && !skipDebounce) {
+  // 6. Debounce — wait for pushes to settle before reviewing.
+  // Applies uniformly (including re-reviews after new commits): rapid push bursts
+  // collapse into a single review once the window is quiet. Callers schedule a
+  // retry via retryAfterMs, so a debounced review is deferred, never lost.
+  // Only an explicit force review (comment trigger) bypasses the window.
+  if (state.lastPushAt && !forceReview) {
     const pushAge = Date.now() - new Date(state.lastPushAt).getTime();
     const debouncePeriodMs = config.debouncePeriodSeconds * 1000;
     if (pushAge < debouncePeriodMs) {
-      return { shouldReview: false, reason: `Debouncing: push was ${Math.round(pushAge / 1000)}s ago` };
+      return {
+        shouldReview: false,
+        reason: `Debouncing: push was ${Math.round(pushAge / 1000)}s ago`,
+        retryAfterMs: debouncePeriodMs - pushAge,
+      };
     }
   }
 
@@ -62,7 +62,11 @@ export function shouldReview(state: PRState, config: ReviewConfig, forceReview?:
     // Exponential backoff: 1m, 2m, 4m, ...
     const backoffMs = 60_000 * Math.pow(2, state.consecutiveErrors - 1);
     if (errorAge < backoffMs) {
-      return { shouldReview: false, reason: `Error backoff: ${Math.round((backoffMs - errorAge) / 1000)}s remaining` };
+      return {
+        shouldReview: false,
+        reason: `Error backoff: ${Math.round((backoffMs - errorAge) / 1000)}s remaining`,
+        retryAfterMs: backoffMs - errorAge,
+      };
     }
   }
 

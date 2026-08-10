@@ -105,6 +105,8 @@ export class Reviewer {
   // Semaphore for limiting concurrent reviews
   private concurrencyQueue: Array<() => void> = [];
   private activeReviews = 0;
+  // One pending retry timer per PR — debounced/backed-off reviews are deferred, not lost
+  private retryTimers = new Map<string, NodeJS.Timeout>();
 
   constructor(
     private config: AppConfig,
@@ -532,6 +534,11 @@ export class Reviewer {
     const decision = shouldReview(freshState, this.config.review, pr.forceReview);
     if (!decision.shouldReview) {
       log.info("Skipping PR", { reason: decision.reason, status: freshState.status });
+      // Debounce/backoff windows are temporary — schedule a re-check so the
+      // review happens even if no further webhook event ever arrives
+      if (decision.retryAfterMs !== undefined) {
+        this.scheduleRetry(pr, decision.retryAfterMs, decision.reason, log);
+      }
       return { state: null, skipReason: decision.reason };
     }
 
@@ -976,6 +983,36 @@ export class Reviewer {
         this.auditLogger?.stateChanged(state.owner, state.repo, state.number, "skipped", "pending_review", "reviewer");
       }
     }
+  }
+
+  /**
+   * Schedule a deferred re-check of a PR after a debounce/backoff window.
+   * One timer per PR — a newer push replaces (and extends) any pending retry,
+   * so a burst of pushes settles into a single review after the quiet period.
+   */
+  private scheduleRetry(pr: PullRequest, delayMs: number, reason: string, log: Logger): void {
+    const key = `${pr.owner}/${pr.repo}#${pr.number}`;
+    const existing = this.retryTimers.get(key);
+    if (existing) clearTimeout(existing);
+
+    // Small buffer so the re-check lands after the window has actually expired
+    const delay = delayMs + 1_000;
+    log.info("Scheduled review retry", { pr: key, delaySeconds: Math.round(delay / 1000), reason });
+    const timer = setTimeout(() => {
+      this.retryTimers.delete(key);
+      // Re-evaluates gating from scratch; forceReview must not survive into the retry
+      this.processPR({ ...pr, forceReview: false }).catch((err) => {
+        this.logger.error("Scheduled retry failed", { pr: key, error: String(err) });
+      });
+    }, delay);
+    timer.unref();
+    this.retryTimers.set(key, timer);
+  }
+
+  /** Cancel all pending retry timers (graceful shutdown). */
+  stop(): void {
+    for (const timer of this.retryTimers.values()) clearTimeout(timer);
+    this.retryTimers.clear();
   }
 
   private recordError(owner: string, repo: string, prNumber: number, sha: string, err: unknown, phase: ErrorPhase, log: Logger): void {
