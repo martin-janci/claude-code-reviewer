@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.31.1
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.31.0...v1.31.1)
+
+### 🩹 Fixes
+
+- **docker:** Run kotlin-lsp on musl-native zulu jre 25 instead of bundled JBR ([a9cb0dc](https://github.com/martin-janci/claude-code-reviewer/commit/a9cb0dc))
+
+### 🏡 Chore
+
+- **release:** V1.31.0 ([b9f5788](https://github.com/martin-janci/claude-code-reviewer/commit/b9f5788))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.31.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.30.0...v1.31.0)
