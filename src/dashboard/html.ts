@@ -1080,7 +1080,9 @@ export function getDashboardHtml(): string {
           <label>Auth</label>
           <div style="display:flex;gap:8px;align-items:center">
             <span id="claude-auth-status" style="font-size:13px;color:var(--text-muted)">Loading...</span>
+            <button class="btn btn-sm" id="auth-probe-btn" onclick="probeAuth()" title="Runs a real minimal Claude invocation — definitive but takes a few seconds">Deep Check</button>
           </div>
+          <div id="auth-probe-result" style="display:none;margin-top:8px;font-size:12px;font-family:var(--mono)"></div>
         </div>
         <div class="field">
           <label>GitHub</label>
@@ -1976,6 +1978,34 @@ export function getDashboardHtml(): string {
       ghEl.style.color = 'var(--text-muted)';
     }
   }
+
+  window.probeAuth = async function() {
+    const btn = document.getElementById('auth-probe-btn');
+    const resultEl = document.getElementById('auth-probe-result');
+    btn.disabled = true;
+    btn.textContent = 'Probing...';
+    resultEl.style.display = 'block';
+    resultEl.style.color = 'var(--text-muted)';
+    resultEl.textContent = 'Running a real Claude invocation (may take up to a minute)...';
+    try {
+      const res = await authFetch('/api/claude/auth/probe', { method: 'POST' });
+      const data = await res.json();
+      if (data.authenticated) {
+        resultEl.style.color = 'var(--success)';
+        resultEl.textContent = '✓ Probe succeeded — Claude auth is fully working';
+      } else {
+        resultEl.style.color = 'var(--danger)';
+        resultEl.textContent = '✗ Probe failed: ' + (data.error || 'unknown error');
+      }
+      loadHealthBanner();
+    } catch (err) {
+      resultEl.style.color = 'var(--danger)';
+      resultEl.textContent = '✗ Probe error: ' + err.message;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Deep Check';
+    }
+  };
 
   window.checkAuth = async function() {
     const btn = document.getElementById('auth-check-btn');

@@ -75,6 +75,38 @@ export async function checkClaudeAuth(): Promise<Omit<AuthStatus, "lastChecked">
   }
 }
 
+/**
+ * Definitive end-to-end auth probe: runs a minimal real `claude -p` invocation.
+ * Slower than checkClaudeAuth (seconds, one tiny API call) but catches everything
+ * file inspection cannot — revoked tokens, failed refreshes, plan issues.
+ */
+export function probeClaudeAuth(timeoutMs = 60_000): Promise<Omit<AuthStatus, "lastChecked">> {
+  return new Promise((resolve) => {
+    execFile(
+      "claude",
+      ["-p", "Reply with exactly: AUTH-OK", "--max-turns", "1"],
+      { timeout: timeoutMs },
+      (err, stdout, stderr) => {
+        if (err) {
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code === "ENOENT") {
+            resolve({ available: false, authenticated: false, error: "claude CLI not found" });
+            return;
+          }
+          if (err.killed) {
+            resolve({ available: true, authenticated: false, error: `Probe timed out after ${Math.round(timeoutMs / 1000)}s` });
+            return;
+          }
+          const detail = `${stdout}${stderr}`.trim() || err.message;
+          resolve({ available: true, authenticated: false, error: detail.slice(0, 200) });
+          return;
+        }
+        resolve({ available: true, authenticated: true });
+      },
+    );
+  });
+}
+
 /** CLI availability probe via `--version` (does not require auth). */
 function checkClaudeCli(): Promise<Omit<AuthStatus, "lastChecked">> {
   return new Promise((resolve) => {

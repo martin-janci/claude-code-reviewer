@@ -8,11 +8,12 @@ import type { MetricsCollector } from "../metrics.js";
 import type { UsageStore } from "../usage/store.js";
 import type { RateLimitGuard } from "../rate-limit-guard.js";
 import { getDashboardHtml } from "./html.js";
-import { checkClaudeAuth, checkGhAuth } from "../auth-check.js";
+import { checkClaudeAuth, checkGhAuth, probeClaudeAuth } from "../auth-check.js";
 
 export class DashboardServer {
   private server: Server | null = null;
   private updateInProgress = false;
+  private probeInProgress = false;
 
   constructor(
     private configManager: ConfigManager,
@@ -211,6 +212,27 @@ export class DashboardServer {
       } catch (err) {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    // POST /api/claude/auth/probe — definitive end-to-end auth check (runs a real claude invocation)
+    if (req.method === "POST" && path === "/api/claude/auth/probe") {
+      if (this.probeInProgress) {
+        res.writeHead(409, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Probe already running" }));
+        return;
+      }
+      this.probeInProgress = true;
+      try {
+        const result = await probeClaudeAuth();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(result));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      } finally {
+        this.probeInProgress = false;
       }
       return;
     }
