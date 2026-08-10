@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.27.0
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.26.0...v1.27.0)
+
+### 🚀 Enhancements
+
+- **reviewer:** Partial-diff fallback for PRs whose full diff is unfetchable ([94cc33c](https://github.com/martin-janci/claude-code-reviewer/commit/94cc33c))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.26.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.25.0...v1.26.0)
