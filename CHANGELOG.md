@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.32.0
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.31.1...v1.32.0)
+
+### 🚀 Enhancements
+
+- **review:** Honour a repo's .claudeignore for diff exclusions ([e14ce2d](https://github.com/martin-janci/claude-code-reviewer/commit/e14ce2d))
+- **review:** Let reviews query a repo's graphify knowledge graph ([d9e3243](https://github.com/martin-janci/claude-code-reviewer/commit/d9e3243))
+
+### 🩹 Fixes
+
+- **review:** Record and escalate turn-cap failures instead of retrying blind ([3cb496e](https://github.com/martin-janci/claude-code-reviewer/commit/3cb496e))
+
+### 🏡 Chore
+
+- **release:** V1.32.0 ([95dc64c](https://github.com/martin-janci/claude-code-reviewer/commit/95dc64c))
+- **release:** V1.31.2 ([f144508](https://github.com/martin-janci/claude-code-reviewer/commit/f144508))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.31.2
 
 [compare changes](https://github.com/papayapos/papaya-reviewer/compare/v1.32.0...v1.31.2)
