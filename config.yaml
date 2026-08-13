@@ -45,6 +45,10 @@ review:
   excludePaths: []                   # glob patterns to exclude from diff (e.g. ["*.lock", "vendor/**", "dist/**"])
   respectClaudeignore: true          # also exclude paths from the repo's .claudeignore (gitignore-style, incl. ! negations), merged with excludePaths.
                                      # Read from the PR's BASE branch, so a PR cannot exclude itself from review; excludePaths always wins.
+  graphify: false                    # if the reviewed repo ships graphify-out/graph.json, let the review query it
+                                     # (graphify query/path/explain). Grants a Bash tool scoped to `graphify ...`.
+                                     # Needs codebaseAccess + the graphify CLI in the image; no graph = silent no-op.
+                                     # Pair with a .claudeignore listing graphify-out/ to keep it out of the diff.
   extraTools: []                     # extra Claude CLI tool names allowed during codebase reviews, e.g. LSP plugin tools (requires CLAUDE_LSP_PLUGINS env + language server in image); empty = Read,Grep,Glob only
   dryRun: false                      # if true, run reviews but don't post to GitHub (env: DRY_RUN)
   maxConcurrentReviews: 3            # max parallel reviews across all PRs (1-10 recommended)

@@ -711,6 +711,13 @@ export function getDashboardHtml(): string {
           </label>
         </div>
         <div class="field">
+          <label title="Query a repo's graphify-out/graph.json during review (needs Codebase Access + graphify CLI in the image)">Use graphify graph</label>
+          <label class="toggle-switch">
+            <input type="checkbox" id="cfg-review-graphify">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="field">
           <label>Security Paths</label>
           <textarea id="cfg-review-securityPaths" placeholder="One glob pattern per line"></textarea>
         </div>
@@ -1331,6 +1338,7 @@ export function getDashboardHtml(): string {
     setVal('cfg-review-commentTrigger', cfg.review?.commentTrigger);
     setVal('cfg-review-excludePaths', (cfg.review?.excludePaths || []).join('\\n'));
     setChecked('cfg-review-respectClaudeignore', cfg.review?.respectClaudeignore);
+    setChecked('cfg-review-graphify', cfg.review?.graphify);
     setVal('cfg-review-securityPaths', (cfg.review?.securityPaths || []).join('\\n'));
     setVal('cfg-review-extraTools', (cfg.review?.extraTools || []).join('\\n'));
     setVal('cfg-review-staleClosedDays', cfg.review?.staleClosedDays);
@@ -1485,6 +1493,7 @@ export function getDashboardHtml(): string {
       commentTrigger: getVal('cfg-review-commentTrigger'),
       excludePaths: getVal('cfg-review-excludePaths').split('\\n').map(s => s.trim()).filter(Boolean),
       respectClaudeignore: getChecked('cfg-review-respectClaudeignore'),
+      graphify: getChecked('cfg-review-graphify'),
       securityPaths: getVal('cfg-review-securityPaths').split('\\n').map(s => s.trim()).filter(Boolean),
       extraTools: getVal('cfg-review-extraTools').split('\\n').map(s => s.trim()).filter(Boolean),
       staleClosedDays: getNum('cfg-review-staleClosedDays'),

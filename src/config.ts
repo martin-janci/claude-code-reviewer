@@ -232,6 +232,7 @@ export const DEFAULTS: AppConfig = {
     staleWorktreeMinutes: 60,
     excludePaths: [],
     respectClaudeignore: true,
+    graphify: false,
     dryRun: false,
     maxConcurrentReviews: 3,
     confidenceThreshold: 0, // 0 = show all findings, 80 = filter low-confidence

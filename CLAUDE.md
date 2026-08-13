@@ -56,7 +56,7 @@ config.yaml                                      # Runtime configuration
 - **Two event sources** (poller + webhook) share the same `Reviewer` and `StateStore`
 - **Lifecycle events** (close/merge/draft) bypass the per-PR mutex for immediate state updates
 - **`shouldReview()`** is the single decision point — all review gating logic lives in `decisions.ts`
-- **Codebase access** via bare clones + git worktrees (`clone/manager.ts`). Each PR gets an isolated worktree sharing the same object store. Claude receives read-only tools (`Read`, `Grep`, `Glob`) scoped to the worktree.
+- **Codebase access** via bare clones + git worktrees (`clone/manager.ts`). Each PR gets an isolated worktree sharing the same object store. Claude receives read-only tools (`Read`, `Grep`, `Glob`) scoped to the worktree. With `review.graphify` on, a repo that ships `graphify-out/graph.json` also gets a `Bash` tool scoped to `graphify ...` for querying that knowledge graph.
 - **PR Reviews API** — reviews are posted via `POST /pulls/{n}/reviews` with `event: "COMMENT"` (never approve/block from the bot). Inline comments use Conventional Comments format.
 - **Structured JSON output** from Claude with three-tier fallback parsing (direct → fence extraction → trailing JSON extraction → freeform legacy). Invalid JSON gracefully degrades to issue comment posting.
 - **Admin dashboard** runs on a separate port (default `3001`) from the webhook server. Config changes are applied via hot-reload where possible; fields that require restart are clearly marked. See `docs/DASHBOARD.md`.
@@ -92,6 +92,7 @@ GITHUB_TOKEN=ghp_xxx node dist/index.js  # Production
 | Claude integration | `reviewer/claude.ts`, `.claude/skills/code-review/skill.md` |
 | GitHub API calls | `reviewer/github.ts` |
 | Codebase access | `clone/manager.ts`, `reviewer/reviewer.ts`, `reviewer/claude.ts` |
+| Graphify graph access | `reviewer/reviewer.ts` (`graphifyAvailable`), `reviewer/claude.ts` (prompt + `--allowedTools`), `Dockerfile` |
 | Inline comments | `reviewer/diff-parser.ts`, `reviewer/formatter.ts`, `reviewer/reviewer.ts` |
 | Review verification | `reviewer/comment-verifier.ts` (handles both review and legacy comment paths) |
 | Jira integration | `features/jira.ts`, `reviewer/formatter.ts` (JiraLink), `reviewer/reviewer.ts` |

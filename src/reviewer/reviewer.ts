@@ -16,6 +16,8 @@ import { sendSlackNotification, buildErrorNotification, shouldNotify } from "../
 import { shouldReview } from "../state/decisions.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { getPRDiff, isDiffTooLargeError, listPRCommits, getCompareDiff, getClaudeIgnore, postReview, postComment, updateComment, deleteComment, findExistingComment, getReviewThreads, resolveReviewThread, type ReviewEvent } from "./github.js";
 import { reviewDiff } from "./claude.js";
 import { parseCommentableLines, findNearestCommentableLine, filterDiff, mergeExcludePatterns, extractDiffPaths, findSecurityPaths } from "./diff-parser.js";
@@ -123,6 +125,8 @@ export class Reviewer {
   private locks = new Map<string, Promise<void>>();
   private inflightCount = 0;
   private features: Feature[];
+  // Memoized "is the graphify CLI installed?" probe — the answer can't change mid-process
+  private graphifyCliProbe: Promise<boolean> | null = null;
   // Semaphore for limiting concurrent reviews
   private concurrencyQueue: Array<() => void> = [];
   private activeReviews = 0;
@@ -869,6 +873,7 @@ export class Reviewer {
       // Cap exemptions passed to the prompt to bound its size
       testExemptions: state.testExemptions?.slice(-20),
       extraTools: this.config.review.extraTools.length > 0 ? this.config.review.extraTools : undefined,
+      graphify: await this.graphifyAvailable(cwd, log),
     });
     timings.claude_review_ms = Date.now() - claudeT0;
 
@@ -1216,6 +1221,30 @@ export class Reviewer {
         this.auditLogger?.stateChanged(state.owner, state.repo, state.number, "skipped", "pending_review", "reviewer");
       }
     }
+  }
+
+  /**
+   * Whether this review can query a graphify knowledge graph: the feature is on,
+   * the checked-out repo ships `graphify-out/graph.json`, and the CLI exists in
+   * this image. Any of those missing is a silent no-op — reviews never depend on it.
+   */
+  private async graphifyAvailable(cwd: string | undefined, log: Logger): Promise<boolean> {
+    if (!cwd || !this.config.review.graphify) return false;
+    if (!existsSync(join(cwd, "graphify-out", "graph.json"))) return false;
+
+    if (!this.graphifyCliProbe) {
+      // The CLI is an optional image component; probe once per process, not per PR.
+      this.graphifyCliProbe = promisify(execFile)("graphify", ["--help"], { timeout: 15_000 })
+        .then(() => true)
+        .catch(() => false);
+    }
+    const cliAvailable = await this.graphifyCliProbe;
+    if (!cliAvailable) {
+      log.warn("Repo ships a graphify graph but the graphify CLI is missing from this image — continuing without graph access");
+      return false;
+    }
+    log.info("Graphify knowledge graph detected — exposing graphify query tools to the review");
+    return true;
   }
 
   /**

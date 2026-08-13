@@ -57,6 +57,18 @@ RUN wget -qO /tmp/klsp.vsix ${KOTLIN_LSP_URL} \
     && chmod +x /usr/local/bin/kotlin-lsp \
     && sh -n /usr/local/bin/kotlin-lsp
 
+# graphify: knowledge-graph CLI. Reviews use it read-only (query/path/explain) when the
+# reviewed repo ships graphify-out/graph.json — see review.graphify in config.yaml.
+# Verified on linux/amd64 (the deployment target): every dep resolves to a musllinux
+# x86_64 wheel, ~215 MB of site-packages. On arm64 ~14 tree-sitter grammars publish no
+# musl wheel, so --only-binary fails immediately instead of attempting a source build
+# this image has no compiler for. Non-fatal by design: a failed install just leaves the
+# CLI absent, the runtime probe notices, and reviews continue without graph access.
+RUN apk add --no-cache py3-pip \
+    && (pip install --break-system-packages --no-cache-dir --only-binary=:all: graphifyy \
+        && graphify --help >/dev/null 2>&1 \
+        || echo "WARNING: graphify CLI unavailable in this image — review.graphify will no-op")
+
 # Install Claude CLI via npm (global prefix under node user's home)
 ENV NPM_CONFIG_PREFIX=/home/node/.local
 ARG CLAUDE_CLI_VERSION=latest

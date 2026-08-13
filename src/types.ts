@@ -40,6 +40,10 @@ export interface ReviewConfig {
   // excludePaths. Read from the PR's base branch — never from the PR head — so a PR cannot ship a
   // `.claudeignore` that hides its own changes from review.
   respectClaudeignore: boolean;
+  // Let reviews query a repo's prebuilt graphify knowledge graph (graphify-out/graph.json) via the
+  // graphify CLI. Grants Claude a Bash tool scoped to `graphify ...`. Requires codebaseAccess and a
+  // graphify CLI in the image; a repo without a graph is a silent no-op.
+  graphify: boolean;
   dryRun: boolean;
   // Parallel reviews
   maxConcurrentReviews: number;
