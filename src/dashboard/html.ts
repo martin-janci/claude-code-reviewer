@@ -704,6 +704,13 @@ export function getDashboardHtml(): string {
           <textarea id="cfg-review-excludePaths" placeholder="One glob pattern per line"></textarea>
         </div>
         <div class="field">
+          <label title="Merge the repo's .claudeignore (read from the PR's base branch) into Exclude Paths">Respect .claudeignore</label>
+          <label class="toggle-switch">
+            <input type="checkbox" id="cfg-review-respectClaudeignore">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="field">
           <label>Security Paths</label>
           <textarea id="cfg-review-securityPaths" placeholder="One glob pattern per line"></textarea>
         </div>
@@ -1323,6 +1330,7 @@ export function getDashboardHtml(): string {
     setVal('cfg-review-commentTag', cfg.review?.commentTag);
     setVal('cfg-review-commentTrigger', cfg.review?.commentTrigger);
     setVal('cfg-review-excludePaths', (cfg.review?.excludePaths || []).join('\\n'));
+    setChecked('cfg-review-respectClaudeignore', cfg.review?.respectClaudeignore);
     setVal('cfg-review-securityPaths', (cfg.review?.securityPaths || []).join('\\n'));
     setVal('cfg-review-extraTools', (cfg.review?.extraTools || []).join('\\n'));
     setVal('cfg-review-staleClosedDays', cfg.review?.staleClosedDays);
@@ -1476,6 +1484,7 @@ export function getDashboardHtml(): string {
       commentTag: getVal('cfg-review-commentTag'),
       commentTrigger: getVal('cfg-review-commentTrigger'),
       excludePaths: getVal('cfg-review-excludePaths').split('\\n').map(s => s.trim()).filter(Boolean),
+      respectClaudeignore: getChecked('cfg-review-respectClaudeignore'),
       securityPaths: getVal('cfg-review-securityPaths').split('\\n').map(s => s.trim()).filter(Boolean),
       extraTools: getVal('cfg-review-extraTools').split('\\n').map(s => s.trim()).filter(Boolean),
       staleClosedDays: getNum('cfg-review-staleClosedDays'),

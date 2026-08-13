@@ -7,3 +7,7 @@ data/
 .mcp.json
 .env.local
 config.yaml.bak
+
+# Local tooling scratch state
+.serena/
+.claude/.headroom_wrap_marker.json

@@ -137,6 +137,7 @@ This project enforces [Conventional Commits](https://www.conventionalcommits.org
 ## Testing
 
 Before committing changes:
+0. `npm test` — `node:test` via tsx over `src/**/*.test.ts` (pure-logic units only: Claude output parsing, diff filtering, usage store)
 1. `npm run build` — must compile cleanly (strict TypeScript)
 2. Verify state transitions are consistent (check `decisions.ts` and `reviewer.ts` together)
 3. Ensure webhook handlers always send an HTTP response before async processing
@@ -144,7 +145,7 @@ Before committing changes:
 
 ## Important Constraints
 
-- **No test framework** — project relies on TypeScript strict mode and manual verification
+- **Minimal test coverage** — `npm test` (node:test) covers a few pure-logic modules only; everything else relies on TypeScript strict mode and manual verification
 - **State file format** is versioned (V2) — changes to `PRState` must be backward-compatible or add migration logic in `store.ts`
 - **`gh` CLI** must be available on PATH with a valid `GH_TOKEN`
 - **`claude` CLI** is installed via npm at build time (`Dockerfile`). In Kubernetes, auth is injected via an init container from a Secret into a writable PVC. Set `CLAUDE_AUTO_UPDATE=true` to auto-update on startup

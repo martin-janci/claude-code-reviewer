@@ -16,9 +16,9 @@ import { sendSlackNotification, buildErrorNotification, shouldNotify } from "../
 import { shouldReview } from "../state/decisions.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { getPRDiff, isDiffTooLargeError, listPRCommits, getCompareDiff, postReview, postComment, updateComment, deleteComment, findExistingComment, getReviewThreads, resolveReviewThread, type ReviewEvent } from "./github.js";
+import { getPRDiff, isDiffTooLargeError, listPRCommits, getCompareDiff, getClaudeIgnore, postReview, postComment, updateComment, deleteComment, findExistingComment, getReviewThreads, resolveReviewThread, type ReviewEvent } from "./github.js";
 import { reviewDiff } from "./claude.js";
-import { parseCommentableLines, findNearestCommentableLine, filterDiff, extractDiffPaths, findSecurityPaths } from "./diff-parser.js";
+import { parseCommentableLines, findNearestCommentableLine, filterDiff, mergeExcludePatterns, extractDiffPaths, findSecurityPaths } from "./diff-parser.js";
 import { formatReviewBody, formatInlineComment, filterByConfidence, type JiraLink } from "./formatter.js";
 import { extractJiraKey } from "../features/jira.js";
 
@@ -95,6 +95,16 @@ interface PartialDiffInfo {
   baseSha: string;
 }
 
+/** What the exclusion filters removed from the diff, and where the rules came from. */
+interface ExclusionInfo {
+  /** Effective patterns (config + base-branch .claudeignore), last-match-wins order */
+  patterns: string[];
+  excludedCount: number;
+  claudeignoreApplied: boolean;
+  /** The PR itself touches .claudeignore — its version was deliberately not honoured */
+  claudeignoreChangedInPR: boolean;
+}
+
 /** Internal state passed through review phases */
 interface ReviewPhaseState {
   pr: PullRequest;
@@ -106,6 +116,7 @@ interface ReviewPhaseState {
   phaseStart: number;
   jiraLink?: JiraLink;
   partial?: PartialDiffInfo;
+  exclusions?: ExclusionInfo;
 }
 
 export class Reviewer {
@@ -293,6 +304,25 @@ export class Reviewer {
 
     log.info("Phase 2: Diff fetched", { phase: "diff_fetch", lines: diffResult.diff.split("\n").length, durationMs: diffResult.diffFetchMs, partial: !!diffResult.partial });
 
+    // Nothing left to review — every file was excluded, or the PR has no file changes.
+    // Reviewing an empty payload would produce a hollow "no issues found" verdict.
+    if (!/^diff --git /m.test(diffResult.diff)) {
+      const { excludedCount, claudeignoreApplied } = diffResult.exclusions;
+      const reason = excludedCount > 0
+        ? `All ${excludedCount} changed file(s) were excluded by ${claudeignoreApplied ? "`.claudeignore` / exclude patterns" : "exclude patterns"}`
+        : "No file changes to review";
+      log.info("Skipping: nothing to review after exclusions", { excludedCount, claudeignoreApplied });
+      this.metrics?.recordSkip("empty_diff");
+      this.store.update(owner, repo, prNumber, {
+        status: "skipped",
+        skipReason: "empty_diff",
+        skipDiffLines: null,
+        skippedAtSha: headSha,
+      });
+      this.auditLogger?.reviewSkipped(owner, repo, prNumber, reason, "reviewer");
+      return { outcome: "skipped", skipReason: reason };
+    }
+
     // Set status to reviewing (lock)
     const oldStatus = state.status;
     this.store.setStatus(owner, repo, prNumber, "reviewing");
@@ -398,7 +428,7 @@ export class Reviewer {
 
     // Phase 4: Run Claude review
     log.info("Phase 4: Starting Claude review", { phase: "claude_review", codebaseAccess: !!cwd });
-    const reviewResult = await this.runReview(pr, currentState, diffResult.diff, cwd, timings, log, !!diffResult.partial);
+    const reviewResult = await this.runReview(pr, currentState, diffResult.diff, cwd, timings, log, !!diffResult.partial, diffResult.exclusions.patterns);
     if (!reviewResult) {
       log.info("Phase 4: Claude review failed", { phase: "claude_review" });
       // Audit: review failed
@@ -429,7 +459,7 @@ export class Reviewer {
     // Phase 5: Post review results
     log.info("Phase 5: Posting review results", { phase: "comment_post" });
     const postResult = await this.postResults(
-      { pr, state: currentState, log, diff: diffResult.diff, cwd, timings, phaseStart, jiraLink, partial: diffResult.partial },
+      { pr, state: currentState, log, diff: diffResult.diff, cwd, timings, phaseStart, jiraLink, partial: diffResult.partial, exclusions: diffResult.exclusions },
       reviewResult,
     );
     if (!postResult) {
@@ -570,7 +600,7 @@ export class Reviewer {
   private async fetchDiff(
     pr: PullRequest,
     log: Logger,
-  ): Promise<{ diff: string; diffFetchMs: number; partial?: PartialDiffInfo } | { skippedTooLarge: string } | null> {
+  ): Promise<{ diff: string; diffFetchMs: number; partial?: PartialDiffInfo; exclusions: ExclusionInfo } | { skippedTooLarge: string } | null> {
     const { owner, repo, number: prNumber, headSha } = pr;
 
     let diff: string;
@@ -620,16 +650,44 @@ export class Reviewer {
       });
     }
 
+    // Merge repo-level .claudeignore patterns (if enabled) with configured excludePaths.
+    // The file is read from the BASE branch, never from the PR head: otherwise a PR
+    // could add or widen .claudeignore in the same push and exclude itself from review.
+    let excludePatterns = this.config.review.excludePaths;
+    let claudeignoreApplied = false;
+    const claudeignoreChangedInPR = extractDiffPaths(diff).includes(".claudeignore");
+    if (this.config.review.respectClaudeignore) {
+      try {
+        const ignoreContent = await getClaudeIgnore(owner, repo, pr.baseBranch);
+        if (ignoreContent) {
+          excludePatterns = mergeExcludePatterns(excludePatterns, ignoreContent);
+          claudeignoreApplied = true;
+        }
+      } catch (err) {
+        log.warn("Failed to fetch .claudeignore, continuing without it", { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+    if (claudeignoreChangedInPR) {
+      log.warn("PR modifies .claudeignore — exclusions taken from the base branch, not from the PR head", { baseBranch: pr.baseBranch });
+    }
+
     // Filter excluded paths from diff
-    if (this.config.review.excludePaths.length > 0) {
-      const { filtered, excludedCount } = filterDiff(diff, this.config.review.excludePaths);
+    let excludedCount = 0;
+    if (excludePatterns.length > 0) {
+      const result = filterDiff(diff, excludePatterns);
+      excludedCount = result.excludedCount;
       if (excludedCount > 0) {
-        log.info("Filtered excluded paths from diff", { excludedCount, patterns: this.config.review.excludePaths });
-        diff = filtered;
+        log.info("Filtered excluded paths from diff", { excludedCount, claudeignoreApplied, patterns: excludePatterns });
+        diff = result.filtered;
       }
     }
 
-    return { diff, diffFetchMs, partial };
+    return {
+      diff,
+      diffFetchMs,
+      partial,
+      exclusions: { patterns: excludePatterns, excludedCount, claudeignoreApplied, claudeignoreChangedInPR },
+    };
   }
 
   /**
@@ -697,6 +755,7 @@ export class Reviewer {
     timings: Partial<PhaseTimings>,
     log: Logger,
     isPartialDiff = false,
+    excludePatterns: string[] = [],
   ): Promise<ReviewResult | null> {
     const { owner, repo, number: prNumber, headSha, title } = pr;
 
@@ -730,7 +789,7 @@ export class Reviewer {
     // Not applicable to partial diffs — their path set is incomplete, so a delta
     // restricted to it could look deceptively empty
     if (this.config.review.incrementalReviews && !isPartialDiff && lastReview && context && cwd && lastReview.sha !== headSha) {
-      const delta = await this.computeDeltaDiff(cwd, lastReview.sha, headSha, diff, log);
+      const delta = await this.computeDeltaDiff(cwd, lastReview.sha, headSha, diff, excludePatterns, log);
       if (delta !== null) {
         if (delta.trim() === "") {
           // Rebase/merge with no reviewable content changes — skip the Claude invocation entirely
@@ -844,14 +903,24 @@ export class Reviewer {
     phase: ReviewPhaseState,
     result: ReviewResult,
   ): Promise<{ verdict: ReviewVerdict; reviewId: string | null; commentId: string | null } | null> {
-    const { pr, state, log, diff, jiraLink, timings, partial } = phase;
+    const { pr, state, log, diff, jiraLink, timings, partial, exclusions } = phase;
     const { owner, repo, number: prNumber, headSha } = pr;
 
     const postT0 = Date.now();
     const tag = this.config.review.commentTag;
-    const partialNote = partial
-      ? `⚠️ **Partial review** — the full PR diff was too large to fetch, so only the last ${partial.reviewedCommits} of ${partial.totalCommits} commits were reviewed (changes since \`${partial.baseSha.slice(0, 7)}\`). Earlier changes in this PR were not reviewed.`
-      : undefined;
+    // Anything that narrowed the reviewed scope must be visible on the PR — a silent
+    // exclusion reads as "Claude looked at this and found nothing".
+    const notices: string[] = [];
+    if (partial) {
+      notices.push(`⚠️ **Partial review** — the full PR diff was too large to fetch, so only the last ${partial.reviewedCommits} of ${partial.totalCommits} commits were reviewed (changes since \`${partial.baseSha.slice(0, 7)}\`). Earlier changes in this PR were not reviewed.`);
+    }
+    if (exclusions && exclusions.excludedCount > 0) {
+      const source = exclusions.claudeignoreApplied ? "`.claudeignore` and the reviewer's exclude patterns" : "the reviewer's exclude patterns";
+      notices.push(`ℹ️ **${exclusions.excludedCount} changed file(s) excluded** from this review by ${source}.`);
+    }
+    if (exclusions?.claudeignoreChangedInPR) {
+      notices.push(`⚠️ This PR modifies \`.claudeignore\`. Exclusions were taken from the base branch (\`${pr.baseBranch}\`) — the version proposed in this PR was **not** applied.`);
+    }
     let verdict: ReviewVerdict;
     let reviewId: string | null = null;
     let commentId: string | null = state.commentId;
@@ -934,7 +1003,7 @@ export class Reviewer {
       }
 
       // Build top-level review body
-      const body = formatReviewBody(structured, headSha, tag, orphanFindings, jiraLink, partialNote);
+      const body = formatReviewBody(structured, headSha, tag, orphanFindings, jiraLink, notices);
 
       // Map verdict to GitHub review event
       const reviewEvent: ReviewEvent = verdict === "APPROVE" ? "APPROVE" : "COMMENT";
@@ -988,7 +1057,8 @@ export class Reviewer {
     } else {
       // Fallback path: legacy issue comment
       verdict = parseLegacyVerdict(result.body);
-      const body = `${tag}\n\n${partialNote ? `${partialNote}\n\n` : ""}${result.body}\n\n---\n*Reviewed by Claude Code at commit ${headSha.slice(0, 7)}*`;
+      const noticeBlock = notices.length > 0 ? `${notices.map((n) => `> ${n}`).join("\n\n")}\n\n` : "";
+      const body = `${tag}\n\n${noticeBlock}${result.body}\n\n---\n*Reviewed by Claude Code at commit ${headSha.slice(0, 7)}*`;
 
       if (this.config.review.dryRun) {
         log.info("Dry run: skipping legacy comment post", { phase: "comment_post", verdict });
@@ -1130,7 +1200,8 @@ export class Reviewer {
       let cleared = false;
       if (state.skipReason === "draft" && !state.isDraft) cleared = true;
       if (state.skipReason === "wip_title" && !state.title.toLowerCase().startsWith("wip")) cleared = true;
-      if (state.skipReason === "diff_too_large" && state.skippedAtSha && state.headSha !== state.skippedAtSha) {
+      if ((state.skipReason === "diff_too_large" || state.skipReason === "empty_diff")
+        && state.skippedAtSha && state.headSha !== state.skippedAtSha) {
         cleared = true;
       }
 
@@ -1150,11 +1221,13 @@ export class Reviewer {
   /**
    * Compute the diff between the last reviewed SHA and the current head,
    * restricted to paths in the PR diff (so base-branch merges don't flood it)
-   * and filtered by the same exclusion patterns.
+   * and filtered by the same exclusion patterns the full diff was filtered with
+   * (resolved once in fetchDiff — never re-read from the PR's worktree, which
+   * would honour a .claudeignore the PR itself introduced).
    * Returns null when the delta cannot be computed (force-push, git error) —
    * callers fall back to the full PR diff.
    */
-  private async computeDeltaDiff(cwd: string, fromSha: string, toSha: string, fullDiff: string, log: Logger): Promise<string | null> {
+  private async computeDeltaDiff(cwd: string, fromSha: string, toSha: string, fullDiff: string, excludePatterns: string[], log: Logger): Promise<string | null> {
     const exec = promisify(execFile);
     try {
       await exec("git", ["cat-file", "-e", `${fromSha}^{commit}`], { cwd, timeout: 10_000 });
@@ -1170,7 +1243,7 @@ export class Reviewer {
         args.push("--", ...paths);
       }
       const { stdout } = await exec("git", args, { cwd, maxBuffer: 64 * 1024 * 1024, timeout: 30_000 });
-      const { filtered } = filterDiff(stdout, this.config.review.excludePaths);
+      const { filtered } = filterDiff(stdout, excludePatterns);
       return filtered;
     } catch (err) {
       log.warn("Incremental diff failed — falling back to full diff", { error: String(err).slice(0, 200) });

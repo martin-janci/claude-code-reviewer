@@ -132,6 +132,30 @@ export async function getPRDiff(owner: string, repo: string, prNumber: number): 
   ], undefined, { maxBuffer: DIFF_MAX_BUFFER });
 }
 
+/**
+ * Fetch `.claudeignore` from the repo root at the given ref.
+ * Returns null when the file doesn't exist (or the ref/repo is otherwise unreadable).
+ *
+ * NOTE: the ref goes in the query string, not as a `-f` parameter — `gh api`
+ * switches the request method to POST as soon as any parameter is added, which
+ * makes the contents endpoint answer 404 and silently swallows the file.
+ */
+export async function getClaudeIgnore(owner: string, repo: string, ref: string): Promise<string | null> {
+  try {
+    const content = await gh([
+      "api",
+      `repos/${owner}/${repo}/contents/.claudeignore?ref=${encodeURIComponent(ref)}`,
+      "--jq", ".content // empty",
+    ]);
+    if (!content) return null;
+    return Buffer.from(content, "base64").toString("utf-8");
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/404|Not Found/i.test(message)) return null;
+    throw err;
+  }
+}
+
 /** List the PR's commit SHAs in chronological order (oldest first). */
 export async function listPRCommits(owner: string, repo: string, prNumber: number): Promise<string[]> {
   const out = await gh([

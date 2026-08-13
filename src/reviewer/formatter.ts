@@ -61,7 +61,7 @@ export function formatReviewBody(
   tag: string,
   orphanFindings: ReviewFinding[],
   jira?: JiraLink,
-  partialNote?: string,
+  notices?: string[],
 ): string {
   const parts: string[] = [tag, ""];
 
@@ -73,9 +73,9 @@ export function formatReviewBody(
   parts.push(`## ${verdictEmoji} ${verdictText}`);
   parts.push("");
 
-  // Partial-review banner (diff too large — only recent commits reviewed)
-  if (partialNote) {
-    parts.push(`> ${partialNote}`);
+  // Scope banners (partial review, excluded paths) — anything that limits what was reviewed
+  for (const notice of notices ?? []) {
+    parts.push(`> ${notice}`);
     parts.push("");
   }
 

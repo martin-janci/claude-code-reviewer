@@ -36,6 +36,10 @@ export interface ReviewConfig {
   reviewMaxTurns: number;
   staleWorktreeMinutes: number;
   excludePaths: string[];
+  // Also exclude paths listed in the repo's `.claudeignore` (gitignore-style syntax), merged with
+  // excludePaths. Read from the PR's base branch — never from the PR head — so a PR cannot ship a
+  // `.claudeignore` that hides its own changes from review.
+  respectClaudeignore: boolean;
   dryRun: boolean;
   // Parallel reviews
   maxConcurrentReviews: number;
@@ -218,7 +222,7 @@ export interface StructuredReview {
   resolutions?: ResolutionEntry[];
 }
 
-export type SkipReason = "draft" | "wip_title" | "diff_too_large";
+export type SkipReason = "draft" | "wip_title" | "diff_too_large" | "empty_diff";
 
 export type ErrorPhase = "diff_fetch" | "clone_prepare" | "claude_review" | "comment_post" | "jira_validate" | "description_generate" | "label_apply";
 
