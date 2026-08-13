@@ -49,8 +49,13 @@ function parseLegacyVerdict(body: string): ReviewVerdict {
  *   - 529: "overloaded_error" / "overloaded"
  * If the error format changes, unrecognized patterns fall through to "transient" (safe default).
  */
-function classifyError(err: unknown, phase: ErrorPhase): ErrorKind {
+export function classifyError(err: unknown, phase: ErrorPhase): ErrorKind {
   const message = err instanceof Error ? err.message : String(err);
+
+  // Turn budget exhausted before the model produced a review. Checked before the
+  // generic patterns below because the CLI's own wording ("Reached maximum number
+  // of turns") would otherwise fall through to transient and be retried unchanged.
+  if (/reached maximum number of turns|error_max_turns|terminated: max_turns/i.test(message)) return "max_turns";
 
   // Permanent: resource not found or deleted
   if (/404|not found/i.test(message)) return "permanent";
@@ -835,7 +840,15 @@ export class Reviewer {
     const reviewCfg = this.config.review;
     let model = reviewCfg.model || undefined;
     let tierMaxTurns: number | undefined;
-    if (reviewCfg.lightModel && reviewCfg.lightModelMaxDiffLines > 0 && securityPaths.length === 0) {
+    // A previous attempt on this same commit ran out of turns — don't hand it the
+    // tighter light-tier budget again, escalate to the full model and turn cap.
+    const escalateFromMaxTurns = state.lastError?.kind === "max_turns" && state.lastError.sha === headSha;
+    if (escalateFromMaxTurns) {
+      log.info("Escalating to full tier — previous attempt on this commit exhausted the turn cap", {
+        reviewMaxTurns: reviewCfg.reviewMaxTurns,
+      });
+    }
+    if (!escalateFromMaxTurns && reviewCfg.lightModel && reviewCfg.lightModelMaxDiffLines > 0 && securityPaths.length === 0) {
       const diffLines = reviewDiffText.split("\n").length;
       if (diffLines <= reviewCfg.lightModelMaxDiffLines) {
         model = reviewCfg.lightModel;
@@ -1330,10 +1343,18 @@ export class Reviewer {
     const currentErrors = freshState?.consecutiveErrors ?? 0;
 
     // Permanent errors skip retries by immediately setting consecutiveErrors to maxRetries
-    // Rate limit / spending limit / overloaded errors are transient — use normal backoff
-    const consecutiveErrors = kind === "permanent"
+    // Rate limit / spending limit / overloaded errors are transient — use normal backoff.
+    // A repeated max_turns on the same SHA means the escalated (full-tier) attempt also
+    // ran out of turns — a third try would burn the same tokens for the same result.
+    const repeatedMaxTurns = kind === "max_turns"
+      && freshState?.lastError?.kind === "max_turns"
+      && freshState.lastError.sha === sha;
+    const consecutiveErrors = kind === "permanent" || repeatedMaxTurns
       ? this.config.review.maxRetries
       : currentErrors + 1;
+    if (repeatedMaxTurns) {
+      log.error("Turn cap exhausted again after tier escalation — giving up on this commit", { phase });
+    }
 
     // Get old status before update
     const oldStatus = freshState?.status ?? "pending_review";

@@ -230,7 +230,9 @@ export type SkipReason = "draft" | "wip_title" | "diff_too_large" | "empty_diff"
 
 export type ErrorPhase = "diff_fetch" | "clone_prepare" | "claude_review" | "comment_post" | "jira_validate" | "description_generate" | "label_apply";
 
-export type ErrorKind = "transient" | "permanent" | "rate_limit" | "spending_limit" | "overloaded";
+// "max_turns" — the Claude CLI hit its --max-turns cap before producing a review.
+// Retrying under the same cap can only fail again, so the retry escalates the tier.
+export type ErrorKind = "transient" | "permanent" | "rate_limit" | "spending_limit" | "overloaded" | "max_turns";
 
 export interface RateLimitConfig {
   defaultCooldownSeconds: number;

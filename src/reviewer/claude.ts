@@ -257,6 +257,42 @@ export function parseStructuredReview(stdout: string): StructuredReview | null {
 }
 
 /**
+ * Pull a human-readable cause out of an error envelope the Claude CLI printed on
+ * stdout before exiting non-zero. Returns null when stdout isn't such an envelope,
+ * leaving the caller to fall back to the exec error (which is just the argv).
+ *
+ * `result` carries the message for most failures (e.g. spending limit), but terminal
+ * states like turn-budget exhaustion have no `result` at all — they report through
+ * `errors` / `terminal_reason` / `subtype`. Falling through to those matters: without
+ * it the recorded error is an unclassifiable command line, so classifyError() calls it
+ * transient and the review is retried under the identical cap that just failed.
+ */
+export function extractEnvelopeError(stdout: string): string | null {
+  let envelope: Record<string, unknown>;
+  try {
+    envelope = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  if (!envelope || typeof envelope !== "object" || !envelope.is_error) return null;
+
+  if (typeof envelope.result === "string" && envelope.result) return envelope.result;
+
+  if (Array.isArray(envelope.errors)) {
+    const messages = envelope.errors.filter((e): e is string => typeof e === "string" && e.length > 0);
+    if (messages.length > 0) return messages.join("; ");
+  }
+
+  if (typeof envelope.terminal_reason === "string" && envelope.terminal_reason) {
+    return `Claude CLI terminated: ${envelope.terminal_reason}`;
+  }
+  if (typeof envelope.subtype === "string" && envelope.subtype) {
+    return `Claude CLI error: ${envelope.subtype}`;
+  }
+  return null;
+}
+
+/**
  * Extract usage metrics from the Claude CLI JSON envelope.
  * Maps snake_case API fields to camelCase ClaudeUsage.
  */
@@ -429,17 +465,9 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
           return;
         }
 
-        // Extract Claude-specific error from stdout JSON if available.
-        // Claude CLI may exit non-zero but still emit a structured JSON envelope
-        // (e.g. spending limit: {"is_error":true,"result":"You've hit your limit · resets 7am (UTC)"}).
-        // Using the envelope result as body lets classifyError() match the actual cause.
-        let errorBody = message;
-        try {
-          const envelope = JSON.parse(stdout);
-          if (envelope.is_error && typeof envelope.result === "string" && envelope.result) {
-            errorBody = envelope.result;
-          }
-        } catch { /* stdout wasn't JSON — fall back to exec error message */ }
+        // Extract Claude-specific error from stdout JSON if available, so
+        // classifyError() matches the actual cause instead of the raw argv.
+        const errorBody = extractEnvelopeError(stdout) ?? message;
 
         if (log) {
           log.error("Claude CLI failed", { elapsedS: elapsed, error: message, errorBody, stderr: stderr?.trim().slice(0, 500), stdout: stdout?.trim().slice(0, 500) });

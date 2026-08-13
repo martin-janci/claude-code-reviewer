@@ -9,7 +9,8 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { extractUsage, parseStructuredReview } from "./claude.js";
+import { extractUsage, parseStructuredReview, extractEnvelopeError } from "./claude.js";
+import { classifyError } from "./reviewer.js";
 
 // ---------------------------------------------------------------------------
 // extractUsage — Claude CLI JSON envelope parsing
@@ -397,5 +398,80 @@ describe("parseStructuredReview", () => {
     it("returns null for empty string", () => {
       assert.equal(parseStructuredReview(""), null);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractEnvelopeError — error envelopes the CLI prints before exiting non-zero
+// ---------------------------------------------------------------------------
+
+describe("extractEnvelopeError", () => {
+  it("prefers result when present (spending limit)", () => {
+    const envelope = { is_error: true, result: "You've hit your limit · resets 7am (UTC)" };
+    assert.equal(extractEnvelopeError(JSON.stringify(envelope)), "You've hit your limit · resets 7am (UTC)");
+  });
+
+  it("falls back to errors[] when there is no result (turn budget exhausted)", () => {
+    // Real shape observed in production: no `result` field at all
+    const envelope = {
+      is_error: true,
+      num_turns: 21,
+      stop_reason: "tool_use",
+      terminal_reason: "max_turns",
+      subtype: "error_max_turns",
+      errors: ["Reached maximum number of turns (20)"],
+    };
+    assert.equal(extractEnvelopeError(JSON.stringify(envelope)), "Reached maximum number of turns (20)");
+  });
+
+  it("falls back to terminal_reason when errors[] is absent", () => {
+    const envelope = { is_error: true, terminal_reason: "max_turns", subtype: "error_max_turns" };
+    assert.equal(extractEnvelopeError(JSON.stringify(envelope)), "Claude CLI terminated: max_turns");
+  });
+
+  it("falls back to subtype as a last resort", () => {
+    const envelope = { is_error: true, subtype: "error_during_execution" };
+    assert.equal(extractEnvelopeError(JSON.stringify(envelope)), "Claude CLI error: error_during_execution");
+  });
+
+  it("ignores non-string entries in errors[]", () => {
+    const envelope = { is_error: true, errors: [{ code: 1 }, "real message"] };
+    assert.equal(extractEnvelopeError(JSON.stringify(envelope)), "real message");
+  });
+
+  it("returns null for a successful envelope", () => {
+    assert.equal(extractEnvelopeError(JSON.stringify({ is_error: false, result: "fine" })), null);
+  });
+
+  it("returns null for non-JSON stdout", () => {
+    assert.equal(extractEnvelopeError("Command failed: claude '-p' ..."), null);
+    assert.equal(extractEnvelopeError(""), null);
+  });
+
+  it("returns null when the envelope carries no usable message", () => {
+    assert.equal(extractEnvelopeError(JSON.stringify({ is_error: true, num_turns: 21 })), null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// classifyError — the max_turns branch drives retry escalation, so it is load-bearing
+// ---------------------------------------------------------------------------
+
+describe("classifyError (max_turns)", () => {
+  it("classifies the CLI's turn-cap wording", () => {
+    assert.equal(classifyError(new Error("Reached maximum number of turns (20)"), "claude_review"), "max_turns");
+  });
+
+  it("classifies the terminal_reason and subtype fallbacks", () => {
+    assert.equal(classifyError(new Error("Claude CLI terminated: max_turns"), "claude_review"), "max_turns");
+    assert.equal(classifyError(new Error("Claude CLI error: error_max_turns"), "claude_review"), "max_turns");
+  });
+
+  it("still classifies spending limits ahead of the default", () => {
+    assert.equal(classifyError(new Error("You've hit your limit · resets 7am (UTC)"), "claude_review"), "spending_limit");
+  });
+
+  it("leaves the raw exec message transient (the pre-fix behaviour we no longer rely on)", () => {
+    assert.equal(classifyError(new Error("Command failed: claude '-p' '--output-format' 'json'"), "claude_review"), "transient");
   });
 });
