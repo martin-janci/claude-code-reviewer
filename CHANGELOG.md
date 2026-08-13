@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.31.2
+
+[compare changes](https://github.com/papayapos/papaya-reviewer/compare/v1.32.0...v1.31.2)
+
+### 🩹 Fixes
+
+- **docker:** Run kotlin-lsp on musl-native zulu jre 25 instead of bundled JBR ([a9cb0dc](https://github.com/papayapos/papaya-reviewer/commit/a9cb0dc))
+
+### 🏡 Chore
+
+- **release:** V1.31.1 ([cf55d7b](https://github.com/papayapos/papaya-reviewer/commit/cf55d7b))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.31.1
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.31.0...v1.31.1)
