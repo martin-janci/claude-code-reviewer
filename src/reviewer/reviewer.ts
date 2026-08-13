@@ -16,9 +16,11 @@ import { sendSlackNotification, buildErrorNotification, shouldNotify } from "../
 import { shouldReview } from "../state/decisions.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { getPRDiff, isDiffTooLargeError, listPRCommits, getCompareDiff, postReview, postComment, updateComment, deleteComment, findExistingComment, getReviewThreads, resolveReviewThread, type ReviewEvent } from "./github.js";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { getPRDiff, isDiffTooLargeError, listPRCommits, getCompareDiff, getClaudeIgnore, postReview, postComment, updateComment, deleteComment, findExistingComment, getReviewThreads, resolveReviewThread, type ReviewEvent } from "./github.js";
 import { reviewDiff } from "./claude.js";
-import { parseCommentableLines, findNearestCommentableLine, filterDiff, extractDiffPaths, findSecurityPaths } from "./diff-parser.js";
+import { parseCommentableLines, findNearestCommentableLine, filterDiff, mergeExcludePatterns, extractDiffPaths, findSecurityPaths } from "./diff-parser.js";
 import { formatReviewBody, formatInlineComment, filterByConfidence, type JiraLink } from "./formatter.js";
 import { extractJiraKey } from "../features/jira.js";
 
@@ -620,11 +622,22 @@ export class Reviewer {
       });
     }
 
+    // Merge repo-level .claudeignore patterns (if enabled) with configured excludePaths
+    let excludePatterns = this.config.review.excludePaths;
+    if (this.config.review.respectClaudeignore) {
+      try {
+        const ignoreContent = await getClaudeIgnore(owner, repo, headSha);
+        excludePatterns = mergeExcludePatterns(excludePatterns, ignoreContent);
+      } catch (err) {
+        log.warn("Failed to fetch .claudeignore, continuing without it", { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
     // Filter excluded paths from diff
-    if (this.config.review.excludePaths.length > 0) {
-      const { filtered, excludedCount } = filterDiff(diff, this.config.review.excludePaths);
+    if (excludePatterns.length > 0) {
+      const { filtered, excludedCount } = filterDiff(diff, excludePatterns);
       if (excludedCount > 0) {
-        log.info("Filtered excluded paths from diff", { excludedCount, patterns: this.config.review.excludePaths });
+        log.info("Filtered excluded paths from diff", { excludedCount, patterns: excludePatterns });
         diff = filtered;
       }
     }
@@ -1170,7 +1183,16 @@ export class Reviewer {
         args.push("--", ...paths);
       }
       const { stdout } = await exec("git", args, { cwd, maxBuffer: 64 * 1024 * 1024, timeout: 30_000 });
-      const { filtered } = filterDiff(stdout, this.config.review.excludePaths);
+      let excludePatterns = this.config.review.excludePaths;
+      if (this.config.review.respectClaudeignore) {
+        try {
+          const ignoreContent = readFileSync(join(cwd, ".claudeignore"), "utf-8");
+          excludePatterns = mergeExcludePatterns(excludePatterns, ignoreContent);
+        } catch {
+          // .claudeignore absent or unreadable — proceed with configured excludePaths only
+        }
+      }
+      const { filtered } = filterDiff(stdout, excludePatterns);
       return filtered;
     } catch (err) {
       log.warn("Incremental diff failed — falling back to full diff", { error: String(err).slice(0, 200) });

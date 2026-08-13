@@ -18,6 +18,47 @@ function globMatch(pattern: string, path: string): boolean {
 }
 
 /**
+ * Parse `.claudeignore` content (gitignore-style syntax) into glob patterns
+ * compatible with filterDiff's matcher. Negation patterns ("!foo") aren't
+ * supported by the glob-based filter, so they're skipped rather than risking
+ * a mis-exclude.
+ */
+export function parseClaudeIgnore(content: string): string[] {
+  const patterns: string[] = [];
+
+  for (const rawLine of content.split("\n")) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#") || line.startsWith("!")) continue;
+
+    const isDir = line.endsWith("/");
+    const core = isDir ? line.slice(0, -1) : line;
+    const explicitAnchor = core.startsWith("/");
+    const base = explicitAnchor ? core.slice(1) : core;
+    // A pattern is anchored to the repo root if it starts with "/" or contains
+    // an inner "/" (gitignore semantics); otherwise it matches at any depth.
+    const anchored = explicitAnchor || base.includes("/");
+    const bases = anchored ? [base] : [base, `**/${base}`];
+
+    for (const b of bases) {
+      // Match the entry itself, and (unless explicitly dir-only) everything under it,
+      // since a bare pattern may also refer to a directory.
+      if (!isDir) patterns.push(b);
+      patterns.push(`${b}/**`);
+    }
+  }
+
+  return patterns;
+}
+
+/**
+ * Merge configured exclude patterns with parsed `.claudeignore` patterns.
+ */
+export function mergeExcludePatterns(basePatterns: string[], claudeIgnoreContent: string | null): string[] {
+  if (!claudeIgnoreContent) return basePatterns;
+  return [...basePatterns, ...parseClaudeIgnore(claudeIgnoreContent)];
+}
+
+/**
  * Filter a unified diff to exclude files matching any of the given glob patterns.
  * Returns the filtered diff and a count of excluded files.
  */

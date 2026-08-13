@@ -231,6 +231,7 @@ export const DEFAULTS: AppConfig = {
     reviewMaxTurns: 15,
     staleWorktreeMinutes: 60,
     excludePaths: [],
+    respectClaudeignore: true,
     dryRun: false,
     maxConcurrentReviews: 3,
     confidenceThreshold: 0, // 0 = show all findings, 80 = filter low-confidence

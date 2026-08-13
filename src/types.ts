@@ -36,6 +36,8 @@ export interface ReviewConfig {
   reviewMaxTurns: number;
   staleWorktreeMinutes: number;
   excludePaths: string[];
+  // Also exclude paths listed in the repo's `.claudeignore` (gitignore-style syntax), merged with excludePaths
+  respectClaudeignore: boolean;
   dryRun: boolean;
   // Parallel reviews
   maxConcurrentReviews: number;
