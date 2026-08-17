@@ -662,7 +662,15 @@ export class Reviewer {
     // Merge repo-level .claudeignore patterns (if enabled) with configured excludePaths.
     // The file is read from the BASE branch, never from the PR head: otherwise a PR
     // could add or widen .claudeignore in the same push and exclude itself from review.
-    let excludePatterns = this.config.review.excludePaths;
+    //
+    // When graphify is on, graphify-out/** is always excluded too — operator-owned (not
+    // read from the PR), so it's exempt from that base-branch caveat. This also covers the
+    // bootstrap case where a repo's very first .claudeignore commit (adding graphify-out/)
+    // lands in the same PR as a regenerated graph.json: relying on the repo's own
+    // .claudeignore alone would deadlock that PR against maxDiffLines forever.
+    let excludePatterns = this.config.review.graphify
+      ? [...this.config.review.excludePaths, "graphify-out/**"]
+      : this.config.review.excludePaths;
     let claudeignoreApplied = false;
     const claudeignoreChangedInPR = extractDiffPaths(diff).includes(".claudeignore");
     if (this.config.review.respectClaudeignore) {
