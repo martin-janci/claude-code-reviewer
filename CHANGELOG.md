@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.32.1
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.32.0...v1.32.1)
+
+### 🩹 Fixes
+
+- **review:** Always exclude graphify-out/** from diffs when graphify is on ([7646f7e](https://github.com/martin-janci/claude-code-reviewer/commit/7646f7e))
+- **review:** Never count excluded lines toward maxDiffLines ([c050b15](https://github.com/martin-janci/claude-code-reviewer/commit/c050b15))
+- **review:** Always exclude graphify-out/** and never count excluded lines toward maxDiffLines ([#27](https://github.com/martin-janci/claude-code-reviewer/pull/27))
+
+### ❤️ Contributors
+
+- Martin Janči ([@martin-janci](http://github.com/martin-janci))
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+- Rudi Las <rudolf.las@papayapos.dev>
+
 ## v1.32.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.31.1...v1.32.0)
