@@ -1,5 +1,32 @@
 # Changelog
 
+## v1.33.0
+
+[compare changes](https://github.com/papayapos/papaya-reviewer/compare/v1.31.2...v1.33.0)
+
+### 🚀 Enhancements
+
+- **review:** Honour a repo's .claudeignore for diff exclusions ([e14ce2d](https://github.com/papayapos/papaya-reviewer/commit/e14ce2d))
+- **review:** Let reviews query a repo's graphify knowledge graph ([d9e3243](https://github.com/papayapos/papaya-reviewer/commit/d9e3243))
+
+### 🩹 Fixes
+
+- **review:** Record and escalate turn-cap failures instead of retrying blind ([3cb496e](https://github.com/papayapos/papaya-reviewer/commit/3cb496e))
+- **review:** Always exclude graphify-out/** from diffs when graphify is on ([7646f7e](https://github.com/papayapos/papaya-reviewer/commit/7646f7e))
+- **review:** Never count excluded lines toward maxDiffLines ([c050b15](https://github.com/papayapos/papaya-reviewer/commit/c050b15))
+- **review:** Always exclude graphify-out/** and never count excluded lines toward maxDiffLines ([#27](https://github.com/papayapos/papaya-reviewer/pull/27))
+
+### 🏡 Chore
+
+- **release:** V1.32.0 ([eabd808](https://github.com/papayapos/papaya-reviewer/commit/eabd808))
+- **release:** V1.32.1 ([1aa6fba](https://github.com/papayapos/papaya-reviewer/commit/1aa6fba))
+
+### ❤️ Contributors
+
+- Martin Janči ([@martin-janci](http://github.com/martin-janci))
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+- Rudi Las <rudolf.las@papayapos.dev>
+
 ## v1.32.1
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.32.0...v1.32.1)
