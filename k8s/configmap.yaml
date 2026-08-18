@@ -58,6 +58,7 @@ data:
       reviewMaxTurns: 70
       staleWorktreeMinutes: 60
       excludePaths: []
+      graphify: true
       dryRun: false
       maxConcurrentReviews: 3
       confidenceThreshold: 0
