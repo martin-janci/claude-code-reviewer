@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.32.2
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.32.1...v1.32.2)
+
+### 🩹 Fixes
+
+- **docker:** Unpin libexpat so python3 installs on alpine 3.22 base image ([2754e4c](https://github.com/martin-janci/claude-code-reviewer/commit/2754e4c))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.32.1
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.32.0...v1.32.1)
