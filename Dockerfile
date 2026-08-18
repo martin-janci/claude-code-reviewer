@@ -5,7 +5,9 @@
 FROM dhi.io/node:20-alpine3.22-dev AS build
 WORKDIR /build
 COPY package.json package-lock.json* tsconfig.json ./
-RUN apk add --no-cache python3 make g++ && npm ci
+# libexpat is listed explicitly: the base image pins it (2.7.x) in /etc/apk/world while
+# Alpine 3.22's python3 now needs >=2.8.0 — naming it re-adds it unpinned so apk can upgrade it.
+RUN apk add --no-cache libexpat python3 make g++ && npm ci
 COPY src/ ./src/
 RUN npm run build
 
@@ -24,7 +26,7 @@ RUN apk add --no-cache github-cli git su-exec
 
 # --- Language servers for LSP code-intelligence ---
 # Java: Eclipse JDT LS (pure JVM — runs on Alpine's musl openjdk; python3 for its launcher)
-RUN apk add --no-cache openjdk21-jre-headless python3 unzip gcompat libstdc++ \
+RUN apk add --no-cache libexpat openjdk21-jre-headless python3 unzip gcompat libstdc++ \
     && mkdir -p /opt/jdtls \
     && wget -qO- https://download.eclipse.org/jdtls/snapshots/jdt-language-server-latest.tar.gz | tar -xz -C /opt/jdtls \
     && printf '#!/bin/sh\nexec /opt/jdtls/bin/jdtls --jvm-arg=-Xmx1024m "$@"\n' > /usr/local/bin/jdtls \
