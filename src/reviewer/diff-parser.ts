@@ -119,6 +119,40 @@ export function mergeExcludePatterns(basePatterns: string[], claudeIgnoreContent
   return [...parseClaudeIgnore(claudeIgnoreContent), ...basePatterns];
 }
 
+/** Everything graphify writes (graph.json, manifest, analysis, report, cache, dated snapshots). */
+export const GRAPHIFY_OUT_PATTERN = "graphify-out/**";
+
+/**
+ * Build the effective diff-exclusion list for one review.
+ *
+ * Order matters (last-match-wins): the repo's `.claudeignore` first, then the
+ * operator's `excludePaths`, then — when `review.graphify` is on — `graphify-out/**`.
+ * The graphify rule is operator-owned (config, not PR-controlled), so it is exempt
+ * from the "read `.claudeignore` from the base branch only" caveat: a PR that adds
+ * its very first `.claudeignore` alongside a regenerated `graph.json` would otherwise
+ * count hundreds of thousands of generated lines against `maxDiffLines` and stay
+ * skipped as `diff_too_large` until that same PR merges.
+ *
+ * Whatever this returns MUST be applied via `filterDiff` before any line count is
+ * compared against `review.maxDiffLines` — excluded lines never count toward it.
+ */
+export function buildExcludePatterns(opts: {
+  excludePaths: string[];
+  graphify: boolean;
+  claudeIgnore?: string | null;
+}): string[] {
+  const operator = opts.graphify ? [...opts.excludePaths, GRAPHIFY_OUT_PATTERN] : opts.excludePaths;
+  return mergeExcludePatterns(operator, opts.claudeIgnore ?? null);
+}
+
+/**
+ * The single definition of "how big is this diff" for size gates
+ * (`review.maxDiffLines`, partial-diff probes). Always call on the FILTERED diff.
+ */
+export function countDiffLines(diff: string): number {
+  return diff.length === 0 ? 0 : diff.split("\n").length;
+}
+
 /**
  * Extract the file path a `diff --git` block refers to.
  * Prefers the new-file header, falls back to the rename target and then to the
