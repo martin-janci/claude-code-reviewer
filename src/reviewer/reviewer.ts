@@ -20,7 +20,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { getPRDiff, isDiffTooLargeError, listPRCommits, getCompareDiff, getClaudeIgnore, postReview, postComment, updateComment, deleteComment, findExistingComment, getReviewThreads, resolveReviewThread, type ReviewEvent } from "./github.js";
 import { reviewDiff } from "./claude.js";
-import { parseCommentableLines, findNearestCommentableLine, filterDiff, mergeExcludePatterns, extractDiffPaths, findSecurityPaths } from "./diff-parser.js";
+import { parseCommentableLines, findNearestCommentableLine, filterDiff, buildExcludePatterns, countDiffLines, extractDiffPaths, findSecurityPaths } from "./diff-parser.js";
 import { formatReviewBody, formatInlineComment, filterByConfidence, type JiraLink } from "./formatter.js";
 import { extractJiraKey } from "../features/jira.js";
 
@@ -104,7 +104,7 @@ interface PartialDiffInfo {
 
 /** What the exclusion filters removed from the diff, and where the rules came from. */
 interface ExclusionInfo {
-  /** Effective patterns (config + base-branch .claudeignore), last-match-wins order */
+  /** Effective patterns (base-branch .claudeignore + config + graphify-out/** when graphify is on), last-match-wins order */
   patterns: string[];
   excludedCount: number;
   claudeignoreApplied: boolean;
@@ -311,7 +311,7 @@ export class Reviewer {
       return { outcome: "skipped", skipReason: diffResult.skippedTooLarge };
     }
 
-    log.info("Phase 2: Diff fetched", { phase: "diff_fetch", lines: diffResult.diff.split("\n").length, durationMs: diffResult.diffFetchMs, partial: !!diffResult.partial });
+    log.info("Phase 2: Diff fetched", { phase: "diff_fetch", lines: countDiffLines(diffResult.diff), durationMs: diffResult.diffFetchMs, partial: !!diffResult.partial });
 
     // Nothing left to review — every file was excluded, or the PR has no file changes.
     // Reviewing an empty payload would produce a hollow "no issues found" verdict.
@@ -367,8 +367,8 @@ export class Reviewer {
     const queueDepth = (this.store.getStatusCounts().pending_review ?? 0) + (this.store.getStatusCounts().changes_pushed ?? 0);
     this.metrics?.updateCapacity(this.inflightCount, queueDepth);
 
-    // Check diff size
-    const lineCount = diffResult.diff.split("\n").length;
+    // Check diff size — measured on the filtered diff, so excluded files never count.
+    const lineCount = countDiffLines(diffResult.diff);
     if (lineCount > this.config.review.maxDiffLines) {
       log.info("Skipping: diff too large", { lineCount, maxDiffLines: this.config.review.maxDiffLines });
       this.metrics?.recordSkip("diff_too_large");
@@ -612,6 +612,11 @@ export class Reviewer {
   ): Promise<{ diff: string; diffFetchMs: number; partial?: PartialDiffInfo; exclusions: ExclusionInfo } | { skippedTooLarge: string } | null> {
     const { owner, repo, number: prNumber, headSha } = pr;
 
+    // Resolve exclusions BEFORE fetching: every size check downstream — the
+    // maxDiffLines gate and the partial-diff fallback's probes — must run on the
+    // filtered diff, so excluded lines never count toward the limit.
+    const { patterns: excludePatterns, claudeignoreApplied } = await this.resolveExcludePatterns(pr, log);
+
     let diff: string;
     let diffFetchMs: number;
     let partial: PartialDiffInfo | undefined;
@@ -630,7 +635,7 @@ export class Reviewer {
       const t0 = Date.now();
       let fallback: { diff: string; partial: PartialDiffInfo } | null = null;
       try {
-        fallback = await this.fetchLatestCommitsDiff(pr, log);
+        fallback = await this.fetchLatestCommitsDiff(pr, excludePatterns, log);
       } catch (fbErr) {
         log.warn("Partial diff fallback failed", { error: fbErr instanceof Error ? fbErr.message : String(fbErr) });
       }
@@ -659,28 +664,12 @@ export class Reviewer {
       });
     }
 
-    // Merge repo-level .claudeignore patterns (if enabled) with configured excludePaths.
-    // The file is read from the BASE branch, never from the PR head: otherwise a PR
-    // could add or widen .claudeignore in the same push and exclude itself from review.
-    let excludePatterns = this.config.review.excludePaths;
-    let claudeignoreApplied = false;
     const claudeignoreChangedInPR = extractDiffPaths(diff).includes(".claudeignore");
-    if (this.config.review.respectClaudeignore) {
-      try {
-        const ignoreContent = await getClaudeIgnore(owner, repo, pr.baseBranch);
-        if (ignoreContent) {
-          excludePatterns = mergeExcludePatterns(excludePatterns, ignoreContent);
-          claudeignoreApplied = true;
-        }
-      } catch (err) {
-        log.warn("Failed to fetch .claudeignore, continuing without it", { error: err instanceof Error ? err.message : String(err) });
-      }
-    }
     if (claudeignoreChangedInPR) {
       log.warn("PR modifies .claudeignore — exclusions taken from the base branch, not from the PR head", { baseBranch: pr.baseBranch });
     }
 
-    // Filter excluded paths from diff
+    // Filter excluded paths from diff — before anything downstream measures its size.
     let excludedCount = 0;
     if (excludePatterns.length > 0) {
       const result = filterDiff(diff, excludePatterns);
@@ -700,12 +689,47 @@ export class Reviewer {
   }
 
   /**
+   * Resolve the exclusion patterns for one review: configured excludePaths, plus
+   * graphify-out/** when review.graphify is on, plus the repo's .claudeignore.
+   *
+   * .claudeignore is read from the BASE branch, never from the PR head: otherwise a
+   * PR could add or widen .claudeignore in the same push and exclude itself from
+   * review. The graphify rule is operator config, not PR-controlled, so it is exempt
+   * from that caveat — which is what un-deadlocks the bootstrap PR that adds a repo's
+   * first .claudeignore alongside a regenerated graph.json (see buildExcludePatterns).
+   */
+  private async resolveExcludePatterns(
+    pr: PullRequest,
+    log: Logger,
+  ): Promise<{ patterns: string[]; claudeignoreApplied: boolean }> {
+    let claudeIgnore: string | null = null;
+    if (this.config.review.respectClaudeignore) {
+      try {
+        claudeIgnore = await getClaudeIgnore(pr.owner, pr.repo, pr.baseBranch);
+      } catch (err) {
+        log.warn("Failed to fetch .claudeignore, continuing without it", { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+    return {
+      patterns: buildExcludePatterns({
+        excludePaths: this.config.review.excludePaths,
+        graphify: this.config.review.graphify,
+        claudeIgnore,
+      }),
+      claudeignoreApplied: !!claudeIgnore,
+    };
+  }
+
+  /**
    * Fallback when the full PR diff is unfetchable: binary-search for the longest
    * run of trailing commits whose combined compare-diff both fetches successfully
-   * and fits within review.maxDiffLines. Returns null when no suffix fits.
+   * and — after exclusions — fits within review.maxDiffLines. Returns the raw
+   * (unfiltered) diff of that range so the caller applies the same filter once;
+   * excluded files never count toward the fit check. Returns null when no suffix fits.
    */
   private async fetchLatestCommitsDiff(
     pr: PullRequest,
+    excludePatterns: string[],
     log: Logger,
   ): Promise<{ diff: string; partial: PartialDiffInfo } | null> {
     const { owner, repo, number: prNumber, headSha } = pr;
@@ -733,7 +757,9 @@ export class Reviewer {
       let fits = false;
       try {
         const diff = await getCompareDiff(owner, repo, baseSha, headSha);
-        if (diff && diff.split("\n").length <= maxDiffLines) {
+        // Measure what would actually be reviewed: excluded files don't count.
+        const reviewable = excludePatterns.length > 0 ? filterDiff(diff, excludePatterns).filtered : diff;
+        if (diff && countDiffLines(reviewable) <= maxDiffLines) {
           best = { diff, count, baseSha };
           fits = true;
         }
@@ -849,7 +875,7 @@ export class Reviewer {
       });
     }
     if (!escalateFromMaxTurns && reviewCfg.lightModel && reviewCfg.lightModelMaxDiffLines > 0 && securityPaths.length === 0) {
-      const diffLines = reviewDiffText.split("\n").length;
+      const diffLines = countDiffLines(reviewDiffText);
       if (diffLines <= reviewCfg.lightModelMaxDiffLines) {
         model = reviewCfg.lightModel;
         if (reviewCfg.lightModelMaxTurns > 0) tierMaxTurns = reviewCfg.lightModelMaxTurns;
