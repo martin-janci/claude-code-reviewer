@@ -179,15 +179,21 @@ export async function getCompareDiff(owner: string, repo: string, base: string, 
 
 /**
  * True when a diff fetch failed for a reason that can never succeed on retry:
- * the diff overflowed our stdout buffer, or GitHub refused to render it
- * (HTTP 406 — "diff exceeded the maximum number of files (300)").
+ * the diff overflowed our stdout buffer, GitHub refused to render it
+ * (HTTP 406 — "diff exceeded the maximum number of files (300)"), or GitHub's
+ * diff generator gave up on it (HTTP 422 — "this diff is taking too long to
+ * generate", seen on very large diffs). Without this, the 422 case falls
+ * through to classifyError()'s generic /422/ pattern, which treats it as a
+ * permanent validation error and sticks the PR in "error" instead of trying
+ * the partial-diff fallback.
  */
 export function isDiffTooLargeError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
   const code = (err as NodeJS.ErrnoException | null)?.code;
   if (code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") return true;
   if (/maxBuffer length exceeded/i.test(message)) return true;
-  return /HTTP 406|\b406\b/.test(message) && /diff exceeded|maximum number of files/i.test(message);
+  if (/HTTP 406|\b406\b/.test(message) && /diff exceeded|maximum number of files/i.test(message)) return true;
+  return /HTTP 422|\b422\b/.test(message) && /taking too long to generate/i.test(message);
 }
 
 export async function findExistingComment(
