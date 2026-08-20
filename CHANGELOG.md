@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.32.6
+
+[compare changes](https://github.com/papayapos/papaya-reviewer/compare/v1.32.5...v1.32.6)
+
+### 🩹 Fixes
+
+- **review:** Let /review force past a skipped state ([977ee4a](https://github.com/papayapos/papaya-reviewer/commit/977ee4a))
+
+### 🏡 Chore
+
+- **release:** V1.32.5 ([0d43de0](https://github.com/papayapos/papaya-reviewer/commit/0d43de0))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.32.5
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.32.4...v1.32.5)
