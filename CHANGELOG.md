@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.32.5
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.32.4...v1.32.5)
+
+### 🩹 Fixes
+
+- **review:** Let /review force past a skipped state ([977ee4a](https://github.com/martin-janci/claude-code-reviewer/commit/977ee4a))
+
+### 🏡 Chore
+
+- **release:** V1.32.4 ([19826d7](https://github.com/martin-janci/claude-code-reviewer/commit/19826d7))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.32.4
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.32.3...v1.32.4)
