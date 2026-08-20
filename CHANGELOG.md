@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.32.6
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.32.5...v1.32.6)
+
+### 🩹 Fixes
+
+- **github:** Use REST instead of gh pr edit for body and label mutations ([d33f5ff](https://github.com/martin-janci/claude-code-reviewer/commit/d33f5ff))
+
+### 🏡 Chore
+
+- **release:** V1.32.5 ([07c588a](https://github.com/martin-janci/claude-code-reviewer/commit/07c588a))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.32.5
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.32.4...v1.32.5)
