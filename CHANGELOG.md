@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.32.4
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.32.3...v1.32.4)
+
+### 🩹 Fixes
+
+- **review:** Compute the diff locally from the clone when GitHub cannot serve it ([dd357c2](https://github.com/martin-janci/claude-code-reviewer/commit/dd357c2))
+
+### 🏡 Chore
+
+- **release:** V1.32.3 ([0184df3](https://github.com/martin-janci/claude-code-reviewer/commit/0184df3))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.32.3
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.32.2...v1.32.3)
