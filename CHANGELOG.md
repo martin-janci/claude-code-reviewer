@@ -1,5 +1,30 @@
 # Changelog
 
+## v1.32.4
+
+[compare changes](https://github.com/papayapos/papaya-reviewer/compare/v1.32.3...v1.32.4)
+
+### 🩹 Fixes
+
+- **k8s:** Enable review.graphify in TST configmap ([440467f](https://github.com/papayapos/papaya-reviewer/commit/440467f))
+- **review:** Treat GitHub's diff-generation timeout as too-large, not permanent ([a9f5712](https://github.com/papayapos/papaya-reviewer/commit/a9f5712))
+- **k8s)+fix(review:** Enable graphify in TST configmap; treat diff-generation timeout as too-large ([#28](https://github.com/papayapos/papaya-reviewer/pull/28))
+
+### 📖 Documentation
+
+- **deploy:** Document manual GHCR build/push for papaya-reviewer ([f0b0f40](https://github.com/papayapos/papaya-reviewer/commit/f0b0f40))
+- **deploy:** Describe the real papaya-reviewer CI flow; keep manual build as fallback ([ba730f7](https://github.com/papayapos/papaya-reviewer/commit/ba730f7))
+
+### 🏡 Chore
+
+- **release:** V1.32.3 ([c7e070d](https://github.com/papayapos/papaya-reviewer/commit/c7e070d))
+
+### ❤️ Contributors
+
+- Martin Janči ([@martin-janci](http://github.com/martin-janci))
+- Rudi Las <rudolf.las@papayapos.dev>
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.32.3
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.32.2...v1.32.3)
