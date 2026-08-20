@@ -330,13 +330,13 @@ Common issues:
 
 ### Update to Latest Version
 
-```bash
-kubectl set image deployment/claude-reviewer \
-  reviewer=registry.rlt.sk/claude-code-reviewer:latest \
-  -n claude-reviewer
+See [docs/DEPLOY.md](../docs/DEPLOY.md) for the full flow (where the
+`ghcr.io/papayapos/papaya-reviewer` image is built, syncing the mirror, rollout, verification,
+manual build fallback). Short version once the image is built:
 
-# Or edit deployment.yaml and apply
-kubectl apply -f k8s/deployment.yaml
+```bash
+kubectl rollout restart deployment/claude-reviewer -n claude-reviewer
+kubectl rollout status  deployment/claude-reviewer -n claude-reviewer
 ```
 
 ### Update Configuration
