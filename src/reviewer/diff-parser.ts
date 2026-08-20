@@ -146,6 +146,22 @@ export function buildExcludePatterns(opts: {
 }
 
 /**
+ * Map exclusion patterns to git `:(glob,exclude)` pathspecs, for computing a
+ * pre-filtered diff locally (the huge excluded blobs then never enter the
+ * process buffer). Git's glob flavour matches ours: `*`/`?` stay within one
+ * segment, `**` crosses segments, patterns anchor at the repo root.
+ *
+ * Returns null when any pattern is a `!` negation — pathspec excludes cannot
+ * express last-match-wins re-includes, and over-excluding at the git level
+ * could not be undone by `filterDiff` afterwards. Callers must still run
+ * `filterDiff` on the result either way.
+ */
+export function toGitPathspecExcludes(patterns: string[]): string[] | null {
+  if (patterns.some((p) => p.startsWith("!"))) return null;
+  return patterns.map((p) => `:(glob,exclude)${p}`);
+}
+
+/**
  * The single definition of "how big is this diff" for size gates
  * (`review.maxDiffLines`, partial-diff probes). Always call on the FILTERED diff.
  */

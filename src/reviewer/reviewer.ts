@@ -20,7 +20,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { getPRDiff, isDiffTooLargeError, listPRCommits, getCompareDiff, getClaudeIgnore, postReview, postComment, updateComment, deleteComment, findExistingComment, getReviewThreads, resolveReviewThread, type ReviewEvent } from "./github.js";
 import { reviewDiff } from "./claude.js";
-import { parseCommentableLines, findNearestCommentableLine, filterDiff, buildExcludePatterns, countDiffLines, extractDiffPaths, findSecurityPaths } from "./diff-parser.js";
+import { parseCommentableLines, findNearestCommentableLine, filterDiff, buildExcludePatterns, countDiffLines, toGitPathspecExcludes, extractDiffPaths, findSecurityPaths } from "./diff-parser.js";
 import { formatReviewBody, formatInlineComment, filterByConfidence, type JiraLink } from "./formatter.js";
 import { extractJiraKey } from "../features/jira.js";
 
@@ -631,8 +631,27 @@ export class Reviewer {
       }
 
       const message = err instanceof Error ? err.message : String(err);
-      log.info("Full diff too large to fetch, trying partial diff of recent commits", { error: message });
       const t0 = Date.now();
+
+      // First fallback: compute the full diff locally from the bare clone, with
+      // exclusions pushed down to git as pathspecs. GitHub refusing to render the
+      // diff (406/422) says nothing about the reviewable part — a PR carrying a
+      // regenerated graphify-out/ can be tiny once the excluded blobs are gone,
+      // and locally those blobs never even enter the buffer.
+      log.info("Full diff too large to fetch, computing locally from clone", { error: message });
+      let localDiff: string | null = null;
+      try {
+        localDiff = await this.fetchLocalDiff(pr, excludePatterns, log);
+      } catch (localErr) {
+        log.warn("Local diff fallback failed", { error: localErr instanceof Error ? localErr.message : String(localErr) });
+      }
+      if (localDiff !== null) {
+        diff = localDiff;
+        diffFetchMs = Date.now() - t0;
+        log.info("Local diff fallback succeeded", { lines: countDiffLines(diff), durationMs: diffFetchMs });
+      } else {
+
+      log.info("Trying partial diff of recent commits");
       let fallback: { diff: string; partial: PartialDiffInfo } | null = null;
       try {
         fallback = await this.fetchLatestCommitsDiff(pr, excludePatterns, log);
@@ -662,6 +681,7 @@ export class Reviewer {
         baseSha: partial.baseSha.slice(0, 7),
         durationMs: diffFetchMs,
       });
+      }
     }
 
     const claudeignoreChangedInPR = extractDiffPaths(diff).includes(".claudeignore");
@@ -718,6 +738,61 @@ export class Reviewer {
       }),
       claudeignoreApplied: !!claudeIgnore,
     };
+  }
+
+  /**
+   * Compute the full PR diff locally from the bare clone when GitHub cannot
+   * serve it (406 too many files / 422 diff-generation timeout). Fetches the
+   * base branch and the PR head into pinned refs, diffs merge-base..head, and
+   * pushes the exclusion patterns down to git as `:(glob,exclude)` pathspecs so
+   * excluded blobs (e.g. a regenerated graphify-out/) never enter the buffer.
+   * When patterns contain negations the pathspec push-down is skipped and the
+   * caller's filterDiff pass does all the excluding. Returns null when codebase
+   * access is off or git fails; the caller then tries the partial-commits path.
+   */
+  private async fetchLocalDiff(pr: PullRequest, excludePatterns: string[], log: Logger): Promise<string | null> {
+    if (!this.cloneManager) {
+      log.info("Local diff fallback unavailable: codebase access disabled");
+      return null;
+    }
+    const { owner, repo, number: prNumber, headSha } = pr;
+    const exec = promisify(execFile);
+    const clonePath = await this.cloneManager.ensureClone(owner, repo);
+    const baseRef = `refs/reviewer/base-${prNumber}`;
+    const headRef = `refs/reviewer/head-${prNumber}`;
+    // Pinned refs: FETCH_HEAD is ambiguous with two refspecs, and the head must
+    // stay resolvable even if the branch moves mid-review.
+    try {
+      await exec("git", [
+        "-c", "credential.helper=",
+        "fetch", "origin",
+        `+refs/heads/${pr.baseBranch}:${baseRef}`,
+        `+refs/pull/${prNumber}/head:${headRef}`,
+      ], { cwd: clonePath, timeout: 300_000 });
+    } catch (err) {
+      // Git echoes the remote URL — which embeds the auth token — into fetch errors.
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(message.replace(/\/\/[^@/\s]+@/g, "//***@"));
+    }
+    try {
+      await exec("git", ["cat-file", "-e", `${headSha}^{commit}`], { cwd: clonePath, timeout: 10_000 });
+    } catch {
+      log.warn("Local diff fallback unavailable: head SHA not in clone (race with a new push?)", { headSha: headSha.slice(0, 7) });
+      return null;
+    }
+    const { stdout: mb } = await exec("git", ["merge-base", baseRef, headSha], { cwd: clonePath, timeout: 30_000 });
+    const mergeBase = mb.trim();
+    const args = ["diff", `${mergeBase}..${headSha}`];
+    const pathspecs = excludePatterns.length > 0 ? toGitPathspecExcludes(excludePatterns) : [];
+    if (pathspecs && pathspecs.length > 0) {
+      args.push("--", ".", ...pathspecs);
+    }
+    const { stdout } = await exec("git", args, { cwd: clonePath, maxBuffer: 64 * 1024 * 1024, timeout: 120_000 });
+    log.info("Computed local diff from clone", {
+      mergeBase: mergeBase.slice(0, 7),
+      pathspecExcludes: pathspecs ? pathspecs.length : "skipped (negations)",
+    });
+    return stdout;
   }
 
   /**

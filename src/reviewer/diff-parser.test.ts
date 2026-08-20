@@ -9,7 +9,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { parseClaudeIgnore, mergeExcludePatterns, buildExcludePatterns, isExcluded, filterDiff, countDiffLines, GRAPHIFY_OUT_PATTERN } from "./diff-parser.js";
+import { parseClaudeIgnore, mergeExcludePatterns, buildExcludePatterns, isExcluded, filterDiff, countDiffLines, toGitPathspecExcludes, GRAPHIFY_OUT_PATTERN } from "./diff-parser.js";
 
 const excluded = (path: string, ignore: string) => isExcluded(path, parseClaudeIgnore(ignore));
 
@@ -234,5 +234,26 @@ describe("countDiffLines", () => {
     assert.equal(excludedCount, 2);
     assert.ok(countDiffLines(filtered) <= countDiffLines(modified));
     assert.ok(filtered.includes("+new"));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// toGitPathspecExcludes — exclusions pushed down to git
+// ---------------------------------------------------------------------------
+
+describe("toGitPathspecExcludes", () => {
+  it("maps plain patterns to :(glob,exclude) pathspecs", () => {
+    assert.deepEqual(toGitPathspecExcludes(["graphify-out/**", "dist/**"]), [
+      ":(glob,exclude)graphify-out/**",
+      ":(glob,exclude)dist/**",
+    ]);
+  });
+
+  it("refuses the whole set when any pattern is negated", () => {
+    assert.equal(toGitPathspecExcludes(["secrets/**", "!secrets/ok.txt"]), null);
+  });
+
+  it("maps an empty set to an empty set", () => {
+    assert.deepEqual(toGitPathspecExcludes([]), []);
   });
 });
