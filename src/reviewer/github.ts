@@ -324,12 +324,16 @@ export async function getPRBody(owner: string, repo: string, prNumber: number): 
   return raw.body ?? "";
 }
 
+// NOTE: PR body/label mutations go through the REST API, not `gh pr edit` —
+// that subcommand resolves the current login via GraphQL, which requires the
+// read:org scope. The deployed tokens are least-privilege (repo only), and REST
+// needs nothing beyond that.
 export async function updatePRBody(owner: string, repo: string, prNumber: number, body: string): Promise<void> {
   await gh([
-    "pr", "edit", String(prNumber),
-    "--repo", `${owner}/${repo}`,
-    "--body", body,
-  ]);
+    "api", "-X", "PATCH",
+    `repos/${owner}/${repo}/pulls/${prNumber}`,
+    "--input", "-",
+  ], JSON.stringify({ body }));
 }
 
 export async function getPRLabels(owner: string, repo: string, prNumber: number): Promise<string[]> {
@@ -346,19 +350,25 @@ export async function getPRLabels(owner: string, repo: string, prNumber: number)
 export async function addLabels(owner: string, repo: string, prNumber: number, labels: string[]): Promise<void> {
   if (labels.length === 0) return;
   await gh([
-    "pr", "edit", String(prNumber),
-    "--repo", `${owner}/${repo}`,
-    "--add-label", labels.join(","),
-  ]);
+    "api", "-X", "POST",
+    `repos/${owner}/${repo}/issues/${prNumber}/labels`,
+    "--input", "-",
+  ], JSON.stringify({ labels }));
 }
 
 export async function removeLabels(owner: string, repo: string, prNumber: number, labels: string[]): Promise<void> {
-  if (labels.length === 0) return;
-  await gh([
-    "pr", "edit", String(prNumber),
-    "--repo", `${owner}/${repo}`,
-    "--remove-label", labels.join(","),
-  ]);
+  // REST has no bulk remove; delete one by one, tolerating labels already gone.
+  for (const label of labels) {
+    try {
+      await gh([
+        "api", "-X", "DELETE",
+        `repos/${owner}/${repo}/issues/${prNumber}/labels/${encodeURIComponent(label)}`,
+      ]);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!/404|Not Found|Label does not exist/i.test(message)) throw err;
+    }
+  }
 }
 
 // --- PR Reviews API ---
