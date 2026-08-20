@@ -23,8 +23,13 @@ export function shouldReview(state: PRState, config: ReviewConfig, forceReview?:
   }
 
   // 4. Skipped state — evaluateTransitions() clears skip conditions before
-  // shouldReview() runs. If we're still skipped here, the reason still applies.
+  // shouldReview() runs. If we're still skipped here, the reason still applies —
+  // except for an explicit /review, whose whole point is to override a skip
+  // (e.g. retrying a diff_too_large PR after a reviewer fix or config change).
   if (state.status === "skipped") {
+    if (forceReview) {
+      return { shouldReview: true, reason: `Forced review of skipped PR (was: ${state.skipReason})` };
+    }
     return { shouldReview: false, reason: `Skipped: ${state.skipReason}` };
   }
 
