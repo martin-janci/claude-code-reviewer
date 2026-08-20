@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.32.5
+
+[compare changes](https://github.com/papayapos/papaya-reviewer/compare/v1.32.4...v1.32.5)
+
+### 🩹 Fixes
+
+- **review:** Compute the diff locally from the clone when GitHub cannot serve it ([dd357c2](https://github.com/papayapos/papaya-reviewer/commit/dd357c2))
+
+### 🏡 Chore
+
+- **release:** V1.32.4 ([6e8cc92](https://github.com/papayapos/papaya-reviewer/commit/6e8cc92))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.32.4
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.32.3...v1.32.4)
