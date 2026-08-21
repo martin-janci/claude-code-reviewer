@@ -1,6 +1,6 @@
 {
   "name": "claude-code-reviewer",
-  "version": "1.32.6",
+  "version": "1.32.7",
   "description": "Automated PR code review service using Claude Code CLI",
   "main": "dist/index.js",
   "scripts": {

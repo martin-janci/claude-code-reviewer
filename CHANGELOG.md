@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.32.7
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.32.6...v1.32.7)
+
+### 🩹 Fixes
+
+- **review:** Claim the per-PR mutex before awaiting guard/slot ([59dcc9b](https://github.com/martin-janci/claude-code-reviewer/commit/59dcc9b))
+
+### 🏡 Chore
+
+- **release:** V1.32.6 ([305b4d7](https://github.com/martin-janci/claude-code-reviewer/commit/305b4d7))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.32.6
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.32.5...v1.32.6)
