@@ -250,30 +250,41 @@ export class Reviewer {
       await this.locks.get(key);
     }
 
-    // Wait for rate limit guard (blocks if globally paused).
-    // Ordering: mutex → guard → concurrency slot. This ensures no concurrency
-    // slot is held while waiting on the guard, preventing slot leaks during pauses.
-    if (this.rateLimitGuard) {
-      await this.rateLimitGuard.acquire();
-    }
-
-    // Acquire concurrency slot (limits total parallel reviews across all PRs)
-    const releaseConcurrency = await this.acquireConcurrencySlot(log);
-
+    // Claim the mutex NOW — synchronously, with no await between the check above
+    // and this set. Any await in between (guard, slot) lets a second caller for
+    // the same PR pass the check too; both then set the lock (the second
+    // overwriting the first) and run concurrently. Seen live: an `opened` event
+    // and a `/review` comment parked on a paused rate-limit guard, released
+    // together, and raced on one worktree — both reviews failed in clone_prepare.
     let unlock: () => void;
     const lock = new Promise<void>((resolve) => { unlock = resolve; });
     this.locks.set(key, lock);
-    this.inflightCount++;
-    log.info("Processing PR", { sha: pr.headSha.slice(0, 7), inflight: this.inflightCount, maxConcurrent: this.config.review.maxConcurrentReviews });
 
+    let releaseConcurrency: (() => void) | undefined;
     try {
-      return await this.doProcessPR(pr, log);
+      // Wait for rate limit guard (blocks if globally paused).
+      // Ordering: mutex → guard → concurrency slot. Holding the per-PR mutex while
+      // waiting is fine (it only blocks same-PR callers); holding a concurrency
+      // slot while waiting on the guard is not (slot leaks during pauses).
+      if (this.rateLimitGuard) {
+        await this.rateLimitGuard.acquire();
+      }
+
+      // Acquire concurrency slot (limits total parallel reviews across all PRs)
+      releaseConcurrency = await this.acquireConcurrencySlot(log);
+
+      this.inflightCount++;
+      log.info("Processing PR", { sha: pr.headSha.slice(0, 7), inflight: this.inflightCount, maxConcurrent: this.config.review.maxConcurrentReviews });
+      try {
+        return await this.doProcessPR(pr, log);
+      } finally {
+        this.inflightCount--;
+        log.info("Finished processing PR");
+      }
     } finally {
-      this.inflightCount--;
       this.locks.delete(key);
       unlock!();
-      releaseConcurrency();
-      log.info("Finished processing PR");
+      releaseConcurrency?.();
     }
   }
 
