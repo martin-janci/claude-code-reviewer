@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.34.0
+
+[compare changes](https://github.com/papayapos/papaya-reviewer/compare/v1.32.8...v1.34.0)
+
+### 🚀 Enhancements
+
+- **reviewer:** Let the bot approve clean PRs and block on REQUEST_CHANGES ([ad114e3](https://github.com/papayapos/papaya-reviewer/commit/ad114e3))
+
+### 🏡 Chore
+
+- **release:** V1.33.0 ([04eb171](https://github.com/papayapos/papaya-reviewer/commit/04eb171))
+
+### ❤️ Contributors
+
+- Martinjancipapayapos <martin.janci@papayapos.sk>
+
 ## v1.33.0
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.32.7...v1.33.0)
