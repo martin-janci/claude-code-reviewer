@@ -59,6 +59,7 @@ data:
       staleWorktreeMinutes: 60
       excludePaths: []
       graphify: true
+      requestChangesEvent: true
       dryRun: false
       maxConcurrentReviews: 3
       confidenceThreshold: 0

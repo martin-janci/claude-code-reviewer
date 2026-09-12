@@ -53,6 +53,7 @@ review:
   dryRun: false                      # if true, run reviews but don't post to GitHub (env: DRY_RUN)
   maxConcurrentReviews: 3            # max parallel reviews across all PRs (1-10 recommended)
   confidenceThreshold: 0             # filter findings below this confidence (0-100, 0 = show all)
+  requestChangesEvent: true          # post a REQUEST_CHANGES verdict as a real blocking GitHub review (false = degrade to a plain comment)
   requireTests: true                 # mandatory test coverage assessment in every review
   testBlockingImportance: high       # missing tests at/above this importance block the PR (medium | high | critical)
   securityPaths:                     # paths requiring elevated security scrutiny

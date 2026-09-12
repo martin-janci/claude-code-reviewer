@@ -335,7 +335,7 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
       userPrompt += `- "resolved" — the issue was fixed in the new code\n`;
       userPrompt += `- "wont_fix" — the issue is intentionally not addressed (explain why)\n`;
       userPrompt += `- "open" — the issue is still present and unresolved\n\n`;
-      userPrompt += `Use the same \`path\` and \`line\` from the previous finding to identify it. If any previous blocking finding has resolution "open", your verdict MUST be REQUEST_CHANGES.\n\n`;
+      userPrompt += `Use the same \`path\` and \`line\` from the previous finding to identify it. If any previous blocking finding has resolution "open", your verdict MUST be REQUEST_CHANGES. Conversely, if every previous finding resolves to "resolved" or "wont_fix" and the new changes introduce no blocking finding of their own, your verdict MUST be APPROVE — a "wont_fix" backed by the author's explanation is settled, not an outstanding objection.\n\n`;
     }
   }
 
@@ -393,7 +393,7 @@ export function reviewDiff(options: ReviewOptions): Promise<ReviewResult> {
   } else {
     userPrompt += `## Diff\n\`\`\`diff\n${diff}\n\`\`\`\n\n`;
   }
-  userPrompt += `## Output Requirements\nOutput ONLY a JSON object matching this schema — no markdown, no fences, no extra text:\n${JSON_SCHEMA}\n\nVerdict rules:\n- REQUEST_CHANGES if any finding has "blocking": true\n- APPROVE if no issues or only non-blocking suggestions\n- COMMENT for non-blocking observations worth noting\n\nResolutions array: only include when re-reviewing (previous findings were provided). Omit the field entirely on first reviews.`;
+  userPrompt += `## Output Requirements\nOutput ONLY a JSON object matching this schema — no markdown, no fences, no extra text:\n${JSON_SCHEMA}\n\nVerdict rules — exactly one applies, evaluate in order and stop at the first match:\n1. REQUEST_CHANGES if any finding has "blocking": true, or a previous blocking finding is still "open"\n2. COMMENT only if nothing is blocking but the diff is genuinely unreviewable (truncated, or it depends on code you could not read)\n3. APPROVE otherwise — this is the default when nothing is blocking, including when you report suggestions, nitpicks, questions, or praise\n\nNon-blocking findings are advice, not a reason to withhold approval. Having something to say is never by itself a reason to pick COMMENT.\n\nResolutions array: only include when re-reviewing (previous findings were provided). Omit the field entirely on first reviews.`;
 
   const args = ["-p", "--output-format", "json"];
 

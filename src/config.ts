@@ -237,6 +237,7 @@ export const DEFAULTS: AppConfig = {
     maxConcurrentReviews: 3,
     confidenceThreshold: 0, // 0 = show all findings, 80 = filter low-confidence
     securityPaths: ["**/auth/**", "**/crypto/**", "**/security/**", "**/*.env*", "**/secrets/**"],
+    requestChangesEvent: true,
     requireTests: true,
     testBlockingImportance: "high",
     incrementalReviews: true,
