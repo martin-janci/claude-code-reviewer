@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.33.0
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.32.7...v1.33.0)
+
+### 🚀 Enhancements
+
+- **reviewer:** Let the bot approve clean PRs and block on REQUEST_CHANGES ([ad114e3](https://github.com/martin-janci/claude-code-reviewer/commit/ad114e3))
+
+### 🏡 Chore
+
+- **release:** V1.32.7 ([6e716ba](https://github.com/martin-janci/claude-code-reviewer/commit/6e716ba))
+- **release:** V1.32.8 ([7dc5f64](https://github.com/martin-janci/claude-code-reviewer/commit/7dc5f64))
+
+### ❤️ Contributors
+
+- Martinjancipapayapos <martin.janci@papayapos.sk>
+
 ## v1.32.8
 
 [compare changes](https://github.com/papayapos/papaya-reviewer/compare/v1.32.7...v1.32.8)
