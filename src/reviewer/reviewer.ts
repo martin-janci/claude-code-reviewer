@@ -38,6 +38,16 @@ function parseLegacyVerdict(body: string): ReviewVerdict {
 }
 
 /**
+ * True when GitHub rejected an APPROVE/REQUEST_CHANGES review because the token's user
+ * authored the PR. GitHub answers 422 with "Can not approve your own pull request" (or
+ * "...request changes on your own pull request"); a plain COMMENT review is always allowed.
+ */
+function isSelfReviewRejection(err: unknown): boolean {
+  const message = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return message.includes("your own pull request");
+}
+
+/**
  * Classify an error as transient (retryable) or permanent (skip retries).
  * Permanent errors: 404 Not Found, 403 Blocked, 422 Validation, explicit auth failures.
  * Everything else is transient.
@@ -1088,20 +1098,42 @@ export class Reviewer {
       // Use filtered findings for the rest of the review
       structured.findings = filteredFindings;
 
+      // A previous blocking finding counts as settled once a resolution says so. Missing
+      // resolutions are treated as unsettled — the reviewer was asked for one and did not
+      // give it, so we cannot assume the issue is gone.
+      const previousBlockingSettled = allPreviousFindings.every((pf) => {
+        if (!pf.blocking) return true;
+        const resolution = structured.resolutions?.find(
+          (r) => r.path === pf.path && r.line === pf.line,
+        );
+        return resolution != null && resolution.resolution !== "open";
+      });
+
       // Auto-escalate verdict if any previous blocking finding is still open
       if (structured.resolutions?.length && allPreviousFindings.length) {
-        const hasOpenBlocking = allPreviousFindings.some((pf) => {
-          if (!pf.blocking) return false;
-          const resolution = structured.resolutions?.find(
-            (r) => r.path === pf.path && r.line === pf.line,
-          );
-          return !resolution || resolution.resolution === "open";
-        });
-        if (hasOpenBlocking && verdict !== "REQUEST_CHANGES") {
+        if (!previousBlockingSettled && verdict !== "REQUEST_CHANGES") {
           log.info("Escalating verdict to REQUEST_CHANGES — unresolved blocking finding(s)");
           verdict = "REQUEST_CHANGES";
         }
       }
+
+      // Auto-de-escalate: the exact complement of the rule above. On a re-review where
+      // nothing in this increment is blocking and no previous blocking finding is still
+      // open, a COMMENT verdict leaves the PR unmergeable over findings the reviewer itself
+      // does not treat as blockers. Non-blocking findings are advice, so approve instead.
+      // First reviews are left alone — COMMENT there can legitimately mean "unreviewable".
+      if (verdict === "COMMENT" && allPreviousFindings.length > 0) {
+        const hasBlockingFinding = structured.findings.some((f) => f.blocking);
+        if (!hasBlockingFinding && previousBlockingSettled) {
+          log.info("De-escalating verdict to APPROVE — nothing blocking in this review, no previous blocker still open");
+          verdict = "APPROVE";
+        }
+      }
+
+      // The review body renders its heading from structured.verdict, so keep it in sync with
+      // any escalation or de-escalation above — otherwise an approving review is titled
+      // "Commented" (and a blocking one is not titled "Changes Requested").
+      structured.verdict = verdict;
 
       // Parse commentable lines from the diff
       const commentable = parseCommentableLines(diff);
@@ -1135,8 +1167,15 @@ export class Reviewer {
       // Build top-level review body
       const body = formatReviewBody(structured, headSha, tag, orphanFindings, jiraLink, notices);
 
-      // Map verdict to GitHub review event
-      const reviewEvent: ReviewEvent = verdict === "APPROVE" ? "APPROVE" : "COMMENT";
+      // Map verdict to GitHub review event. REQUEST_CHANGES is only posted as a real
+      // blocking review when requestChangesEvent is on — otherwise it degrades to COMMENT
+      // so the bot can never wedge a PR it later fails to re-review.
+      const reviewEvent: ReviewEvent =
+        verdict === "APPROVE"
+          ? "APPROVE"
+          : verdict === "REQUEST_CHANGES" && this.config.review.requestChangesEvent
+            ? "REQUEST_CHANGES"
+            : "COMMENT";
 
       if (this.config.review.dryRun) {
         log.info("Dry run: skipping PR review post", { phase: "comment_post", inlineComments: inlineComments.length, orphans: orphanFindings.length, verdict, event: reviewEvent });
@@ -1145,8 +1184,21 @@ export class Reviewer {
           log.info("Posting PR review", { phase: "comment_post", inlineComments: inlineComments.length, orphans: orphanFindings.length, verdict, event: reviewEvent });
           reviewId = await postReview(owner, repo, prNumber, body, headSha, inlineComments, reviewEvent);
         } catch (err) {
-          this.recordError(owner, repo, prNumber, headSha, err, "comment_post", log);
-          return null;
+          // GitHub rejects APPROVE/REQUEST_CHANGES when the token's user authored the PR
+          // (e.g. an autofix PR opened by the bot itself). Losing the whole review over the
+          // event type is worse than posting it as a plain comment, so retry once.
+          if (reviewEvent !== "COMMENT" && isSelfReviewRejection(err)) {
+            log.warn("Review event rejected (self-authored PR) — retrying as COMMENT", { event: reviewEvent, verdict });
+            try {
+              reviewId = await postReview(owner, repo, prNumber, body, headSha, inlineComments, "COMMENT");
+            } catch (retryErr) {
+              this.recordError(owner, repo, prNumber, headSha, retryErr, "comment_post", log);
+              return null;
+            }
+          } else {
+            this.recordError(owner, repo, prNumber, headSha, err, "comment_post", log);
+            return null;
+          }
         }
       }
 

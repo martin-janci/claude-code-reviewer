@@ -51,6 +51,10 @@ export interface ReviewConfig {
   confidenceThreshold: number;
   // Security paths for elevated scrutiny
   securityPaths: string[];
+  // Post a REQUEST_CHANGES verdict as a real blocking GitHub review event. When false the
+  // verdict still shows in the review body but the event degrades to COMMENT, so the bot
+  // can never leave a PR wedged behind a review it fails to supersede.
+  requestChangesEvent: boolean;
   // Mandatory test coverage assessment
   requireTests: boolean;
   testBlockingImportance: "medium" | "high" | "critical";

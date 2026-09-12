@@ -36,9 +36,21 @@ Mark findings as `"blocking": true` when they MUST be fixed before merge:
 
 ## Verdict Rules
 
-- **REQUEST_CHANGES** — any finding has `"blocking": true`
-- **APPROVE** — no issues, or only non-blocking findings
-- **COMMENT** — non-blocking observations worth noting but not blocking merge
+Exactly one verdict applies. Evaluate them in order and stop at the first match.
+
+1. **REQUEST_CHANGES** — at least one finding has `"blocking": true`, or a previous
+   blocking finding still has resolution `open`.
+2. **COMMENT** — nothing is blocking, but you are genuinely unable to judge whether the
+   change is correct. Use this only when the diff is unreviewable: it is truncated, it
+   depends entirely on code you could not read, or it raises a `question` finding whose
+   answer could change the verdict to REQUEST_CHANGES.
+3. **APPROVE** — the default when nothing is blocking. Applies whenever the change is
+   safe to merge, **including** when you have `suggestion`, `nitpick`, `question`, or
+   `praise` findings to report. Non-blocking findings are advice, not a reason to
+   withhold approval.
+
+APPROVE is not a statement that the diff is perfect. It means nothing in it must be fixed
+before merge. Having something to say is never by itself a reason to pick COMMENT.
 
 ## Test Coverage (Mandatory)
 
@@ -173,6 +185,7 @@ Rules:
   - `critical` — security-sensitive, breaking changes, or high-blast-radius
 - Empty `findings` array is valid for APPROVE verdicts
 - If the diff looks good with no significant issues, return APPROVE with an empty findings array and a brief summary. Don't invent problems.
+- A non-empty `findings` array is equally valid for APPROVE. Reporting suggestions, nitpicks, questions, or praise alongside an APPROVE verdict is the expected case for a clean PR that still has room for polish.
 
 ## Re-review Resolution Tracking
 
@@ -195,5 +208,10 @@ Resolution values:
 - `open` — the issue is still present and unresolved
 
 Use the same `path` and `line` from the previous finding to identify it. If any previous blocking finding has resolution `open`, the verdict MUST be `REQUEST_CHANGES`.
+
+Conversely, if every previous finding resolves to `resolved` or `wont_fix` and the new
+changes introduce no blocking finding of their own, the verdict MUST be `APPROVE`. A
+`wont_fix` backed by the author's explanation counts as settled, not as an outstanding
+objection — do not keep withholding approval over a finding you have already accepted.
 
 Omit the `resolutions` field entirely on first reviews (when no previous findings are provided).

@@ -597,6 +597,13 @@ export function getDashboardHtml(): string {
           </label>
         </div>
         <div class="field">
+          <label>Post REQUEST_CHANGES as blocking review</label>
+          <label class="toggle-switch">
+            <input type="checkbox" id="cfg-review-requestChangesEvent">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="field">
           <label>Require Tests</label>
           <label class="toggle-switch">
             <input type="checkbox" id="cfg-review-requireTests">
@@ -1345,6 +1352,7 @@ export function getDashboardHtml(): string {
     setVal('cfg-review-staleErrorDays', cfg.review?.staleErrorDays);
     setVal('cfg-review-staleWorktreeMinutes', cfg.review?.staleWorktreeMinutes);
     setVal('cfg-review-commentVerifyIntervalMinutes', cfg.review?.commentVerifyIntervalMinutes);
+    setChecked('cfg-review-requestChangesEvent', cfg.review?.requestChangesEvent);
     setChecked('cfg-review-requireTests', cfg.review?.requireTests);
     setVal('cfg-review-testBlockingImportance', cfg.review?.testBlockingImportance || 'high');
 
@@ -1500,6 +1508,7 @@ export function getDashboardHtml(): string {
       staleErrorDays: getNum('cfg-review-staleErrorDays'),
       staleWorktreeMinutes: getNum('cfg-review-staleWorktreeMinutes'),
       commentVerifyIntervalMinutes: getNum('cfg-review-commentVerifyIntervalMinutes'),
+      requestChangesEvent: getChecked('cfg-review-requestChangesEvent'),
       requireTests: getChecked('cfg-review-requireTests'),
       testBlockingImportance: getVal('cfg-review-testBlockingImportance'),
       model: getVal('cfg-review-model'),
