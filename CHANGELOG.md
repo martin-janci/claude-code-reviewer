@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.34.2
+
+[compare changes](https://github.com/papayapos/papaya-reviewer/compare/v1.34.0...v1.34.2)
+
+### 🩹 Fixes
+
+- **state:** Roll back in-memory state on failed save and recover stale reviewing status ([1ab8e05](https://github.com/papayapos/papaya-reviewer/commit/1ab8e05))
+
+### 🏡 Chore
+
+- **release:** V1.34.1 ([7d84284](https://github.com/papayapos/papaya-reviewer/commit/7d84284))
+
+### ❤️ Contributors
+
+- Martin-janci
+
 ## v1.34.1
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.34.0...v1.34.1)
