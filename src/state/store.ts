@@ -219,8 +219,14 @@ export class StateStore {
 
       // Atomic write: write to temp file then rename
       const tmpPath = join(dir, `.state-${randomUUID()}.tmp`);
-      writeFileSync(tmpPath, JSON.stringify(this.state, null, 2));
-      renameSync(tmpPath, this.filePath);
+      try {
+        writeFileSync(tmpPath, JSON.stringify(this.state, null, 2));
+        renameSync(tmpPath, this.filePath);
+      } catch (err) {
+        // Don't leave a (possibly partial) temp file behind — on ENOSPC these pile up
+        try { unlinkSync(tmpPath); } catch {}
+        throw err;
+      }
     });
   }
 
@@ -287,7 +293,13 @@ export class StateStore {
         labelsApplied: [],
         featureExecutions: [],
       };
-      this.save();
+      try {
+        this.save();
+      } catch (err) {
+        // Memory must not hold an entry the disk never got
+        delete this.state.prs[key];
+        throw err;
+      }
     }
     // Return frozen shallow copy to enforce immutability
     return Object.freeze({ ...this.state.prs[key] });
@@ -299,8 +311,20 @@ export class StateStore {
     if (!entry) {
       throw new Error(`No state entry for ${key}`);
     }
+    // Snapshot the fields being overwritten so a failed save can be undone —
+    // otherwise memory keeps a change the disk never got (e.g. a phantom
+    // "reviewing" status after ENOSPC that the next successful save persists).
+    const previous: Partial<PRState> = {};
+    for (const field of [...Object.keys(updates), "updatedAt"] as (keyof PRState)[]) {
+      (previous as Record<string, unknown>)[field] = entry[field];
+    }
     Object.assign(entry, updates, { updatedAt: new Date().toISOString() });
-    this.save();
+    try {
+      this.save();
+    } catch (err) {
+      Object.assign(entry, previous);
+      throw err;
+    }
     // Return frozen shallow copy to enforce immutability
     return Object.freeze({ ...entry });
   }

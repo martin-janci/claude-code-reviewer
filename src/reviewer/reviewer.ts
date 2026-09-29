@@ -1370,6 +1370,16 @@ export class Reviewer {
   }
 
   private evaluateTransitions(state: PRState): void {
+    // reviewing → pending_review: we run under this PR's mutex (processPR), so no
+    // live review in this process owns the status — it was left behind by a review
+    // that died without clearing it (e.g. a state write hitting ENOSPC). Without
+    // this the PR stays "Review already in progress" until a restart.
+    if (state.status === "reviewing") {
+      this.logger.warn("Recovering stale 'reviewing' status", { pr: `${state.owner}/${state.repo}#${state.number}` });
+      this.store.setStatus(state.owner, state.repo, state.number, "pending_review");
+      this.auditLogger?.stateChanged(state.owner, state.repo, state.number, "reviewing", "pending_review", "reviewer");
+    }
+
     // reviewed + new SHA → changes_pushed
     if (state.status === "reviewed" && state.lastReviewedSha && state.headSha !== state.lastReviewedSha) {
       this.store.setStatus(state.owner, state.repo, state.number, "changes_pushed");
