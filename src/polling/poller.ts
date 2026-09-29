@@ -132,21 +132,12 @@ export class Poller {
     // Prune stale worktrees and untracked clones
     if (this.cloneManager) {
       try {
-        const pruned = await this.cloneManager.pruneStaleWorktrees(this.config.review.staleWorktreeMinutes);
-        if (pruned > 0) {
-          this.logger.info("Worktree cleanup: pruned stale worktrees", { pruned });
+        const r = await this.cloneManager.applyRetention(this.config.review, this.config.repos);
+        if (r.worktrees + r.idleClones + r.untracked + r.evicted > 0) {
+          this.logger.info("Clone cache retention applied", { ...r });
         }
       } catch (err) {
-        this.logger.error("Error pruning stale worktrees", { error: String(err) });
-      }
-
-      try {
-        const pruned = await this.cloneManager.pruneUntracked(this.config.repos);
-        if (pruned > 0) {
-          this.logger.info("Clone cleanup: pruned untracked clones", { pruned });
-        }
-      } catch (err) {
-        this.logger.error("Error pruning untracked clones", { error: String(err) });
+        this.logger.error("Error applying clone cache retention", { error: String(err) });
       }
     }
   }

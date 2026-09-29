@@ -156,8 +156,13 @@ export class AuditLogger {
 
       // Atomic write: temp file + rename (like StateStore)
       const tmpPath = `${this.config.filePath}.tmp.${Date.now()}`;
-      writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf-8");
-      renameSync(tmpPath, this.config.filePath);
+      try {
+        writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf-8");
+        renameSync(tmpPath, this.config.filePath);
+      } catch (writeErr) {
+        try { unlinkSync(tmpPath); } catch { /* temp file may not exist */ }
+        throw writeErr;
+      }
 
       // Reset failure counter on success
       this.consecutiveFlushFailures = 0;

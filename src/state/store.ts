@@ -219,8 +219,13 @@ export class StateStore {
 
       // Atomic write: write to temp file then rename
       const tmpPath = join(dir, `.state-${randomUUID()}.tmp`);
-      writeFileSync(tmpPath, JSON.stringify(this.state, null, 2));
-      renameSync(tmpPath, this.filePath);
+      try {
+        writeFileSync(tmpPath, JSON.stringify(this.state, null, 2));
+        renameSync(tmpPath, this.filePath);
+      } catch (err) {
+        try { unlinkSync(tmpPath); } catch { /* temp file may not exist */ }
+        throw err;
+      }
     });
   }
 

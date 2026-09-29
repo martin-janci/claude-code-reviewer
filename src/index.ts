@@ -80,6 +80,7 @@ async function runOneShot(target: OneShotTarget): Promise<void> {
       config.github.token || undefined,
       config.review.cloneTimeoutMs,
     );
+    cloneManager.updateConfig(undefined, undefined, config.review.maxCacheMb);
   }
 
   const metrics = new MetricsCollector();
@@ -191,6 +192,7 @@ function main(): void {
       config.github.token || undefined,
       config.review.cloneTimeoutMs,
     );
+    cloneManager.updateConfig(undefined, undefined, config.review.maxCacheMb);
     logger.info("Codebase access enabled", { cloneDir: config.review.cloneDir });
 
     // Pre-warm clones so the first review doesn't block on a full clone
@@ -249,12 +251,32 @@ function main(): void {
     auditLogger.serverStarted("HealthServer", config.webhook.port);
   }
 
+  // Worktree/clone pruning normally piggybacks on the poller's cycle; in webhook-only
+  // mode there is no poller, so run it on its own timer or the volume fills up.
+  let pruneTimer: NodeJS.Timeout | null = null;
+  if (cloneManager && !poller) {
+    const runPrune = async () => {
+      const cfg = configManager.getConfig();
+      try {
+        const r = await cloneManager.applyRetention(cfg.review, cfg.repos);
+        if (r.worktrees + r.idleClones + r.untracked + r.evicted > 0) {
+          logger.info("Clone cache retention applied", { ...r });
+        }
+      } catch (err) {
+        logger.error("Error pruning worktrees", { error: String(err) });
+      }
+    };
+    void runPrune();
+    pruneTimer = setInterval(runPrune, 10 * 60 * 1000);
+    pruneTimer.unref();
+  }
+
   // Register hot-reload callbacks
   configManager.onChange((newConfig) => {
     if (poller) poller.updateConfig(newConfig);
     if (webhook) webhook.updateConfig(newConfig);
     reviewer.updateConfig(newConfig);
-    if (cloneManager) cloneManager.updateConfig(newConfig.github.token, newConfig.review.cloneTimeoutMs);
+    if (cloneManager) cloneManager.updateConfig(newConfig.github.token, newConfig.review.cloneTimeoutMs, newConfig.review.maxCacheMb);
     logger.info("Hot-reload: config updated for poller, webhook, reviewer, and cloneManager");
   });
 
@@ -275,6 +297,7 @@ function main(): void {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info("Shutting down...");
+    if (pruneTimer) clearInterval(pruneTimer);
     reviewer.stop();
     await poller?.stop();
     await webhook?.stop();
