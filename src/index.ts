@@ -249,6 +249,26 @@ function main(): void {
     auditLogger.serverStarted("HealthServer", config.webhook.port);
   }
 
+  // Worktree/clone pruning normally piggybacks on the poller's cycle; in webhook-only
+  // mode there is no poller, so run it on its own timer or the volume fills up.
+  let pruneTimer: NodeJS.Timeout | null = null;
+  if (cloneManager && !poller) {
+    const runPrune = async () => {
+      const cfg = configManager.getConfig();
+      try {
+        const n = await cloneManager.pruneStaleWorktrees(cfg.review.staleWorktreeMinutes);
+        if (n > 0) logger.info("Worktree cleanup: pruned stale worktrees", { pruned: n });
+        const u = await cloneManager.pruneUntracked(cfg.repos);
+        if (u > 0) logger.info("Clone cleanup: pruned untracked clones", { pruned: u });
+      } catch (err) {
+        logger.error("Error pruning worktrees", { error: String(err) });
+      }
+    };
+    void runPrune();
+    pruneTimer = setInterval(runPrune, 10 * 60 * 1000);
+    pruneTimer.unref();
+  }
+
   // Register hot-reload callbacks
   configManager.onChange((newConfig) => {
     if (poller) poller.updateConfig(newConfig);
@@ -275,6 +295,7 @@ function main(): void {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info("Shutting down...");
+    if (pruneTimer) clearInterval(pruneTimer);
     reviewer.stop();
     await poller?.stop();
     await webhook?.stop();

@@ -518,6 +518,13 @@ export class WebhookServer {
 
       // Audit: state changed
       this.auditLogger?.stateChanged(owner, repo, prNumber, oldStatus, newStatus, "webhook");
+
+      // Free the PR's worktree now; skip if a review still holds it (the periodic prune gets it later)
+      if (this.cloneManager && !this.reviewer.lockKeys.includes(label)) {
+        this.cloneManager.cleanupPR(owner, repo, prNumber).catch((err) => {
+          this.logger.warn("Worktree cleanup on close failed", { pr: label, error: String(err) });
+        });
+      }
     }
 
     if (action === "converted_to_draft") {
