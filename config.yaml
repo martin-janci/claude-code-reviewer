@@ -42,6 +42,8 @@ review:
   reviewTimeoutMs: 600000            # timeout for claude review (10 min)
   reviewMaxTurns: 30                 # max agentic turns for codebase exploration
   staleWorktreeMinutes: 60           # cleanup worktrees older than this
+  cloneRetentionDays: 30             # drop cached bare clones not fetched for this many days (0 = keep forever)
+  maxCacheMb: 6144                   # cap for data/clones; over it, oldest worktrees then least-recently-used clones are evicted (0 = unlimited). Keep below the volume size.
   excludePaths: []                   # glob patterns to exclude from diff (e.g. ["*.lock", "vendor/**", "dist/**"])
   respectClaudeignore: true          # also exclude paths from the repo's .claudeignore (gitignore-style, incl. ! negations), merged with excludePaths.
                                      # Read from the PR's BASE branch, so a PR cannot exclude itself from review; excludePaths always wins.

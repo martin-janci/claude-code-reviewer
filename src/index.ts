@@ -80,6 +80,7 @@ async function runOneShot(target: OneShotTarget): Promise<void> {
       config.github.token || undefined,
       config.review.cloneTimeoutMs,
     );
+    cloneManager.updateConfig(undefined, undefined, config.review.maxCacheMb);
   }
 
   const metrics = new MetricsCollector();
@@ -191,6 +192,7 @@ function main(): void {
       config.github.token || undefined,
       config.review.cloneTimeoutMs,
     );
+    cloneManager.updateConfig(undefined, undefined, config.review.maxCacheMb);
     logger.info("Codebase access enabled", { cloneDir: config.review.cloneDir });
 
     // Pre-warm clones so the first review doesn't block on a full clone
@@ -256,10 +258,10 @@ function main(): void {
     const runPrune = async () => {
       const cfg = configManager.getConfig();
       try {
-        const n = await cloneManager.pruneStaleWorktrees(cfg.review.staleWorktreeMinutes);
-        if (n > 0) logger.info("Worktree cleanup: pruned stale worktrees", { pruned: n });
-        const u = await cloneManager.pruneUntracked(cfg.repos);
-        if (u > 0) logger.info("Clone cleanup: pruned untracked clones", { pruned: u });
+        const r = await cloneManager.applyRetention(cfg.review, cfg.repos);
+        if (r.worktrees + r.idleClones + r.untracked + r.evicted > 0) {
+          logger.info("Clone cache retention applied", { ...r });
+        }
       } catch (err) {
         logger.error("Error pruning worktrees", { error: String(err) });
       }
@@ -274,7 +276,7 @@ function main(): void {
     if (poller) poller.updateConfig(newConfig);
     if (webhook) webhook.updateConfig(newConfig);
     reviewer.updateConfig(newConfig);
-    if (cloneManager) cloneManager.updateConfig(newConfig.github.token, newConfig.review.cloneTimeoutMs);
+    if (cloneManager) cloneManager.updateConfig(newConfig.github.token, newConfig.review.cloneTimeoutMs, newConfig.review.maxCacheMb);
     logger.info("Hot-reload: config updated for poller, webhook, reviewer, and cloneManager");
   });
 

@@ -128,6 +128,8 @@ review:
   reviewTimeoutMs: 600000       # timeout for claude review (10 min)
   reviewMaxTurns: 15            # max agentic turns for codebase exploration
   staleWorktreeMinutes: 60      # auto-cleanup threshold
+  cloneRetentionDays: 30        # drop cached clones not fetched for N days (0 = keep)
+  maxCacheMb: 6144              # size cap for the clone cache (0 = unlimited)
 ```
 
 Set `codebaseAccess: false` to revert to diff-only reviews. Clone failures are treated as errors (not fallback to diff-only) to ensure consistent review quality.

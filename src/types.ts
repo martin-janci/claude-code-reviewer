@@ -35,6 +35,9 @@ export interface ReviewConfig {
   reviewTimeoutMs: number;
   reviewMaxTurns: number;
   staleWorktreeMinutes: number;
+  // Clone cache retention. Bare clones are kept as a source cache; these bound its growth.
+  cloneRetentionDays: number; // drop clones not fetched for this many days (0 = keep forever)
+  maxCacheMb: number; // evict oldest worktrees/clones beyond this total size (0 = unlimited)
   excludePaths: string[];
   // Also exclude paths listed in the repo's `.claudeignore` (gitignore-style syntax), merged with
   // excludePaths. Read from the PR's base branch — never from the PR head — so a PR cannot ship a

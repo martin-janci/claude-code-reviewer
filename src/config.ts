@@ -21,6 +21,14 @@ export function validateConfig(config: AppConfig): ConfigError[] {
   if (config.review.cloneTimeoutMs < 5_000) {
     errors.push({ field: "review.cloneTimeoutMs", message: "Must be >= 5000 (5s)", severity: "error" });
   }
+  if (config.review.cloneRetentionDays < 0) {
+    errors.push({ field: "review.cloneRetentionDays", message: "Must be >= 0 (0 = keep forever)", severity: "error" });
+  }
+  if (config.review.maxCacheMb < 0) {
+    errors.push({ field: "review.maxCacheMb", message: "Must be >= 0 (0 = unlimited)", severity: "error" });
+  } else if (config.review.maxCacheMb > 0 && config.review.maxCacheMb < 1024) {
+    errors.push({ field: "review.maxCacheMb", message: "Below 1024 MB a single large repo may not fit in the cache", severity: "warning" });
+  }
   if (config.review.maxRetries < 0) {
     errors.push({ field: "review.maxRetries", message: "Must be >= 0", severity: "error" });
   }
@@ -230,6 +238,8 @@ export const DEFAULTS: AppConfig = {
     reviewTimeoutMs: 600_000,
     reviewMaxTurns: 15,
     staleWorktreeMinutes: 60,
+    cloneRetentionDays: 30,
+    maxCacheMb: 6144,
     excludePaths: [],
     respectClaudeignore: true,
     graphify: false,

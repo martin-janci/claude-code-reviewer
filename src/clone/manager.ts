@@ -2,6 +2,23 @@ import { execFile } from "node:child_process";
 import { existsSync, readdirSync, statSync, rmSync, mkdirSync } from "node:fs";
 import { resolve, join, dirname } from "node:path";
 import type { RepoConfig } from "../types.js";
+import { selectEvictions, type CacheEntry } from "./retention.js";
+
+const MIN_IDLE_MS = 10 * 60 * 1000; // never evict anything used in the last 10 min
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export interface RetentionPolicy {
+  staleWorktreeMinutes: number;
+  cloneRetentionDays: number; // 0 = keep idle clones forever
+  maxCacheMb: number; // 0 = unlimited
+}
+
+export interface RetentionResult {
+  worktrees: number;
+  idleClones: number;
+  untracked: number;
+  evicted: number;
+}
 
 function git(
   args: string[],
@@ -25,6 +42,8 @@ export class CloneManager {
   private baseDir: string;
   private ghToken: string | undefined;
   private timeoutMs: number;
+  private maxCacheMb = 0;
+  private sizeCapRunning = false;
   // Per-repo mutex to prevent concurrent clone/fetch operations
   private repoLocks = new Map<string, Promise<void>>();
 
@@ -35,9 +54,10 @@ export class CloneManager {
   }
 
   /** Hot-reload: update token and timeout from new config. */
-  updateConfig(ghToken?: string, timeoutMs?: number): void {
+  updateConfig(ghToken?: string, timeoutMs?: number, maxCacheMb?: number): void {
     if (ghToken !== undefined) this.ghToken = ghToken;
     if (timeoutMs !== undefined) this.timeoutMs = timeoutMs;
+    if (maxCacheMb !== undefined) this.maxCacheMb = maxCacheMb;
   }
 
   /** Redact token from error messages to prevent credential leakage in logs */
@@ -117,6 +137,13 @@ export class CloneManager {
     prNumber: number,
     headSha: string,
   ): Promise<string> {
+    // Make room first so a burst of PRs can't fill the volume mid-review
+    if (this.maxCacheMb > 0) {
+      await this.enforceSizeCap(this.maxCacheMb).catch((err) => {
+        console.error("Cache size enforcement failed:", err);
+      });
+    }
+
     const clonePath = await this.ensureClone(owner, repo);
     const worktreePath = join(this.baseDir, `${owner}/${repo}--pr-${prNumber}`);
 
@@ -254,6 +281,130 @@ export class CloneManager {
 
     return removed;
   }
+
+  /**
+   * Apply the whole retention policy: stale worktrees, untracked clones,
+   * idle clones, then the size cap. Returns how much was removed.
+   */
+  async applyRetention(policy: RetentionPolicy, trackedRepos: RepoConfig[]): Promise<RetentionResult> {
+    this.maxCacheMb = policy.maxCacheMb;
+    const worktrees = await this.pruneStaleWorktrees(policy.staleWorktreeMinutes);
+    const untracked = await this.pruneUntracked(trackedRepos);
+    const idleClones = policy.cloneRetentionDays > 0 ? await this.pruneIdleClones(policy.cloneRetentionDays) : 0;
+    const evicted = policy.maxCacheMb > 0 ? await this.enforceSizeCap(policy.maxCacheMb) : 0;
+    return { worktrees, idleClones, untracked, evicted };
+  }
+
+  /** Remove bare clones that haven't been fetched for `days` and have no worktrees. */
+  async pruneIdleClones(days: number): Promise<number> {
+    const cutoff = Date.now() - days * DAY_MS;
+    let removed = 0;
+    for (const { owner, repo, path, hasWorktrees } of this.listClones()) {
+      if (hasWorktrees || this.repoLocks.has(`${owner}/${repo}`)) continue;
+      if (this.cloneLastUsed(path) >= cutoff) continue;
+      rmSync(path, { recursive: true, force: true });
+      removed++;
+      console.log(`Pruned idle clone (>${days}d): ${owner}/${repo}`);
+    }
+    return removed;
+  }
+
+  /**
+   * If the clone cache exceeds `maxMb`, evict the oldest worktrees first,
+   * then the least recently fetched bare clones. Returns the number evicted.
+   */
+  async enforceSizeCap(maxMb: number): Promise<number> {
+    if (maxMb <= 0 || !existsSync(this.baseDir) || this.sizeCapRunning) return 0;
+    this.sizeCapRunning = true;
+    try {
+      const capKb = maxMb * 1024;
+      let totalKb = await dirSizeKb(this.baseDir);
+      if (totalKb <= capKb) return 0;
+
+      let evicted = 0;
+      const now = Date.now();
+
+      // Pass 1: worktrees (cheapest to recreate)
+      const worktrees: CacheEntry[] = [];
+      for (const { path } of this.listWorktrees()) {
+        worktrees.push({ path, kind: "worktree", sizeKb: await dirSizeKb(path), lastUsedMs: statSync(path).mtimeMs });
+      }
+      for (const w of selectEvictions(worktrees, totalKb, capKb, now, MIN_IDLE_MS)) {
+        rmSync(w.path, { recursive: true, force: true });
+        totalKb -= w.sizeKb;
+        evicted++;
+        console.log(`Cache over ${maxMb}MB — evicted worktree: ${w.path}`);
+      }
+      if (evicted > 0) await this.pruneWorktreeMetadata();
+
+      // Pass 2: bare clones, only those without remaining worktrees and not being fetched
+      if (totalKb > capKb) {
+        const clones: CacheEntry[] = [];
+        for (const { owner, repo, path, hasWorktrees } of this.listClones()) {
+          if (hasWorktrees || this.repoLocks.has(`${owner}/${repo}`)) continue;
+          clones.push({ path, kind: "clone", sizeKb: await dirSizeKb(path), lastUsedMs: this.cloneLastUsed(path) });
+        }
+        for (const c of selectEvictions(clones, totalKb, capKb, now, MIN_IDLE_MS)) {
+          rmSync(c.path, { recursive: true, force: true });
+          totalKb -= c.sizeKb;
+          evicted++;
+          console.log(`Cache over ${maxMb}MB — evicted clone: ${c.path}`);
+        }
+      }
+
+      if (totalKb > capKb) {
+        console.warn(`Clone cache still ${Math.round(totalKb / 1024)}MB, over the ${maxMb}MB cap (remaining entries are in use)`);
+      }
+      return evicted;
+    } finally {
+      this.sizeCapRunning = false;
+    }
+  }
+
+  /** Last time a bare clone was fetched (FETCH_HEAD mtime), falling back to the directory mtime. */
+  private cloneLastUsed(clonePath: string): number {
+    try {
+      return statSync(join(clonePath, "FETCH_HEAD")).mtimeMs;
+    } catch {
+      try { return statSync(clonePath).mtimeMs; } catch { return 0; }
+    }
+  }
+
+  private listWorktrees(): { owner: string; path: string }[] {
+    const out: { owner: string; path: string }[] = [];
+    for (const owner of safeReaddir(this.baseDir)) {
+      const ownerPath = join(this.baseDir, owner);
+      if (!isDirectory(ownerPath)) continue;
+      for (const entry of safeReaddir(ownerPath)) {
+        if (/^(.+)--pr-(\d+)$/.test(entry) && isDirectory(join(ownerPath, entry))) {
+          out.push({ owner, path: join(ownerPath, entry) });
+        }
+      }
+    }
+    return out;
+  }
+
+  private listClones(): { owner: string; repo: string; path: string; hasWorktrees: boolean }[] {
+    const out: { owner: string; repo: string; path: string; hasWorktrees: boolean }[] = [];
+    for (const owner of safeReaddir(this.baseDir)) {
+      const ownerPath = join(this.baseDir, owner);
+      if (!isDirectory(ownerPath)) continue;
+      const entries = safeReaddir(ownerPath);
+      for (const repo of entries) {
+        if (repo.includes("--pr-") || !isDirectory(join(ownerPath, repo))) continue;
+        const hasWorktrees = entries.some((e) => e.startsWith(`${repo}--pr-`));
+        out.push({ owner, repo, path: join(ownerPath, repo), hasWorktrees });
+      }
+    }
+    return out;
+  }
+
+  /** Drop git's bookkeeping for worktrees whose directories were removed. */
+  private async pruneWorktreeMetadata(): Promise<void> {
+    for (const { path } of this.listClones()) {
+      await git(["worktree", "prune"], { cwd: path, timeout: 30_000 }).catch(() => {});
+    }
+  }
 }
 
 function safeReaddir(dir: string): string[] {
@@ -270,4 +421,14 @@ function isDirectory(path: string): boolean {
   } catch {
     return false;
   }
+}
+
+function dirSizeKb(path: string): Promise<number> {
+  return new Promise((resolve) => {
+    execFile("du", ["-sk", path], { encoding: "utf-8", timeout: 120_000 }, (err, stdout) => {
+      if (err && !stdout) return resolve(0);
+      const kb = parseInt(stdout.split(/\s+/)[0], 10);
+      resolve(Number.isFinite(kb) ? kb : 0);
+    });
+  });
 }
