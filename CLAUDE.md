@@ -25,6 +25,8 @@ src/
 │   ├── auto-description.ts      # PR description generation via Claude CLI
 │   ├── auto-label.ts            # Label computation from verdict/severity/diff paths
 │   └── test-debate.ts           # Judges author objections to missing-test findings
+├── maintenance/
+│   └── scheduler.ts             # Timer-driven pruning for webhook-only mode (worktrees, clones, state)
 ├── polling/
 │   └── poller.ts                # Non-overlapping poll loop with reconciliation
 ├── reviewer/
@@ -56,6 +58,7 @@ config.yaml                                      # Runtime configuration
 - **Two event sources** (poller + webhook) share the same `Reviewer` and `StateStore`
 - **Lifecycle events** (close/merge/draft) bypass the per-PR mutex for immediate state updates
 - **`shouldReview()`** is the single decision point — all review gating logic lives in `decisions.ts`
+- **Housekeeping runs in every mode.** `Poller.poll()` prunes stale worktrees / untracked clones / stale state entries after each poll; in webhook-only mode `maintenance/scheduler.ts` does the same on a 10-minute timer. A review always releases its worktree in `doProcessPR`'s `finally`, so a failed Claude run cannot leak it (a leak like that once filled the 10 GB data volume).
 - **Codebase access** via bare clones + git worktrees (`clone/manager.ts`). Each PR gets an isolated worktree sharing the same object store. Claude receives read-only tools (`Read`, `Grep`, `Glob`) scoped to the worktree. With `review.graphify` on, a repo that ships `graphify-out/graph.json` also gets a `Bash` tool scoped to `graphify ...` for querying that knowledge graph, and `graphify-out/**` is always excluded from the diff (independent of the repo's `.claudeignore`).
 - **Diff exclusions never count toward `review.maxDiffLines`.** `buildExcludePatterns()` (`diff-parser.ts`) is the single source of the exclusion list (base-branch `.claudeignore` → `excludePaths` → `graphify-out/**`, last-match-wins); it is resolved *before* the diff is fetched and applied via `filterDiff()` before every size measurement — the main gate and the partial-diff fallback's probes alike (`countDiffLines()`).
 - **PR Reviews API** — reviews are posted via `POST /pulls/{n}/reviews`. The verdict maps to the event: `APPROVE` approves, `REQUEST_CHANGES` blocks when `review.requestChangesEvent` is on, and everything else posts as `COMMENT`. A review event GitHub rejects because the bot authored the PR falls back to `COMMENT` rather than failing the review. Inline comments use Conventional Comments format.

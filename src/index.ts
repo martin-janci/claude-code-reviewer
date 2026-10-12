@@ -16,6 +16,7 @@ import { recoverPendingReviews } from "./startup-recovery.js";
 import { AuditLogger } from "./audit/logger.js";
 import { UsageStore } from "./usage/store.js";
 import { RateLimitGuard } from "./rate-limit-guard.js";
+import { startMaintenance, type MaintenanceHandle } from "./maintenance/scheduler.js";
 
 let VERSION = "unknown";
 try {
@@ -224,6 +225,7 @@ function main(): void {
   }
 
   let poller: Poller | null = null;
+  let maintenance: MaintenanceHandle | null = null;
   let webhook: WebhookServer | null = null;
   let healthServer: Server | null = null;
   let dashboard: DashboardServer | null = null;
@@ -237,6 +239,13 @@ function main(): void {
     poller = new Poller(config, reviewer, store, logger, cloneManager, auditLogger);
     poller.start();
     auditLogger.serverStarted("Poller");
+  }
+
+  if (!poller) {
+    // Webhook-only mode has no poll loop, so stale worktrees / state entries
+    // must be pruned on a timer instead.
+    maintenance = startMaintenance({ getConfig: () => configManager.getConfig(), store, cloneManager, logger });
+    logger.info("Maintenance scheduler started (webhook-only mode)");
   }
 
   if (config.mode === "webhook" || config.mode === "both") {
@@ -276,6 +285,7 @@ function main(): void {
     shuttingDown = true;
     logger.info("Shutting down...");
     reviewer.stop();
+    maintenance?.stop();
     await poller?.stop();
     await webhook?.stop();
     await dashboard?.stop();
