@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.34.4
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.34.3...v1.34.4)
+
+### 🩹 Fixes
+
+- **docker:** Fetch kotlin-lsp from download.jetbrains.com ([c5cc3d7](https://github.com/martin-janci/claude-code-reviewer/commit/c5cc3d7))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.34.3
 
 [compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.34.1...v1.34.3)
