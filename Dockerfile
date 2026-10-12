@@ -41,7 +41,7 @@ ARG ZULU_JRE25_URL=https://cdn.azul.com/zulu/bin/zulu25.36.15-ca-jre25.0.4-linux
 RUN wget -qO /tmp/zulu25.tar.gz ${ZULU_JRE25_URL} \
     && mkdir -p /opt/java25 && tar -xzf /tmp/zulu25.tar.gz -C /opt/java25 --strip-components=1 \
     && rm /tmp/zulu25.tar.gz
-ARG KOTLIN_LSP_URL=https://download-cdn.jetbrains.com/language-server/kotlin-server/262.9593.0/kotlin-server-0.0.6-linux-amd64.vsix
+ARG KOTLIN_LSP_URL=https://download.jetbrains.com/language-server/kotlin-server/262.9593.0/kotlin-server-0.0.6-linux-amd64.vsix
 RUN wget -qO /tmp/klsp.vsix ${KOTLIN_LSP_URL} \
     && mkdir -p /opt/kotlin-lsp && unzip -q /tmp/klsp.vsix 'extension/server/*' -d /opt/kotlin-lsp \
     && rm /tmp/klsp.vsix \
