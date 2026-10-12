@@ -405,6 +405,9 @@ export class Reviewer {
       return { outcome: "skipped", skipReason: `Diff too large (${lineCount} lines, max ${this.config.review.maxDiffLines})` };
     }
 
+    // Worktree path (if codebase access is on); released in the finally below
+    let cwd: string | undefined;
+
     try {
     // Build feature context for pre_review phase
     const featureCtx: FeatureContext = {
@@ -438,7 +441,6 @@ export class Reviewer {
     const currentState = this.store.get(owner, repo, prNumber)!;
 
     // Phase 3: Prepare codebase worktree if enabled
-    let cwd: string | undefined;
     if (this.cloneManager) {
       log.info("Phase 3: Preparing worktree", { phase: "clone_prepare" });
       try {
@@ -466,14 +468,6 @@ export class Reviewer {
       return { outcome: "error", error: "Claude review failed" };
     }
     log.info("Phase 4: Claude review completed", { phase: "claude_review", structured: !!reviewResult.structured, durationMs: timings.claude_review_ms });
-
-    // Cleanup worktree (fire-and-forget)
-    if (this.cloneManager) {
-      log.debug("Cleaning up worktree", { phase: "worktree_cleanup" });
-      this.cloneManager.cleanupPR(owner, repo, prNumber).catch((err) => {
-        log.error("Worktree cleanup failed", { phase: "worktree_cleanup", error: String(err) });
-      });
-    }
 
     // Build Jira link from state if validated
     let jiraLink: JiraLink | undefined;
@@ -532,6 +526,15 @@ export class Reviewer {
     } finally {
       // Always delete the status comment when review finishes (success or error)
       deleteStatusComment();
+
+      // Always release the worktree (fire-and-forget). Doing this only on the
+      // success path leaked one worktree per failed review until the disk filled.
+      if (cwd && this.cloneManager) {
+        log.debug("Cleaning up worktree", { phase: "worktree_cleanup" });
+        this.cloneManager.cleanupPR(owner, repo, prNumber).catch((err) => {
+          log.error("Worktree cleanup failed", { phase: "worktree_cleanup", error: String(err) });
+        });
+      }
     }
   }
 
