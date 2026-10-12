@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.34.3
+
+[compare changes](https://github.com/martin-janci/claude-code-reviewer/compare/v1.34.1...v1.34.3)
+
+### 🩹 Fixes
+
+- **reviewer:** Release worktrees on failed reviews and prune them in webhook mode ([9bef9b3](https://github.com/martin-janci/claude-code-reviewer/commit/9bef9b3))
+
+### 🏡 Chore
+
+- **release:** V1.34.2 ([325647a](https://github.com/martin-janci/claude-code-reviewer/commit/325647a))
+
+### ❤️ Contributors
+
+- Martin-janci ([@martin-janci](http://github.com/martin-janci))
+
 ## v1.34.2
 
 [compare changes](https://github.com/papayapos/papaya-reviewer/compare/v1.34.0...v1.34.2)
