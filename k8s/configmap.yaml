@@ -5,7 +5,13 @@ metadata:
   namespace: claude-reviewer
 data:
   config.yaml: |
-    mode: webhook  # "polling" | "webhook" | "both"
+    # "both", not "webhook": GitHub does not replay webhook deliveries, so every PR
+    # opened or pushed while the service is down is lost permanently — it is never
+    # reviewed, even after recovery, and a `/review` comment posted during the outage
+    # is swallowed too. Observed 2026-09-16..18: papayapos-android PRs 359-363 went
+    # unreviewed across a 503 window. The poller below is the backstop that reconciles
+    # state on restart; webhooks still provide the low-latency path.
+    mode: both  # "polling" | "webhook" | "both"
 
     polling:
       intervalSeconds: 300
